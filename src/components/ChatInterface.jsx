@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState([
@@ -7,6 +6,11 @@ export default function ChatInterface() {
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const bottomRef = useRef(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   const sendMessage = async () => {
     if (!input.trim()) return
@@ -16,16 +20,17 @@ export default function ChatInterface() {
     setLoading(true)
 
     try {
-      const res = await fetch('https://ton-api-render.onrender.com/ask', {
+      const res = await fetch('https://droitgpt-indexer.onrender.com/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: input })
+        body: JSON.stringify({ messages: newMessages })
       })
       const data = await res.json()
       setMessages([...newMessages, { from: 'bot', text: data.answer }])
     } catch {
       setMessages([...newMessages, { from: 'bot', text: '❌ Une erreur est survenue. Veuillez réessayer.' }])
     }
+
     setLoading(false)
   }
 
@@ -40,6 +45,7 @@ export default function ChatInterface() {
               </div>
             </div>
           ))}
+          <div ref={bottomRef}></div>
         </div>
         <div className="p-3 border-t flex gap-2 bg-white">
           <input
