@@ -20,25 +20,25 @@ export default function ChatInterface() {
         body: JSON.stringify({ messages: newMessages }),
       });
 
-      if (!response.ok) throw new Error('Erreur de réponse');
+      if (!response.ok || !response.body) throw new Error('Erreur de réponse du serveur');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let aiText = '';
+      const assistantMsg = { from: 'assistant', text: '' };
+      const updatedMessages = [...newMessages, assistantMsg];
+      setMessages(updatedMessages);
 
       while (true) {
-        const { value, done } = await reader.read();
+        const { done, value } = await reader.read();
         if (done) break;
 
         aiText += decoder.decode(value, { stream: true });
-        setMessages((prev) => [
-          ...newMessages,
-          { from: 'assistant', text: aiText },
-        ]);
+        assistantMsg.text = aiText;
+        setMessages([...updatedMessages]); // force refresh
       }
-
     } catch (err) {
-      setMessages((prev) => [...prev, { from: 'assistant', text: '❌ Erreur serveur' }]);
+      setMessages(prev => [...prev, { from: 'assistant', text: '❌ Erreur serveur' }]);
     }
 
     setLoading(false);
@@ -49,8 +49,10 @@ export default function ChatInterface() {
       <div className="space-y-2 h-[70vh] overflow-y-auto bg-gray-100 p-4 rounded shadow">
         {messages.map((msg, i) => (
           <div key={i} className={msg.from === 'user' ? 'text-right' : 'text-left'}>
-            <p className={msg.from === 'user' ? 'bg-blue-200 inline-block px-2 py-1 rounded' : 'bg-white inline-block px-2 py-1 rounded'}>
-              <span dangerouslySetInnerHTML={{ __html: msg.text }}></span>
+            <p className={msg.from === 'user'
+              ? 'bg-blue-200 inline-block px-2 py-1 rounded'
+              : 'bg-white inline-block px-2 py-1 rounded'}>
+              <span dangerouslySetInnerHTML={{ __html: msg.text }} />
             </p>
           </div>
         ))}
@@ -60,19 +62,4 @@ export default function ChatInterface() {
       <div className="mt-4 flex">
         <input
           type="text"
-          className="border w-full px-3 py-2 rounded-l"
-          value={userInput}
-          onChange={(e) => setUserInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-        />
-        <button
-          className="bg-blue-600 text-white px-4 rounded-r"
-          onClick={handleSend}
-          disabled={loading}
-        >
-          Envoyer
-        </button>
-      </div>
-    </div>
-  );
-}
+          classNa
