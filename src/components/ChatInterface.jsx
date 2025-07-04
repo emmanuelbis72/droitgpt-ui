@@ -35,8 +35,9 @@ export default function ChatInterface() {
 
         aiText += decoder.decode(value, { stream: true });
         assistantMsg.text = aiText;
-        setMessages([...updatedMessages]); // force refresh
+        setMessages([...updatedMessages]);
       }
+
     } catch (err) {
       setMessages(prev => [...prev, { from: 'assistant', text: '❌ Erreur serveur' }]);
     }
