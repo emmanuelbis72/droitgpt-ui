@@ -50,16 +50,27 @@ export default function ChatInterface() {
       });
 
       const data = await response.json();
+
+      const finalText =
+        data.answer || data.text || data.response || data.message || '';
+
       const botReply = {
         from: 'assistant',
-        text: data.answer || '❌ Réponse vide.',
+        text: finalText.trim()
+          ? finalText
+          : `❌ <strong>Erreur de format</strong><br/>Il semble y avoir une erreur de format dans votre message. N'hésitez pas à poser votre question ou à fournir des informations supplémentaires.`,
       };
+
       setMessages([...newMessages, botReply]);
     } catch (err) {
-      setMessages([...newMessages, {
-        from: 'assistant',
-        text: '❌ Erreur serveur. Veuillez réessayer.',
-      }]);
+      setMessages([
+        ...newMessages,
+        {
+          from: 'assistant',
+          text:
+            '❌ <strong>Erreur serveur</strong><br/>Impossible de récupérer une réponse. Veuillez réessayer.',
+        },
+      ]);
     }
 
     setLoading(false);
