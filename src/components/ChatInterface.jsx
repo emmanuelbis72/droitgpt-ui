@@ -62,4 +62,19 @@ export default function ChatInterface() {
       <div className="mt-4 flex">
         <input
           type="text"
-          classNa
+          className="border w-full px-3 py-2 rounded-l"
+          value={userInput}
+          onChange={(e) => setUserInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+        />
+        <button
+          className="bg-blue-600 text-white px-4 rounded-r"
+          onClick={handleSend}
+          disabled={loading}
+        >
+          Envoyer
+        </button>
+      </div>
+    </div>
+  );
+}
