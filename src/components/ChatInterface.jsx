@@ -1,36 +1,52 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function ChatInterface() {
-  const [messages, setMessages] = useState([
-    {
-      from: 'assistant',
-      text: `
-        👋 <strong>Bienvenue</strong><br/>
-        Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>
-        Posez-moi toutes vos questions juridiques 📚⚖️
-      `,
-    },
-  ]);
+  const [messages, setMessages] = useState(() => {
+    const saved = localStorage.getItem('chatMessages');
+    return saved
+      ? JSON.parse(saved)
+      : [{
+          from: 'assistant',
+          text: `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
+        }];
+  });
+
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [dots, setDots] = useState('');
+
+  useEffect(() => {
+    localStorage.setItem('chatMessages', JSON.stringify(messages));
+  }, [messages]);
+
+  // ⏳ Animation des points de chargement "..."
+  useEffect(() => {
+    let interval;
+    if (loading) {
+      interval = setInterval(() => {
+        setDots(prev => (prev.length < 3 ? prev + '.' : ''));
+      }, 500);
+    } else {
+      setDots('');
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const detectLanguage = (text) => {
-    const frWords = ['bonjour', 'tribunal', 'avocat'];
-    const enWords = ['hello', 'law', 'court'];
-    const swWords = ['habari', 'sheria', 'mahakama'];
-    const lnWords = ['mbote', 'mobeko'];
-    const kgWords = ['maboko'];
-    const tshWords = ['moyo', 'ntu'];
-
     const lower = text.toLowerCase();
-    if (frWords.some(w => lower.includes(w))) return 'fr';
-    if (enWords.some(w => lower.includes(w))) return 'en';
-    if (swWords.some(w => lower.includes(w))) return 'sw';
-    if (lnWords.some(w => lower.includes(w))) return 'ln';
-    if (kgWords.some(w => lower.includes(w))) return 'kg';
-    if (tshWords.some(w => lower.includes(w))) return 'tsh';
+    const dict = {
+      fr: ['bonjour', 'tribunal', 'avocat'],
+      en: ['hello', 'law', 'court'],
+      sw: ['habari', 'sheria', 'mahakama'],
+      ln: ['mbote', 'mobeko'],
+      kg: ['maboko'],
+      tsh: ['moyo', 'ntu'],
+    };
 
-    return 'fr'; // par défaut
+    for (const [lang, words] of Object.entries(dict)) {
+      if (words.some(w => lower.includes(w))) return lang;
+    }
+    return 'fr';
   };
 
   const handleSend = async () => {
@@ -42,43 +58,45 @@ export default function ChatInterface() {
     setLoading(true);
 
     try {
-      const language = detectLanguage(userInput);
-      const response = await fetch('https://droitgpt-indexer.onrender.com/ask', {
+      const lang = detectLanguage(userInput);
+      const res = await fetch('https://droitgpt-indexer.onrender.com/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, lang: language }),
+        body: JSON.stringify({ messages: newMessages, lang }),
       });
 
-      const data = await response.json();
-
-      const finalText =
-        data.answer || data.text || data.response || data.message || '';
-
-      const botReply = {
-        from: 'assistant',
-        text: finalText.trim()
-          ? finalText
-          : `❌ <strong>Erreur de format</strong><br/>Il semble y avoir une erreur de format dans votre message. N'hésitez pas à poser votre question ou à fournir des informations supplémentaires.`,
-      };
-
-      setMessages([...newMessages, botReply]);
+      const data = await res.json();
+      const reply = data.answer || '❌ Réponse vide.';
+      setMessages([...newMessages, { from: 'assistant', text: reply }]);
     } catch (err) {
-      setMessages([
-        ...newMessages,
-        {
-          from: 'assistant',
-          text:
-            '❌ <strong>Erreur serveur</strong><br/>Impossible de récupérer une réponse. Veuillez réessayer.',
-        },
-      ]);
+      setMessages([...newMessages, {
+        from: 'assistant',
+        text: '❌ Erreur serveur. Veuillez réessayer.',
+      }]);
     }
 
     setLoading(false);
   };
 
+  const handleReset = () => {
+    const welcome = {
+      from: 'assistant',
+      text: `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
+    };
+    setMessages([welcome]);
+    localStorage.removeItem('chatMessages');
+    setUserInput('');
+  };
+
   return (
     <div className="flex justify-center items-center min-h-screen bg-[#ece5dd] p-2">
-      <div className="flex flex-col w-full max-w-md h-[90vh] bg-white rounded shadow border">
+      <div className="flex flex-col w-full max-w-md h-[95vh] bg-white rounded shadow border overflow-hidden">
+
+        {/* Header */}
+        <div className="bg-green-700 text-white text-center py-2 text-sm font-semibold">
+          DroitGPT – Assistant juridique congolais
+        </div>
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#ece5dd]">
           {messages.map((msg, i) => (
@@ -91,26 +109,39 @@ export default function ChatInterface() {
               />
             </div>
           ))}
-          {loading && <p className="text-center text-gray-500 italic">Assistant écrit...</p>}
+          {loading && (
+            <div className="text-center text-gray-500 italic">💬 Assistant écrit{dots}</div>
+          )}
         </div>
 
-        {/* Input */}
-        <div className="p-2 flex border-t">
-          <input
-            type="text"
-            className="flex-1 p-2 border rounded-l text-sm focus:outline-none"
-            placeholder="Écrire ici..."
-            value={userInput}
-            onChange={(e) => setUserInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-          />
-          <button
-            className="bg-green-600 text-white px-4 rounded-r text-sm"
-            onClick={handleSend}
-            disabled={loading}
-          >
-            Envoyer
-          </button>
+        {/* Footer */}
+        <div className="p-2 flex flex-col gap-2 bg-white border-t">
+          <div className="flex justify-end text-xs text-gray-700 mb-1">
+            <button
+              onClick={handleReset}
+              className="text-red-600 underline text-xs"
+            >
+              Réinitialiser
+            </button>
+          </div>
+
+          <div className="flex">
+            <input
+              type="text"
+              className="flex-1 p-2 border rounded-l text-sm focus:outline-none"
+              placeholder="Écrire ici..."
+              value={userInput}
+              onChange={(e) => setUserInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+            />
+            <button
+              className="bg-green-600 text-white px-4 rounded-r text-sm"
+              onClick={handleSend}
+              disabled={loading}
+            >
+              Envoyer
+            </button>
+          </div>
         </div>
       </div>
     </div>
