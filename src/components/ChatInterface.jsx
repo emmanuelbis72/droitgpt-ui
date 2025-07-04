@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState([]);
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const chatContainerRef = useRef(null);
 
   const handleSend = async () => {
     if (!userInput.trim()) return;
@@ -20,56 +21,65 @@ export default function ChatInterface() {
         body: JSON.stringify({ messages: newMessages }),
       });
 
-      if (!response.ok || !response.body) throw new Error('Erreur de réponse du serveur');
+      const data = await response.json();
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let aiText = '';
-      const assistantMsg = { from: 'assistant', text: '' };
-      const updatedMessages = [...newMessages, assistantMsg];
-      setMessages(updatedMessages);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        aiText += decoder.decode(value, { stream: true });
-        assistantMsg.text = aiText;
-        setMessages([...updatedMessages]);
+      if (!response.ok || !data?.text) {
+        throw new Error('Erreur dans la réponse du serveur.');
       }
 
+      setMessages((prev) => [...prev, { from: 'assistant', text: data.text }]);
     } catch (err) {
-      setMessages(prev => [...prev, { from: 'assistant', text: '❌ Erreur serveur' }]);
+      setMessages((prev) => [
+        ...prev,
+        { from: 'assistant', text: '❌ Erreur serveur. Veuillez réessayer.' },
+      ]);
     }
 
     setLoading(false);
   };
 
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages, loading]);
+
   return (
-    <div className="p-4 max-w-2xl mx-auto">
-      <div className="space-y-2 h-[70vh] overflow-y-auto bg-gray-100 p-4 rounded shadow">
+    <div className="flex flex-col h-screen bg-[#e5ddd5]">
+      <div
+        className="flex-1 overflow-y-auto p-4"
+        ref={chatContainerRef}
+      >
         {messages.map((msg, i) => (
-          <div key={i} className={msg.from === 'user' ? 'text-right' : 'text-left'}>
-            <p className={msg.from === 'user'
-              ? 'bg-blue-200 inline-block px-2 py-1 rounded'
-              : 'bg-white inline-block px-2 py-1 rounded'}>
+          <div key={i} className={`mb-3 flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div
+              className={`max-w-[80%] px-4 py-2 rounded-xl shadow
+                ${msg.from === 'user'
+                  ? 'bg-[#dcf8c6] text-right rounded-br-none'
+                  : 'bg-white text-left rounded-bl-none'}`}
+            >
               <span dangerouslySetInnerHTML={{ __html: msg.text }} />
-            </p>
+            </div>
           </div>
         ))}
-        {loading && <p className="italic text-gray-500">Assistant est en train d’écrire...</p>}
+        {loading && (
+          <div className="text-center text-gray-500 italic mt-2">
+            Assistant est en train d’écrire...
+          </div>
+        )}
       </div>
 
-      <div className="mt-4 flex">
+      <div className="p-2 bg-[#f0f0f0] flex">
         <input
           type="text"
-          className="border w-full px-3 py-2 rounded-l"
+          className="flex-1 border border-gray-300 rounded-l-full px-4 py-2 focus:outline-none"
+          placeholder="Écris ta question juridique ici..."
           value={userInput}
           onChange={(e) => setUserInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
         />
         <button
-          className="bg-blue-600 text-white px-4 rounded-r"
+          className="bg-green-600 text-white px-6 rounded-r-full"
           onClick={handleSend}
           disabled={loading}
         >
