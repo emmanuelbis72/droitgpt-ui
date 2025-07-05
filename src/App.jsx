@@ -1,16 +1,17 @@
-
-import React from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import Home from './pages/Home'
-import Chat from './pages/Chat'
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Home from './pages/Home';
+import ChatInterface from './components/ChatInterface';
+import Generate from './components/Generate'; // ✅ Ajout
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <Router>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/chat" element={<Chat />} />
+        <Route path="/chat" element={<ChatInterface />} />
+        <Route path="/generate" element={<Generate />} /> {/* ✅ Nouvelle route */}
       </Routes>
-    </BrowserRouter>
-  )
+    </Router>
+  );
 }
