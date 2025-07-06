@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const documentTypes = [
@@ -15,8 +15,20 @@ export default function Generate() {
   const [formData, setFormData] = useState({});
   const [pdfUrl, setPdfUrl] = useState('');
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
-  const navigate = useNavigate(); // 🔄 pour rediriger
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let interval;
+    if (loading) {
+      setProgress(0);
+      interval = setInterval(() => {
+        setProgress(prev => (prev < 95 ? prev + 5 : prev));
+      }, 500);
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -40,6 +52,7 @@ export default function Generate() {
       const blob = await res.blob();
       const fileURL = window.URL.createObjectURL(blob);
       setPdfUrl(fileURL);
+      setProgress(100);
     } catch (err) {
       setError(err.message);
     }
@@ -107,13 +120,26 @@ export default function Generate() {
       <div className="space-y-2">{renderFormFields()}</div>
 
       {docType && (
-        <button
-          onClick={handleGenerate}
-          disabled={loading}
-          className="bg-green-600 text-white px-4 py-2 rounded w-full hover:bg-green-700"
-        >
-          {loading ? 'Génération en cours...' : 'Générer le document'}
-        </button>
+        <div className="w-full">
+          <button
+            onClick={handleGenerate}
+            disabled={loading}
+            className={`px-4 py-2 w-full rounded text-white font-semibold transition ${
+              loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+            }`}
+          >
+            {loading ? 'Génération en cours...' : 'Générer le document'}
+          </button>
+
+          {loading && (
+            <div className="w-full bg-gray-200 rounded-full h-3 mt-3 overflow-hidden">
+              <div
+                className="bg-green-600 h-3 rounded-full transition-all duration-300 ease-in-out"
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
+          )}
+        </div>
       )}
 
       {error && <div className="text-red-600 text-sm">{error}</div>}

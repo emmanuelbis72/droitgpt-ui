@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 
 export default function ChatInterface() {
@@ -15,6 +15,7 @@ export default function ChatInterface() {
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [dots, setDots] = useState('');
+  const messagesEndRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('chatMessages', JSON.stringify(messages));
@@ -32,6 +33,10 @@ export default function ChatInterface() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
+
   const detectLanguage = (text) => {
     const lower = text.toLowerCase();
     const dict = {
@@ -42,7 +47,6 @@ export default function ChatInterface() {
       kg: ['maboko'],
       tsh: ['moyo', 'ntu'],
     };
-
     for (const [lang, words] of Object.entries(dict)) {
       if (words.some(w => lower.includes(w))) return lang;
     }
@@ -51,7 +55,6 @@ export default function ChatInterface() {
 
   const handleSend = async () => {
     if (!userInput.trim()) return;
-
     const newMessages = [...messages, { from: 'user', text: userInput }];
     setMessages(newMessages);
     setUserInput('');
@@ -64,11 +67,10 @@ export default function ChatInterface() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages, lang }),
       });
-
       const data = await res.json();
       const reply = data.answer || '❌ Réponse vide.';
       setMessages([...newMessages, { from: 'assistant', text: reply }]);
-    } catch (err) {
+    } catch {
       setMessages([...newMessages, {
         from: 'assistant',
         text: '❌ Erreur serveur. Veuillez réessayer.',
@@ -89,66 +91,53 @@ export default function ChatInterface() {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-[#ece5dd]">
-      <div className="flex flex-col w-full max-w-md h-screen bg-white rounded shadow border overflow-hidden relative">
+    <div className="flex flex-col h-screen bg-[#ece5dd]">
+      {/* Header */}
+      <div className="bg-green-700 text-white flex items-center justify-between px-3 py-2 text-sm font-semibold">
+        <span>DroitGPT – Assistant juridique congolais</span>
+        <Link to="/" className="text-xs underline hover:text-gray-200">⬅️ Accueil</Link>
+      </div>
 
-        {/* Header */}
-        <div className="bg-green-700 text-white flex items-center justify-between px-3 py-2 text-sm font-semibold">
-          <span>DroitGPT – Assistant juridique congolais</span>
-          <Link
-            to="/"
-            className="text-xs underline hover:text-gray-200"
-          >
-            ⬅️ Accueil
-          </Link>
-        </div>
-
-        {/* Messages zone */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#ece5dd] mb-[90px]">
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[85%] p-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
-                  msg.from === 'user' ? 'bg-[#dcf8c6]' : 'bg-white'
-                }`}
-                dangerouslySetInnerHTML={{ __html: msg.text }}
-              />
-            </div>
-          ))}
-          {loading && (
-            <div className="text-center text-gray-500 italic">💬 Assistant écrit{dots}</div>
-          )}
-        </div>
-
-        {/* Input zone */}
-        <div className="absolute bottom-0 left-0 w-full bg-white border-t p-3 pb-4">
-          <div className="flex justify-between items-center mb-1 text-xs text-gray-600">
-            <button
-              onClick={handleReset}
-              className="text-red-600 underline"
-            >
-              Réinitialiser
-            </button>
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              className="flex-1 p-3 border rounded-l text-sm focus:outline-none"
-              placeholder="Écrivez votre question ici..."
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+      {/* Message zone */}
+      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 bg-[#ece5dd]">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div
+              className={`max-w-[85%] p-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
+                msg.from === 'user' ? 'bg-[#dcf8c6]' : 'bg-white'
+              }`}
+              dangerouslySetInnerHTML={{ __html: msg.text }}
             />
-            <button
-              className="bg-green-600 text-white px-4 rounded-r text-sm"
-              onClick={handleSend}
-              disabled={loading}
-            >
-              Envoyer
-            </button>
           </div>
-        </div>
+        ))}
+        {loading && (
+          <div className="text-center text-gray-500 italic">💬 Assistant écrit{dots}</div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
 
+      {/* Zone de saisie */}
+      <div className="border-t bg-white p-3">
+        <div className="flex justify-between items-center mb-2 text-xs text-gray-600">
+          <button onClick={handleReset} className="text-red-600 underline">Réinitialiser</button>
+        </div>
+        <div className="flex">
+          <input
+            type="text"
+            className="flex-1 p-3 border rounded-l text-sm focus:outline-none"
+            placeholder="Écrivez ici votre question juridique..."
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+          />
+          <button
+            className="bg-green-600 text-white px-4 rounded-r text-sm"
+            onClick={handleSend}
+            disabled={loading}
+          >
+            Envoyer
+          </button>
+        </div>
       </div>
     </div>
   );
