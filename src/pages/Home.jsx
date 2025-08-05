@@ -1,3 +1,4 @@
+// 📄 Home.jsx
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -19,6 +20,7 @@ export default function Home() {
           <Link to="/" className="text-green-700 hover:underline">Accueil</Link>
           <Link to="/chat" className="text-green-700 hover:underline">Chat</Link>
           <Link to="/generate" className="text-green-700 hover:underline">Documents</Link>
+          <Link to="/analyse" className="text-green-700 hover:underline">Analyse</Link> {/* ✅ Ajouté */}
         </nav>
       </header>
 
@@ -28,6 +30,7 @@ export default function Home() {
           <Link to="/" className="block text-green-700 hover:underline">Accueil</Link>
           <Link to="/chat" className="block text-green-700 hover:underline">Chat</Link>
           <Link to="/generate" className="block text-green-700 hover:underline">Documents</Link>
+          <Link to="/analyse" className="block text-green-700 hover:underline">Analyse</Link> {/* ✅ Ajouté */}
         </nav>
       )}
 
@@ -53,13 +56,9 @@ export default function Home() {
             📄 Générer un document juridique
           </Link>
 
-          {/* CACHÉ TEMPORAIREMENT */}
-          <button
-            className="px-4 py-3 bg-yellow-600 text-white rounded-xl text-center shadow opacity-40 cursor-not-allowed"
-            disabled
-          >
-            📁 Analyser un document juridique (bientôt)
-          </button>
+          <Link to="/analyse" className="px-4 py-3 bg-yellow-600 text-white rounded-xl text-center shadow hover:bg-yellow-700">
+            📁 Analyser un document juridique
+          </Link>
         </div>
       </main>
     </div>
