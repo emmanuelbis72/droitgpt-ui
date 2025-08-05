@@ -7,6 +7,7 @@ export default function Analyse() {
   const [file, setFile] = useState(null);
   const [analysis, setAnalysis] = useState('');
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [history, setHistory] = useState(() => {
     const saved = localStorage.getItem('analyseHistory');
@@ -14,6 +15,19 @@ export default function Analyse() {
   });
 
   const handleFileChange = (e) => setFile(e.target.files[0]);
+
+  const simulateProgress = () => {
+    setProgress(0);
+    let value = 0;
+    const interval = setInterval(() => {
+      value += Math.random() * 10;
+      if (value >= 98) {
+        clearInterval(interval);
+      }
+      setProgress(Math.min(value, 98));
+    }, 200);
+    return interval;
+  };
 
   const handleAnalyse = async () => {
     if (!file) return setError('Veuillez sélectionner un fichier.');
@@ -23,6 +37,8 @@ export default function Analyse() {
 
     const formData = new FormData();
     formData.append('file', file);
+
+    const interval = simulateProgress();
 
     try {
       const res = await fetch('https://droitgpt-analysepdf.onrender.com/analyse-document', {
@@ -51,7 +67,12 @@ export default function Analyse() {
       setError(err.message);
     }
 
-    setLoading(false);
+    clearInterval(interval);
+    setProgress(100);
+    setTimeout(() => {
+      setLoading(false);
+      setProgress(0);
+    }, 500);
   };
 
   const handleDownloadPDF = () => {
@@ -89,6 +110,15 @@ export default function Analyse() {
       >
         {loading ? 'Analyse en cours...' : 'Analyser le document'}
       </button>
+
+      {loading && (
+        <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2 overflow-hidden">
+          <div
+            className="bg-blue-600 h-2.5 rounded-full transition-all duration-200 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
 
       {error && <p className="text-red-600 text-sm">❌ {error}</p>}
 
