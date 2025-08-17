@@ -1,66 +1,96 @@
-// 📄 Home.jsx
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React from "react";
+import { Link } from "react-router-dom";
 
+/**
+ * Home.jsx – Web alignée au layout Android (activity_main.xml)
+ * - Fond dégradé
+ * - Icône centrale moderne en SVG inline (balance de justice)
+ * - Titre + sous-titre
+ * - 3 boutons principaux (bleu/rouge/jaune – style RDC)
+ * - Bandeau d'infos + site web
+ *
+ * Tailwind requis. Aucune dépendance externe.
+ */
 export default function Home() {
-  const [menuOpen, setMenuOpen] = useState(false);
-
   return (
-    <div className="min-h-screen bg-white text-black flex flex-col">
-      {/* HEADER NAVIGATION */}
-      <header className="flex items-center justify-between p-4 shadow-md bg-white">
-        <h1 className="text-xl font-bold text-green-700">DroitGPT</h1>
-        <button
-          className="md:hidden text-3xl"
-          onClick={() => setMenuOpen(!menuOpen)}
+    <div className="min-h-screen w-full bg-gradient-to-b from-[#0c2748] via-[#0a1e38] to-[#071629] text-white flex">
+      {/* Scroll area comme un ScrollView Android */}
+      <div className="w-full max-w-md mx-auto px-6 py-10 flex flex-col items-center">
+        {/* Icône centrale moderne */}
+        <IconBadge />
+
+        {/* Titre */}
+        <h1 className="text-3xl font-bold text-center">DroitGPT</h1>
+
+        {/* Sous-titre */}
+        <p className="mt-2 text-base text-center text-white/90">
+          Assistant juridique • Droit congolais 🇨🇩
+        </p>
+
+        {/* Boutons principaux */}
+        <div className="w-full mt-6 space-y-3">
+          <Link
+            to="/chat"
+            className="block w-full rounded-xl bg-[#1e40af] px-5 py-4 text-base font-medium text-white shadow hover:bg-[#1b3a9c] focus:outline-none focus:ring-2 focus:ring-white/40 transition"
+          >
+            <span className="mr-2">💬</span> Chatbot juridique
+          </Link>
+
+          <Link
+            to="/generate"
+            className="block w-full rounded-xl bg-[#b91c1c] px-5 py-4 text-base font-medium text-white shadow hover:bg-[#991b1b] focus:outline-none focus:ring-2 focus:ring-white/40 transition"
+          >
+            <span className="mr-2">📄</span> Générer un document PDF
+          </Link>
+
+          <Link
+            to="/analyse"
+            className="block w-full rounded-xl bg-[#f59e0b] px-5 py-4 text-base font-medium text-black shadow hover:bg-[#f59e0b]/90 focus:outline-none focus:ring-2 focus:ring-white/40 transition"
+          >
+            <span className="mr-2">🔍</span> Analyser un document
+          </Link>
+        </div>
+
+        {/* Bandeau infos */}
+        <p className="mt-8 text-sm text-center text-white/90 leading-relaxed">
+          Génération automatique de documents juridiques • Analyse PDF/DOCX • Export PDF
+        </p>
+
+        {/* Site web */}
+        <a
+          href="https://droitgpt.com"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 text-sm font-semibold text-white hover:underline"
         >
-          ☰
-        </button>
-        <nav className="hidden md:flex space-x-6">
-          <Link to="/" className="text-green-700 hover:underline">Accueil</Link>
-          <Link to="/chat" className="text-green-700 hover:underline">Chat</Link>
-          <Link to="/generate" className="text-green-700 hover:underline">Documents</Link>
-          <Link to="/analyse" className="text-green-700 hover:underline">Analyse</Link> {/* ✅ Ajouté */}
-        </nav>
-      </header>
+          www.droitgpt.com
+        </a>
+      </div>
+    </div>
+  );
+}
 
-      {/* MOBILE MENU */}
-      {menuOpen && (
-        <nav className="md:hidden bg-white shadow p-4 space-y-2">
-          <Link to="/" className="block text-green-700 hover:underline">Accueil</Link>
-          <Link to="/chat" className="block text-green-700 hover:underline">Chat</Link>
-          <Link to="/generate" className="block text-green-700 hover:underline">Documents</Link>
-          <Link to="/analyse" className="block text-green-700 hover:underline">Analyse</Link> {/* ✅ Ajouté */}
-        </nav>
-      )}
-
-      {/* MAIN CONTENT */}
-      <main className="flex flex-col items-center justify-center flex-grow p-6 space-y-8">
-        <h2 className="text-2xl font-bold text-center text-green-700">Bienvenue sur DroitGPT</h2>
-
-        <div className="text-center space-y-1 text-sm text-gray-700">
-          <p>Contactez-nous :</p>
-          <p>
-            <a href="mailto:info@droitgpt.com" className="text-blue-600 hover:underline">info@droitgpt.com</a>
-            <span className="mx-2 text-gray-400">|</span>
-            <span className="text-green-700 font-semibold">+243 816 307 451</span>
-          </p>
-        </div>
-
-        <div className="flex flex-col space-y-4 w-full max-w-xs">
-          <Link to="/chat" className="px-4 py-3 bg-green-600 text-white rounded-xl text-center shadow hover:bg-green-700">
-            💬 Accéder au Chat
-          </Link>
-
-          <Link to="/generate" className="px-4 py-3 bg-blue-600 text-white rounded-xl text-center shadow hover:bg-blue-700">
-            📄 Générer un document juridique
-          </Link>
-
-          <Link to="/analyse" className="px-4 py-3 bg-yellow-600 text-white rounded-xl text-center shadow hover:bg-yellow-700">
-            📁 Analyser un document juridique
-          </Link>
-        </div>
-      </main>
+/**
+ * IconBadge – bloc icône style app Android (balance de justice moderne en SVG)
+ */
+function IconBadge() {
+  return (
+    <div
+      aria-label="Symbole de justice"
+      className="relative mt-4 mb-4 h-28 w-28 rounded-3xl bg-white/10 ring-1 ring-white/10 shadow-2xl flex items-center justify-center overflow-hidden"
+    >
+      {/* Glow subtil */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/10 to-transparent" />
+      {/* SVG inline balance */}
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 64 64"
+        fill="currentColor"
+        className="h-16 w-16 text-white drop-shadow"
+        aria-hidden
+      >
+        <path d="M32 2a2 2 0 012 2v6h8a2 2 0 110 4h-1.2l9.8 19.6A4 4 0 0150 40H38a6 6 0 01-6-6 6 6 0 01-6 6H14a4 4 0 01-3.6-6.4L20.2 14H19a2 2 0 110-4h8V4a2 2 0 012-2h3zm-9.5 16L14 34h12a2 2 0 000-4H16.7l6-12H22.5zM42 30a2 2 0 000 4h10l-9.5-16H38l4 8zM30 44h4v12h8a2 2 0 110 4H22a2 2 0 110-4h8V44z" />
+      </svg>
     </div>
   );
 }
