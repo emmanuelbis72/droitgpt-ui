@@ -49,6 +49,14 @@ export default function Home() {
           >
             <span className="mr-2">🔍</span> Analyser un document
           </Link>
+
+          {/* ⭐⭐ Nouveau bouton : Assistant Vocal ⭐⭐ */}
+          <Link
+            to="/assistant-vocal"
+            className="block w-full rounded-xl bg-blue-600 px-5 py-4 text-base font-medium text-white shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-white/40 transition"
+          >
+            <span className="mr-2">🎤</span> Parler avec l’assistant vocal
+          </Link>
         </div>
 
         {/* Bandeau infos */}

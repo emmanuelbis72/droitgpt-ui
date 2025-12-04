@@ -1,20 +1,36 @@
-// 📄 app.jsx
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Home from './pages/Home';
-import ChatInterface from './components/ChatInterface';
-import Generate from './components/Generate';
-import Analyse from './components/Analyse'; // ✅ le vrai fichier
+// src/App.jsx
+import React from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 
-export default function App() {
+import Home from "./pages/Home.jsx";
+import ChatInterface from "./components/ChatInterface.jsx";
+import Generate from "./components/Generate.jsx";
+import Analyse from "./components/Analyse.jsx";
+
+// ✅ CORRECTION : AssistantVocal se trouve dans src/components
+import AssistantVocal from "./components/AssistantVocal.jsx";
+
+function App() {
   return (
-    <Router>
+    <BrowserRouter>
       <Routes>
+        {/* Page d'accueil */}
         <Route path="/" element={<Home />} />
+
+        {/* Chat juridique */}
         <Route path="/chat" element={<ChatInterface />} />
+
+        {/* Génération de PDF */}
         <Route path="/generate" element={<Generate />} />
-        <Route path="/analyse" element={<Analyse />} /> {/* ✅ Route OK */}
+
+        {/* Analyse de documents */}
+        <Route path="/analyse" element={<Analyse />} />
+
+        {/* Assistant vocal */}
+        <Route path="/assistant-vocal" element={<AssistantVocal />} />
       </Routes>
-    </Router>
+    </BrowserRouter>
   );
 }
+
+export default App;
