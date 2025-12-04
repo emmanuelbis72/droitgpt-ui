@@ -304,22 +304,13 @@ export default function ChatInterface() {
           </div>
         </div>
 
-        {/* Sous-header : actions */}
+        {/* Sous-header : actions (allégé) */}
         <div className="px-4 md:px-6 py-3 border-b border-white/10 bg-slate-950/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div className="text-[11px] text-slate-300">
-            <p>
-              Posez vos questions, joignez un <strong>PDF/DOCX</strong> et
-              obtenez une <strong>analyse juridique détaillée</strong>.
-            </p>
-            <p className="mt-0.5 text-slate-400">
-              Les réponses sont basées sur le <strong>droit congolais</strong>{" "}
-              et, si présent, sur le <strong>document joint</strong>.
-            </p>
-
             {docContext && (
-              <div className="mt-1 inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/5 text-[11px] text-emerald-200">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/5 text-[11px] text-emerald-200">
                 📂 <strong>Document chargé :</strong>
-                <span className="truncate max-w-[150px]">{docTitle}</span>
+                <span className="truncate max-w-[200px]">{docTitle}</span>
               </div>
             )}
           </div>
@@ -342,7 +333,7 @@ export default function ChatInterface() {
             </button>
 
             <label className="cursor-pointer px-3 py-1.5 rounded-full border border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/10 transition">
-              📎 Joindre PDF / DOCX
+              📎 Joindre PDF / document juridique pour analyse
               <input
                 type="file"
                 accept=".pdf,.docx"
@@ -414,18 +405,26 @@ export default function ChatInterface() {
         {/* Zone input */}
         <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <div className="flex flex-col gap-2">
-            {/* input + bouton envoyer */}
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                className="flex-1 px-3 py-2.5 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent"
-                placeholder="Posez votre question juridique ici…"
+            {/* textarea + bouton envoyer */}
+            <div className="flex items-end gap-2">
+              <textarea
+                className="flex-1 px-3 py-3 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent min-h-[90px] max-h-40 resize-y"
+                placeholder="Décrivez votre situation juridique ou posez votre question ici…"
                 value={userInput}
                 onChange={(e) => setUserInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    (e.ctrlKey || e.metaKey) &&
+                    userInput.trim()
+                  ) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
               />
               <button
-                className={`inline-flex items-center justify-center px-4 py-2 rounded-2xl text-sm font-medium transition ${
+                className={`inline-flex items-center justify-center px-4 py-2 rounded-2xl text-sm font-medium transition self-stretch ${
                   loading || !userInput.trim()
                     ? "bg-slate-700 text-slate-400 cursor-not-allowed"
                     : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"

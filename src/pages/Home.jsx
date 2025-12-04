@@ -1,104 +1,113 @@
 import React from "react";
 import { Link } from "react-router-dom";
 
-/**
- * Home.jsx – Web alignée au layout Android (activity_main.xml)
- * - Fond dégradé
- * - Icône centrale moderne en SVG inline (balance de justice)
- * - Titre + sous-titre
- * - 3 boutons principaux (bleu/rouge/jaune – style RDC)
- * - Bandeau d'infos + site web
- *
- * Tailwind requis. Aucune dépendance externe.
- */
 export default function Home() {
   return (
-    <div className="min-h-screen w-full bg-gradient-to-b from-[#0c2748] via-[#0a1e38] to-[#071629] text-white flex">
-      {/* Scroll area comme un ScrollView Android */}
-      <div className="w-full max-w-md mx-auto px-6 py-10 flex flex-col items-center">
-        {/* Icône centrale moderne */}
-        <IconBadge />
+    <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
+      <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
 
-        {/* Titre */}
-        <h1 className="text-3xl font-bold text-center">DroitGPT</h1>
+        {/* Header */}
+        <div className="px-6 py-6 border-b border-white/10 bg-slate-950/70 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.25em] text-slate-300 font-bold">
+              Assistant juridique congolais
+            </div>
+            <h1 className="text-3xl font-semibold mt-1">DroitGPT</h1>
+            <p className="mt-1 text-sm text-slate-300">
+              Discutez, analysez et générez des documents juridiques avec un assistant intelligent.
+            </p>
+          </div>
 
-        {/* Sous-titre */}
-        <p className="mt-2 text-base text-center text-white/90">
-          Assistant juridique • Droit congolais 🇨🇩
-        </p>
-
-        {/* Boutons principaux */}
-        <div className="w-full mt-6 space-y-3">
-          <Link
-            to="/chat"
-            className="block w-full rounded-xl bg-[#1e40af] px-5 py-4 text-base font-medium text-white shadow hover:bg-[#1b3a9c] focus:outline-none focus:ring-2 focus:ring-white/40 transition"
-          >
-            <span className="mr-2">💬</span> Chatbot juridique
-          </Link>
-
-          <Link
-            to="/generate"
-            className="block w-full rounded-xl bg-[#b91c1c] px-5 py-4 text-base font-medium text-white shadow hover:bg-[#991b1b] focus:outline-none focus:ring-2 focus:ring-white/40 transition"
-          >
-            <span className="mr-2">📄</span> Générer un document PDF
-          </Link>
-
-          <Link
-            to="/analyse"
-            className="block w-full rounded-xl bg-[#f59e0b] px-5 py-4 text-base font-medium text-black shadow hover:bg-[#f59e0b]/90 focus:outline-none focus:ring-2 focus:ring-white/40 transition"
-          >
-            <span className="mr-2">🔍</span> Analyser un document
-          </Link>
-
-          {/* ⭐⭐ Nouveau bouton : Assistant Vocal ⭐⭐ */}
-          <Link
-            to="/assistant-vocal"
-            className="block w-full rounded-xl bg-blue-600 px-5 py-4 text-base font-medium text-white shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-white/40 transition"
-          >
-            <span className="mr-2">🎤</span> Parler avec l’assistant vocal
-          </Link>
+          <div className="flex flex-col items-end gap-1 text-right">
+            <span className="inline-flex items-center gap-2 text-[11px] text-slate-400">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Disponible 24h/24 • RDC 🇨🇩
+            </span>
+            <a
+              href="https://droitgpt.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs font-medium text-emerald-300 hover:text-emerald-200 hover:underline"
+            >
+              www.droitgpt.com
+            </a>
+          </div>
         </div>
 
-        {/* Bandeau infos */}
-        <p className="mt-8 text-sm text-center text-white/90 leading-relaxed">
-          Génération automatique de documents juridiques • Analyse PDF/DOCX • Export PDF
-        </p>
+        {/* Section des options */}
+        <div className="px-6 py-8 bg-slate-950/60">
 
-        {/* Site web */}
-        <a
-          href="https://droitgpt.com"
-          target="_blank"
-          rel="noreferrer"
-          className="mt-2 text-sm font-semibold text-white hover:underline"
-        >
-          www.droitgpt.com
-        </a>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            {/* Chatbot juridique */}
+            <Link
+              to="/chat"
+              className="group rounded-2xl border border-white/10 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-emerald-400/70 hover:bg-slate-900 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">💬</span>
+                <span className="text-[10px] uppercase tracking-[0.18em] text-emerald-300">
+                  Recommandé
+                </span>
+              </div>
+              <h2 className="mt-1 text-lg font-semibold">Chatbot juridique</h2>
+              <p className="text-xs text-slate-300">
+                Posez vos questions juridiques et recevez des explications claires basées sur le droit congolais.
+              </p>
+            </Link>
+
+            {/* Assistant vocal */}
+            <Link
+              to="/assistant-vocal"
+              className="group rounded-2xl border border-emerald-400/70 bg-slate-900 px-5 py-4 flex flex-col gap-1 hover:bg-slate-900/80 hover:border-emerald-300 transition shadow-lg shadow-emerald-500/10"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">🎤</span>
+                <span className="text-[10px] uppercase tracking-[0.18em] text-emerald-300">
+                  Nouveau
+                </span>
+              </div>
+              <h2 className="mt-1 text-lg font-semibold">Assistant vocal</h2>
+              <p className="text-xs text-slate-300">
+                Parlez directement à l’assistant vocal juridique et recevez une réponse audio.
+              </p>
+            </Link>
+
+            {/* Génération de documents */}
+            <Link
+              to="/generate"
+              className="group rounded-2xl border border-white/10 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-sky-400/70 hover:bg-slate-900 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">📄</span>
+              </div>
+              <h2 className="mt-1 text-lg font-semibold">Générer un document juridique</h2>
+              <p className="text-xs text-slate-300">
+                Rédigez automatiquement des contrats, lettres et actes juridiques professionnels.
+              </p>
+            </Link>
+
+            {/* Analyse de documents */}
+            <Link
+              to="/analyse"
+              className="group rounded-2xl border border-white/10 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-amber-400/70 hover:bg-slate-900 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">🔍</span>
+              </div>
+              <h2 className="mt-1 text-lg font-semibold">Analyser un document PDF / DOCX</h2>
+              <p className="text-xs text-slate-300">
+                Téléversez un document juridique et recevez une analyse complète et structurée.
+              </p>
+            </Link>
+          </div>
+        </div>
+
+        {/* Footer minimaliste */}
+        <div className="px-6 py-4 border-t border-white/10 bg-slate-950/80 text-[11px] text-slate-400 flex items-center justify-center">
+          © {new Date().getFullYear()} DroitGPT • Tous droits réservés
+        </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * IconBadge – bloc icône style app Android (balance de justice moderne en SVG)
- */
-function IconBadge() {
-  return (
-    <div
-      aria-label="Symbole de justice"
-      className="relative mt-4 mb-4 h-28 w-28 rounded-3xl bg-white/10 ring-1 ring-white/10 shadow-2xl flex items-center justify-center overflow-hidden"
-    >
-      {/* Glow subtil */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/10 to-transparent" />
-      {/* SVG inline balance */}
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 64 64"
-        fill="currentColor"
-        className="h-16 w-16 text-white drop-shadow"
-        aria-hidden
-      >
-        <path d="M32 2a2 2 0 012 2v6h8a2 2 0 110 4h-1.2l9.8 19.6A4 4 0 0150 40H38a6 6 0 01-6-6 6 6 0 01-6 6H14a4 4 0 01-3.6-6.4L20.2 14H19a2 2 0 110-4h8V4a2 2 0 012-2h3zm-9.5 16L14 34h12a2 2 0 000-4H16.7l6-12H22.5zM42 30a2 2 0 000 4h10l-9.5-16H38l4 8zM30 44h4v12h8a2 2 0 110 4H22a2 2 0 110-4h8V44z" />
-      </svg>
     </div>
   );
 }
