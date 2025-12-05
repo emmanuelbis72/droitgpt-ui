@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 
 // Convertit base64 en Blob audio
@@ -11,6 +11,25 @@ function base64ToBlob(base64, mimeType) {
   return new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
 }
 
+// Détermine le meilleur type audio supporté par ce navigateur
+function getSupportedMimeType() {
+  if (typeof window === "undefined" || !window.MediaRecorder) {
+    return "audio/webm";
+  }
+
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/mpeg",
+  ];
+
+  for (const type of candidates) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return "audio/webm";
+}
+
 export default function AssistantVocal() {
   const [isRecording, setIsRecording] = useState(false);
   const [conversation, setConversation] = useState([]);
@@ -21,9 +40,21 @@ export default function AssistantVocal() {
   const chunksRef = useRef([]);
   const audioRef = useRef(null);
   const progressTimerRef = useRef(null); // ⏱️ timer progression
+  const mimeTypeRef = useRef("audio/webm"); // type audio réellement utilisé
 
-  // API Render
-  const VOICE_API_URL = "https://droitgpt-voice.onrender.com/voice-chat";
+  // API Render (env var si dispo, sinon fallback)
+  const VOICE_API_URL =
+    import.meta.env.VITE_VOICE_API_URL ||
+    "https://droitgpt-voice.onrender.com/voice-chat";
+
+  // Nettoyage du timer si le composant est démonté
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) {
+        clearInterval(progressTimerRef.current);
+      }
+    };
+  }, []);
 
   // Démarre la progression simulée (~30 s jusqu'à 95 %)
   function startProgress() {
@@ -51,12 +82,21 @@ export default function AssistantVocal() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+
+      const chosenType = getSupportedMimeType();
+      mimeTypeRef.current = chosenType;
+
+      const options =
+        chosenType && chosenType !== ""
+          ? { mimeType: chosenType }
+          : undefined;
+
+      const recorder = new MediaRecorder(stream, options);
 
       chunksRef.current = [];
 
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           chunksRef.current.push(event.data);
         }
       };
@@ -65,9 +105,30 @@ export default function AssistantVocal() {
         // on coupe le micro
         stream.getTracks().forEach((t) => t.stop());
 
-        const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
+        if (!chunksRef.current.length) {
+          alert(
+            "Aucun son capturé. Veuillez réessayer en parlant un peu plus longtemps."
+          );
+          setIsRecording(false);
+          return;
+        }
+
+        const finalType =
+          mimeTypeRef.current || recorder.mimeType || "audio/webm";
+        const audioBlob = new Blob(chunksRef.current, { type: finalType });
         chunksRef.current = [];
+
+        // Protection contre les enregistrements vides ou très courts
+        if (audioBlob.size < 500) {
+          alert(
+            "L'enregistrement est trop court ou vide. Veuillez réessayer en parlant plus fort ou plus longtemps."
+          );
+          setIsRecording(false);
+          return;
+        }
+
         await sendAudio(audioBlob);
+        setIsRecording(false);
       };
 
       recorder.start();
@@ -80,7 +141,10 @@ export default function AssistantVocal() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
@@ -91,7 +155,14 @@ export default function AssistantVocal() {
     startProgress(); // 🔁 on lance la progression
 
     const formData = new FormData();
-    formData.append("audio", audioBlob, "speech.webm");
+
+    // extension cohérente avec le type (important pour iOS)
+    const type = audioBlob.type || "";
+    let ext = "webm";
+    if (type.includes("mp4") || type.includes("m4a")) ext = "m4a";
+    else if (type.includes("mpeg") || type.includes("mp3")) ext = "mp3";
+
+    formData.append("audio", audioBlob, `speech.${ext}`);
 
     // Mini-mémoire de conversation
     const MAX_MESSAGES = 8;
@@ -116,7 +187,8 @@ export default function AssistantVocal() {
       if (!res.ok) {
         const text = await res.text();
         console.error("Réponse serveur vocal non OK :", res.status, text);
-        alert(`Erreur serveur vocal : ${res.status}\n${text}`);
+        alert(`Erreur serveur vocal : ${res.status}\n${text || ""}`);
+        stopProgress();
         return;
       }
 
@@ -124,6 +196,7 @@ export default function AssistantVocal() {
 
       if (!data || (!data.userText && !data.answerText)) {
         alert("Réponse vocale vide ou invalide.");
+        stopProgress();
         return;
       }
 
@@ -290,9 +363,7 @@ export default function AssistantVocal() {
                   : "bg-slate-800 hover:bg-slate-700"
               }`}
             >
-              <span className="text-2xl">
-                {isRecording ? "⏹️" : "🎤"}
-              </span>
+              <span className="text-2xl">{isRecording ? "⏹️" : "🎤"}</span>
             </button>
           </div>
 
