@@ -258,47 +258,50 @@ export default function ChatInterface() {
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-
-        {/* Header */}
+        
+        {/* ---------- HEADER ---------- */}
         <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/60 flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">
-              Chat texte & analyse de documents
+          <div className="flex flex-col">
+            <h1 className="text-[13px] uppercase tracking-[0.25em] text-emerald-300 font-semibold">
+              DROITGPT
             </h1>
+            <h2 className="text-lg md:text-xl font-bold mt-1">
+              IA ASSISTANT JURIDIQUE CONGOLAIS
+            </h2>
           </div>
 
-          <div className="flex items-center gap-3 text-xs">
+          <div className="flex items-center gap-2 text-[11px]">
             <Link
               to="/assistant-vocal"
-              className="px-3 py-1.5 rounded-full border border-emerald-500/80 bg-slate-900/80 text-emerald-200 hover:bg-emerald-500/10"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-emerald-500/80 bg-slate-900/80 text-emerald-200 hover:bg-emerald-500/10 transition"
             >
               🎤 Assistant vocal
             </Link>
 
             <Link
               to="/"
-              className="px-3 py-1.5 rounded-full border border-slate-600/70 bg-slate-900/80 text-slate-200 hover:bg-slate-800"
+              className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-600/70 bg-slate-900/80 text-slate-200 hover:bg-slate-800 transition"
             >
               ⬅️ Accueil
             </Link>
           </div>
         </div>
 
-        {/* Sous-header - AJOUT DU BOUTON */}
-        <div className="px-4 md:px-6 py-3 border-b border-white/10 bg-slate-950/40 flex flex-wrap items-center justify-between gap-3 text-xs">
-
+        {/* ---------- SOUS-HEADER ---------- */}
+        <div className="px-4 md:px-6 py-3 border-b border-white/10 bg-slate-950/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          
           <div>
             {docContext && (
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/5 text-emerald-200">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/5 text-[11px] text-emerald-200">
                 📂 <strong>Document chargé :</strong>
-                <span className="truncate max-w-[200px]">{docTitle}</span>
+                <span className="truncate max-w-[180px]">{docTitle}</span>
               </div>
             )}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs justify-end">
 
-            {/* 🔥 Nouveau bouton : Génération document */}
+            {/* 🔥 Bouton Documents */}
             <Link
               to="/generate"
               className="px-3 py-1.5 rounded-full border border-indigo-500/70 text-indigo-300 bg-slate-900/80 hover:bg-indigo-500/10 transition"
@@ -309,21 +312,21 @@ export default function ChatInterface() {
             {docContext && (
               <button
                 onClick={handleClearDocument}
-                className="px-3 py-1.5 rounded-full border border-amber-400/80 text-amber-200 bg-slate-900/80 hover:bg-amber-500/10"
+                className="px-3 py-1.5 rounded-full border border-amber-400/80 text-amber-200 bg-slate-900/80 hover:bg-amber-500/10 transition"
               >
-                🔄 Chat normal
+                🔄 Chat normal (sans document)
               </button>
             )}
 
             <button
               onClick={handleReset}
-              className="px-3 py-1.5 rounded-full border border-rose-500/70 text-rose-300 hover:bg-rose-500/10"
+              className="px-3 py-1.5 rounded-full border border-rose-500/70 text-rose-300 hover:bg-rose-500/10 transition"
             >
               Réinitialiser
             </button>
 
-            <label className="cursor-pointer px-3 py-1.5 rounded-full border border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/10">
-              📎 Joindre document juridique
+            <label className="cursor-pointer px-3 py-1.5 rounded-full border border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/10 transition">
+              📎 Joindre document (PDF/DOCX)
               <input
                 type="file"
                 accept=".pdf,.docx"
@@ -334,25 +337,48 @@ export default function ChatInterface() {
           </div>
         </div>
 
-        {/* Message zone */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-slate-950/70">
+        {/* ---------- MESSAGES ---------- */}
+        <div className="flex-1 overflow-y-auto px-3 md:px-5 py-4 space-y-3 bg-slate-950/70">
           {messages.map((msg, i) => {
             const isUser = msg.from === "user";
             const isAssistant = msg.from === "assistant";
 
+            const showPdfButton =
+              isAssistant &&
+              (msg.text.includes("Analyse du document") ||
+                msg.text.includes("Résumé des points juridiques clés"));
+
             return (
-              <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+              <div
+                key={i}
+                className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+              >
                 <div
-                  className={`max-w-[75%] rounded-2xl px-4 py-2 shadow-sm ${
+                  className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${
                     isUser
                       ? "bg-emerald-500 text-white rounded-br-sm"
                       : "bg-slate-900/90 text-slate-50 rounded-bl-sm border border-white/10"
                   }`}
                 >
+                  {isAssistant && (
+                    <div className="text-[10px] uppercase tracking-wide mb-1 text-slate-300/80">
+                      DroitGPT • Réponse juridique
+                    </div>
+                  )}
+
                   <div
-                    className="prose prose-sm prose-invert"
+                    className="prose prose-sm max-w-none prose-invert prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-emerald-300"
                     dangerouslySetInnerHTML={{ __html: msg.text }}
                   />
+
+                  {showPdfButton && (
+                    <button
+                      onClick={() => generatePDF(msg.text)}
+                      className="absolute -right-8 top-2 text-[11px] text-emerald-300 hover:text-emerald-200 underline"
+                    >
+                      PDF
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -360,31 +386,64 @@ export default function ChatInterface() {
 
           {loading && (
             <div className="flex justify-start">
-              <div className="px-3 py-1.5 rounded-full bg-slate-900/90 border border-white/10 text-xs text-slate-300">
-                Assistant rédige{dots}
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 border border-white/10 text-xs text-slate-300">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                <span>Assistant rédige{dots}</span>
               </div>
             </div>
           )}
 
-          <div ref={messagesEndRef}></div>
+          <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-        <div className="px-4 py-3 border-t border-white/10 bg-slate-950/90">
+        {/* ---------- INPUT ---------- */}
+        <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <div className="flex flex-col gap-2">
-            <textarea
-              className="flex-1 px-3 py-3 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 min-h-[90px]"
-              placeholder="Décrivez votre situation juridique…"
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-            />
+            {/* textarea + bouton envoyer */}
+            <div className="flex items-end gap-2">
+              <textarea
+                className="flex-1 px-3 py-3 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent min-h-[90px] max-h-40 resize-y"
+                placeholder="Décrivez votre situation juridique ou posez votre question ici…"
+                value={userInput}
+                onChange={(e) => setUserInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    (e.ctrlKey || e.metaKey) &&
+                    userInput.trim()
+                  ) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+              />
 
-            <button
-              className="w-fit bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2 rounded-2xl shadow-lg"
-              onClick={handleSend}
-            >
-              Envoyer
-            </button>
+              <button
+                className={`inline-flex items-center justify-center px-4 py-2 rounded-2xl text-sm font-medium transition self-stretch ${
+                  loading || !userInput.trim()
+                    ? "bg-slate-700 text-slate-400 cursor-not-allowed"
+                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
+                }`}
+                onClick={handleSend}
+                disabled={loading || !userInput.trim()}
+              >
+                Envoyer
+              </button>
+            </div>
+
+            {docContext && (
+              <button
+                onClick={handleClearDocument}
+                className="w-fit px-3 py-1.5 rounded-full border border-amber-400/80 text-amber-200 bg-slate-900/80 hover:bg-amber-500/10 text-xs transition self-start"
+              >
+                🔄 Revenir au chat normal (sans document)
+              </button>
+            )}
+
+            <p className="text-[11px] text-slate-400">
+              ⚠️ DroitGPT ne remplace pas un avocat. Pour un litige concret,
+              consultez un professionnel du droit en RDC.
+            </p>
           </div>
         </div>
       </div>
