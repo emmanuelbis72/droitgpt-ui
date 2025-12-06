@@ -100,36 +100,222 @@ const LESSONS = {
   "2": [
     {
       id: 1,
-      titre: "La Constitution congolaise : rôle et portée",
+      // 🔗 On relie ce chapitre au fichier public/academie-cours/module1_chap1.txt
+      fileSlug: "module1_chap1",
+      titre: "Chapitre I — Les notions de la Constitution",
       objectifs: [
-        "Comprendre la fonction de la Constitution dans l’ordre juridique congolais.",
-        "Identifier les droits fondamentaux protégés.",
-        "Voir comment la Constitution encadre les pouvoirs publics.",
+        "Expliquer les différentes définitions de la Constitution (matérielle et formelle) et leurs implications dans l’ordre juridique congolais.",
+        "Identifier les éléments garantissant la suprématie et la rigidité de la Constitution, ainsi que les procédures d’élaboration et de révision.",
+        "Distinguer les formes de constitutions (écrite, coutumière, coutume constitutionnelle) et analyser leur rôle dans un État de droit moderne.",
       ],
       resume:
-        "Ce chapitre introduit la Constitution congolaise, sa place dans l’ordre juridique et les principaux droits fondamentaux qu’elle consacre.",
-      contenu: [
-        "La Constitution définit la forme de l’État, l’organisation des pouvoirs publics et garantit les droits fondamentaux des citoyens.",
-        "Elle protège notamment les droits civils, politiques, économiques, sociaux et culturels.",
-        "Toute loi, règlement ou décision administrative doit être conforme à la Constitution, sous le contrôle de la Cour constitutionnelle.",
-      ],
+        "La Constitution est la norme juridique suprême qui organise l’État, définit les compétences des pouvoirs publics et garantit les droits fondamentaux des citoyens. Elle peut être envisagée sous un sens matériel (ensemble de règles relatives à l’exercice du pouvoir) ou formel (texte écrit adopté selon une procédure spéciale). Sa suprématie repose à la fois sur son caractère supérieur et sur la procédure exigeante de son élaboration et de sa révision. On distingue les constitutions écrites et coutumières, ainsi que la coutume constitutionnelle résultant de pratiques institutionnelles ayant force obligatoire. Enfin, la rigidité constitutionnelle, les limites posées au pouvoir constituant dérivé et les mécanismes de contrôle (politique, juridictionnel, citoyen) sont essentiels pour protéger l’État de droit en République démocratique du Congo.",
+      // On peut laisser 'contenu' vide, le texte complet vient du fichier TXT
+      contenu: [],
       quiz: [
         {
           question:
-            "Quel organe est principalement chargé du contrôle de constitutionnalité en RDC ?",
+            "Dans son sens matériel, la Constitution désigne principalement :",
           options: [
-            "La Cour de cassation.",
-            "La Cour constitutionnelle.",
-            "Le Conseil d’État.",
-            "Le Parlement.",
+            "Seules les règles écrites relatives aux droits fondamentaux.",
+            "L’ensemble des règles concernant l’organisation et l’exercice du pouvoir.",
+            "Un texte accessible uniquement par référendum.",
+            "Les lois adoptées par le Parlement.",
           ],
           bonneReponse: 1,
           explication:
-            "La Cour constitutionnelle est compétente pour contrôler la conformité des lois et certains actes à la Constitution.",
+            "La définition matérielle vise toutes les règles qui concernent l’exercice du pouvoir politique, quelle que soit leur forme.",
+        },
+        {
+          question:
+            "Selon le sens formel, la Constitution se caractérise avant tout par :",
+          options: [
+            "Son ancienneté et son origine coutumière.",
+            "Un texte élaboré par les juges constitutionnels.",
+            "Une procédure d’adoption et de révision spécifique.",
+            "La souplesse de modification.",
+          ],
+          bonneReponse: 2,
+          explication:
+            "La Constitution formelle est un texte écrit adopté selon des procédures particulières distinctes des lois ordinaires.",
+        },
+        {
+          question: "Pourquoi une Constitution rigide est-elle importante ?",
+          options: [
+            "Parce qu’elle se modifie plus facilement.",
+            "Parce qu’elle protège la Constitution contre des révisions opportunistes.",
+            "Parce qu’elle supprime la séparation des pouvoirs.",
+            "Parce qu’elle permet de gouverner sans règles.",
+          ],
+          bonneReponse: 1,
+          explication:
+            "La rigidité empêche des modifications intempestives motivées par des intérêts politiques particuliers.",
+        },
+        {
+          question:
+            "Quel organe veille au respect de la Constitution en RDC, selon l’article 69 ?",
+          options: [
+            "Le Parlement.",
+            "La Cour constitutionnelle.",
+            "Le Président de la République.",
+            "Le Gouvernement.",
+          ],
+          bonneReponse: 2,
+          explication:
+            "L’article 69 de la Constitution attribue au Président de la République la mission de veiller au respect de la Constitution.",
+        },
+        {
+          question: "La coutume constitutionnelle se définit comme :",
+          options: [
+            "Une Constitution non écrite et complète.",
+            "Un ensemble de pratiques obligatoires en marge du texte écrit.",
+            "Une norme internationale applicable en droit interne.",
+            "Une procédure d’élaboration monarchique.",
+          ],
+          bonneReponse: 1,
+          explication:
+            "La coutume constitutionnelle résulte de pratiques institutionnelles répétées et acceptées comme obligatoires, en complément ou en marge du texte écrit.",
+        },
+        {
+          question:
+            "Quel est l’avantage principal d’une Constitution écrite par rapport à une Constitution purement coutumière ?",
+          options: [
+            "Elle se modifie sans procédure.",
+            "Elle garantit la clarté et la sécurité juridique.",
+            "Elle supprime les droits fondamentaux.",
+            "Elle remplace le contrôle de constitutionnalité.",
+          ],
+          bonneReponse: 1,
+          explication:
+            "Une Constitution écrite permet une meilleure précision et stabilité du cadre institutionnel, ce qui renforce la sécurité juridique.",
+        },
+        {
+          question:
+            "Pourquoi une Constitution trop révisée risque-t-elle de perdre sa valeur ?",
+          options: [
+            "Parce qu’elle devient illisible.",
+            "Parce qu’elle s’adapte trop au peuple.",
+            "Parce qu’elle cesse d’exprimer la volonté générale pour devenir l’outil d’intérêts particuliers.",
+            "Parce qu’elle ne peut plus être appliquée par les tribunaux.",
+          ],
+          bonneReponse: 2,
+          explication:
+            "Une Constitution façonnée pour un individu ou un groupe perd son caractère impersonnel et sa légitimité, cessant de refléter la volonté générale.",
         },
       ],
       questionsSuggeres: [
-        "Demander à DroitGPT : « Quels sont les principaux droits fondamentaux reconnus par la Constitution congolaise ? »",
+        "Demander à DroitGPT : « Explique la différence entre Constitution matérielle et Constitution formelle dans le contexte congolais. »",
+        "Demander à DroitGPT : « Pourquoi la suprématie et la rigidité de la Constitution sont essentielles pour l’État de droit en RDC ? »",
+      ],
+    },
+    {
+      id: 2,
+      fileSlug: "module1_chap2",
+      titre: "Chapitre II — Théories générales sur la forme de l’État",
+      objectifs: [
+        "Distinguer les différentes formes d’État (unitaire, fédéral, confédéral, régional) et leurs caractéristiques essentielles.",
+        "Expliquer les mécanismes de déconcentration et de décentralisation et leur importance dans l’organisation territoriale.",
+        "Analyser les implications de chaque forme d’État dans la gestion du pouvoir politique et administratif en contexte congolais.",
+      ],
+      resume:
+        "La forme de l’État renvoie à la manière dont le pouvoir politique est organisé et réparti sur un territoire donné. Deux grandes catégories sont classiquement distinguées : l’État unitaire et l’État composé. L’État unitaire, modèle dominant en Afrique et en RDC, repose sur un seul centre de décision politique et administrative mais connaît des aménagements comme la déconcentration et la décentralisation, destinés à rapprocher l’administration des citoyens. L’État composé peut prendre la forme d’un État fédéral, où coexistent un État central et des entités fédérées dotées d’autonomie, ou d’une confédération d’États, union plus souple dans laquelle chaque membre conserve sa souveraineté. Entre ces modèles se situe l’État régional, marqué par une forte décentralisation tout en demeurant unitaire. L’étude de ces formes permet de mieux comprendre les choix et l’évolution de l’organisation de l’État congolais.",
+      contenu: [],
+      quiz: [
+        {
+          id: 1,
+          question: "L’État unitaire se caractérise principalement par :",
+          options: [
+            "Plusieurs centres de souveraineté",
+            "Un seul centre de décision politique et administrative",
+            "Une autonomie constitutionnelle des entités territoriales",
+            "La coexistence de plusieurs constitutions",
+          ],
+          bonneReponse: 1,
+          explication:
+            "L’État unitaire repose sur l’unité de territoire, de population et d’organisation politique, avec un centre de décision unique.",
+        },
+        {
+          id: 2,
+          question: "La déconcentration consiste en :",
+          options: [
+            "La création de nouvelles personnes morales autonomes",
+            "Le transfert de compétences à des autorités locales déléguées représentant l’État",
+            "La disparition du pouvoir central",
+            "L’octroi d’une souveraineté aux provinces",
+          ],
+          bonneReponse: 1,
+          explication:
+            "La déconcentration rapproche l’administration des citoyens mais ne crée pas d’autonomie juridique ; les autorités déconcentrées agissent au nom de l’État.",
+        },
+        {
+          id: 3,
+          question: "La décentralisation se distingue de la déconcentration parce qu’elle implique :",
+          options: [
+            "L’absence de tutelle de l’État",
+            "La reconnaissance d’une personnalité juridique aux entités locales",
+            "Un pouvoir central renforcé",
+            "La suppression du découpage territorial",
+          ],
+          bonneReponse: 1,
+          explication:
+            "La décentralisation crée de véritables centres de pouvoir autonomes dotés d’une personnalité juridique propre.",
+        },
+        {
+          id: 4,
+          question: "Dans un État fédéral :",
+          options: [
+            "Les États fédérés sont souverains sur le plan international",
+            "Les compétences sont exclusivement exercées par l’État central",
+            "Les États fédérés disposent d’une autonomie constitutionnelle et législative",
+            "La Constitution fédérale peut être modifiée par un seul État fédéré",
+          ],
+          bonneReponse: 2,
+          explication:
+            "Les États fédérés ont une autonomie constitutionnelle et législative mais ne disposent pas de souveraineté internationale.",
+        },
+        {
+          id: 5,
+          question: "La confédération d’États se distingue de la fédération par :",
+          options: [
+            "L’unicité de la souveraineté",
+            "Le maintien de la souveraineté des États membres",
+            "L’existence d’une Constitution unique",
+            "La primauté du droit confédéral",
+          ],
+          bonneReponse: 1,
+          explication:
+            "Dans une confédération, les États membres demeurent souverains et conservent leur personnalité internationale.",
+        },
+        {
+          id: 6,
+          question: "L’État régional se situe entre l’État unitaire et l’État fédéral car :",
+          options: [
+            "Il supprime toute autonomie locale",
+            "Il reprend strictement le modèle fédéral",
+            "Il combine une forte décentralisation avec un État central unitaire",
+            "Il est fondé sur un traité international",
+          ],
+          bonneReponse: 2,
+          explication:
+            "L’État régional est une forme intermédiaire : très décentralisé mais demeurant unitaire.",
+        },
+        {
+          id: 7,
+          question: "Parmi les principes fondamentaux du fédéralisme figure :",
+          options: [
+            "Le monopole du pouvoir central",
+            "L’unanimité obligatoire pour toute décision",
+            "L’autonomie, la participation et la coopération",
+            "L’absence de constitution écrite",
+          ],
+          bonneReponse: 2,
+          explication:
+            "Le fédéralisme repose sur trois piliers : autonomie des entités, participation au pouvoir fédéral et coopération.",
+        },
+      ],
+      questionsSuggeres: [
+        "Expliquez la différence entre déconcentration et décentralisation dans l’organisation territoriale de la RDC.",
+        "Discutez les avantages et limites d’un État fédéral par rapport à un État unitaire en Afrique.",
       ],
     },
   ],
@@ -235,7 +421,7 @@ function stripHtmlToText(html) {
 }
 
 // Construire un texte brut à envoyer à DroitGPT pour explication orale
-function buildLessonRawText(lesson, moduleTitle, chapterIndex) {
+function buildLessonRawText(lesson, moduleTitle, chapterIndex, fullLessonText) {
   if (!lesson) return "";
   const parts = [];
   parts.push(`Module : ${moduleTitle}`);
@@ -243,7 +429,10 @@ function buildLessonRawText(lesson, moduleTitle, chapterIndex) {
   if (lesson.resume) {
     parts.push(`Résumé : ${lesson.resume}`);
   }
-  if (lesson.contenu && lesson.contenu.length > 0) {
+  if (fullLessonText) {
+    parts.push("Contenu du cours :");
+    parts.push(fullLessonText);
+  } else if (lesson.contenu && lesson.contenu.length > 0) {
     parts.push("Contenu :");
     lesson.contenu.forEach((c) => parts.push(c));
   }
@@ -275,13 +464,41 @@ export default function AcademieLecon() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [isGeneratingAudioText, setIsGeneratingAudioText] = useState(false);
 
+  // 🆕 Texte complet du cours provenant du fichier TXT
+  const [fullLessonText, setFullLessonText] = useState("");
+
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
       setSpeechSupported(false);
     }
   }, []);
 
-  // reset quiz + stop audio + update progression when chapter changes
+  // 🔁 Charger le texte du fichier si fileSlug est défini
+  useEffect(() => {
+    if (!lesson || !lesson.fileSlug) {
+      setFullLessonText("");
+      return;
+    }
+
+    const url = `/academie-cours/${lesson.fileSlug}.txt`;
+
+    fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error("Fichier cours introuvable");
+        return res.text();
+      })
+      .then((txt) => {
+        setFullLessonText(txt);
+      })
+      .catch((err) => {
+        console.error("Erreur chargement cours :", err);
+        setFullLessonText(
+          "Le contenu détaillé de ce chapitre sera bientôt disponible."
+        );
+      });
+  }, [lesson]);
+
+  // reset quiz + stop audio + update progression quand le chapitre change
   useEffect(() => {
     setSelectedAnswers({});
     setQuizSubmitted(false);
@@ -386,16 +603,18 @@ export default function AcademieLecon() {
     try {
       setIsGeneratingAudioText(true);
 
-      // 1) Construire un texte brut du cours
-      const rawText = buildLessonRawText(lesson, moduleTitle, index + 1).slice(
-        0,
-        4000
-      );
+      // 1) Construire un texte brut du cours (en priorité depuis le fichier)
+      const rawText = buildLessonRawText(
+        lesson,
+        moduleTitle,
+        index + 1,
+        fullLessonText
+      ).slice(0, 4000);
 
       // 2) Appeler ton backend DroitGPT pour une explication orale
       const prompt =
         "Explique oralement, de manière simple, claire et pédagogique, le cours suivant à un étudiant congolais. " +
-        "Utilise un ton parlé, des phrases courtes, sans HTML, sans listes, comme un professeur qui explique. " +
+        "Utilise un ton parlé, des phrases courtes, sans HTML, sans listes techniques lourdes, comme un professeur qui explique. " +
         "Ne donne pas de structure trop académique, privilégie la compréhension orale.\n\n" +
         'Cours à expliquer : """\n' +
         rawText +
@@ -474,22 +693,36 @@ export default function AcademieLecon() {
       y += resumeLines.length * 6 + 4;
     }
 
-    if (lesson.contenu && lesson.contenu.length > 0) {
+    // Points clés ou texte du cours
+    if (fullLessonText || (lesson.contenu && lesson.contenu.length > 0)) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(12);
       doc.text("Points clés du cours", marginLeft, y);
       y += 6;
 
       doc.setFont("helvetica", "normal");
-      lesson.contenu.forEach((c) => {
-        const lines = doc.splitTextToSize(`• ${c}`, 170);
-        if (y > 270) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.text(lines, marginLeft, y);
-        y += lines.length * 6 + 2;
-      });
+
+      if (fullLessonText) {
+        const lines = doc.splitTextToSize(fullLessonText, 170);
+        lines.forEach((line) => {
+          if (y > 270) {
+            doc.addPage();
+            y = 20;
+          }
+          doc.text(line, marginLeft, y);
+          y += 6;
+        });
+      } else {
+        lesson.contenu.forEach((c) => {
+          const lines = doc.splitTextToSize(`• ${c}`, 170);
+          if (y > 270) {
+            doc.addPage();
+            y = 20;
+          }
+          doc.text(lines, marginLeft, y);
+          y += lines.length * 6 + 2;
+        });
+      }
       y += 2;
     }
 
@@ -705,7 +938,11 @@ export default function AcademieLecon() {
             <h2 className="text-sm font-semibold text-slate-100 mb-2">
               📚 Contenu du cours
             </h2>
-            {lesson.contenu && lesson.contenu.length > 0 ? (
+            {fullLessonText ? (
+              <pre className="whitespace-pre-wrap text-sm text-slate-100 leading-relaxed">
+                {fullLessonText}
+              </pre>
+            ) : lesson.contenu && lesson.contenu.length > 0 ? (
               <ul className="text-sm text-slate-100 space-y-1.5 list-disc list-inside">
                 {lesson.contenu.map((c, idx) => (
                   <li key={idx}>{c}</li>
