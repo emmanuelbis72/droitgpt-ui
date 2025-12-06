@@ -5,12 +5,11 @@ export default function Home() {
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-
         {/* Header */}
         <div className="px-6 py-6 border-b border-white/10 bg-slate-950/70 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
             <div className="text-[11px] uppercase tracking-[0.25em] text-slate-300 font-bold">
-              Assistant juridique congolais
+              <strong>Assistant juridique congolais</strong>
             </div>
             <h1 className="text-3xl font-semibold mt-1">DroitGPT</h1>
             <p className="mt-1 text-sm text-slate-300">
@@ -36,9 +35,7 @@ export default function Home() {
 
         {/* Section des options */}
         <div className="px-6 py-8 bg-slate-950/60">
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
             {/* Chatbot juridique */}
             <Link
               to="/chat"
@@ -70,6 +67,23 @@ export default function Home() {
               <h2 className="mt-1 text-lg font-semibold">Assistant vocal</h2>
               <p className="text-xs text-slate-300">
                 Parlez directement à l’assistant vocal juridique et recevez une réponse audio.
+              </p>
+            </Link>
+
+            {/* DroitGPT Académie */}
+            <Link
+              to="/academie"
+              className="group rounded-2xl border border-violet-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-violet-300 hover:bg-slate-900 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">📚</span>
+                <span className="text-[10px] uppercase tracking-[0.18em] text-violet-300">
+                  Formation
+                </span>
+              </div>
+              <h2 className="mt-1 text-lg font-semibold">DroitGPT Académie</h2>
+              <p className="text-xs text-slate-300">
+                Suivez des modules guidés pour apprendre et réviser le droit congolais et l’OHADA étape par étape.
               </p>
             </Link>
 

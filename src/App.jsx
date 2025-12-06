@@ -7,20 +7,26 @@ import ChatInterface from "./components/ChatInterface.jsx";
 import Generate from "./components/Generate.jsx";
 import Analyse from "./components/Analyse.jsx";
 
-// ✅ CORRECTION : AssistantVocal se trouve dans src/components
+// Assistant vocal
 import AssistantVocal from "./components/AssistantVocal.jsx";
+
+// 🎓 Pages Académie
+import Academie from "./pages/Academie.jsx";
+import AcademieProgramme from "./pages/AcademieProgramme.jsx";
+import AcademieLecon from "./pages/AcademieLecon.jsx";
+import AcademieDashboard from "./pages/AcademieDashboard.jsx"; // ✅ nouveau
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Page d'accueil */}
+        {/* Accueil */}
         <Route path="/" element={<Home />} />
 
         {/* Chat juridique */}
         <Route path="/chat" element={<ChatInterface />} />
 
-        {/* Génération de PDF */}
+        {/* Génération PDF */}
         <Route path="/generate" element={<Generate />} />
 
         {/* Analyse de documents */}
@@ -28,6 +34,27 @@ function App() {
 
         {/* Assistant vocal */}
         <Route path="/assistant-vocal" element={<AssistantVocal />} />
+
+        {/* 🎓 DroitGPT Académie – liste des modules */}
+        <Route path="/academie" element={<Academie />} />
+
+        {/* 🎓 Tableau de bord Académie */}
+        <Route
+          path="/academie/dashboard"
+          element={<AcademieDashboard />}
+        />
+
+        {/* 🎓 Programme détaillé d’un module */}
+        <Route
+          path="/academie/programme/:id"
+          element={<AcademieProgramme />}
+        />
+
+        {/* 🎓 Chapitre / leçon d’un module */}
+        <Route
+          path="/academie/programme/:id/lesson/:lessonId"
+          element={<AcademieLecon />}
+        />
       </Routes>
     </BrowserRouter>
   );
