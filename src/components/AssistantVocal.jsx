@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext.jsx";
 
 // Convertit base64 en Blob audio
 function base64ToBlob(base64, mimeType) {
@@ -41,6 +42,10 @@ export default function AssistantVocal() {
   const audioRef = useRef(null);
   const progressTimerRef = useRef(null); // ⏱️ timer progression
   const mimeTypeRef = useRef("audio/webm"); // type audio réellement utilisé
+
+  // ✅ Auth
+  const { accessToken, logout } = useAuth();
+  const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
   // API Render (env var si dispo, sinon fallback)
   const VOICE_API_URL =
@@ -181,8 +186,20 @@ export default function AssistantVocal() {
     try {
       const res = await fetch(VOICE_API_URL, {
         method: "POST",
+        headers: {
+          ...authHeaders, // ✅ Bearer token
+        },
         body: formData,
       });
+
+      // ✅ Si backend protégé et user non authentifié
+      if (res.status === 401) {
+        logout();
+        const next = encodeURIComponent("/assistant-vocal");
+        window.location.href = `/login?next=${next}`;
+        stopProgress();
+        return;
+      }
 
       if (!res.ok) {
         const text = await res.text();

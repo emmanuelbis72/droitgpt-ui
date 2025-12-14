@@ -1,6 +1,7 @@
-// 📄 src/pages/Generate.jsx
+// 📄 src/pages/Generate.jsx (ou src/components/Generate.jsx selon ton projet)
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext.jsx";
 
 const PDF_API_URL =
   import.meta.env.VITE_PDF_API_URL ||
@@ -14,6 +15,16 @@ export default function Generate() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const navigate = useNavigate();
+
+  // ✅ Auth
+  const { accessToken, logout } = useAuth();
+  const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+
+  const redirectToLogin = (nextPath = "/generate") => {
+    logout();
+    const next = encodeURIComponent(nextPath);
+    window.location.href = `/login?next=${next}`;
+  };
 
   // Simulation douce de barre de progression
   useEffect(() => {
@@ -72,12 +83,19 @@ export default function Generate() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...authHeaders, // ✅ Bearer token
         },
         body: JSON.stringify({
           title: title.trim(),
           content: content.trim(),
         }),
       });
+
+      // ✅ backend protégé → non connecté
+      if (res.status === 401) {
+        redirectToLogin("/generate");
+        return;
+      }
 
       if (!res.ok) {
         const raw = await res.text();

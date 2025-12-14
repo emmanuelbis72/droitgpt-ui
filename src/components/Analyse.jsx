@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
+import { useAuth } from "../auth/AuthContext.jsx";
 
 export default function Analyse() {
   const [file, setFile] = useState(null);
@@ -17,6 +18,10 @@ export default function Analyse() {
   });
 
   const navigate = useNavigate();
+
+  // ✅ Auth
+  const { accessToken, logout } = useAuth();
+  const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
   const handleFileChange = (e) => setFile(e.target.files[0] || null);
 
@@ -54,9 +59,20 @@ export default function Analyse() {
         "https://droitgpt-analysepdf.onrender.com/analyse-document",
         {
           method: "POST",
+          headers: {
+            ...authHeaders,
+          },
           body: formData,
         }
       );
+
+      // ✅ Si non authentifié (backend protégé)
+      if (res.status === 401) {
+        logout();
+        const next = encodeURIComponent("/analyse");
+        window.location.href = `/login?next=${next}`;
+        return;
+      }
 
       const contentType = res.headers.get("content-type") || "";
       if (!res.ok || !contentType.includes("application/json")) {
@@ -159,8 +175,8 @@ export default function Analyse() {
               Analyse juridique de PDF / DOCX
             </h1>
             <p className="text-[11px] text-slate-400 mt-1">
-              Téléversez un contrat, jugement, décision, etc. DroitGPT vous
-              donne une analyse structurée basée sur le droit congolais.
+              Téléversez un contrat, jugement, décision, etc. DroitGPT vous donne
+              une analyse structurée basée sur le droit congolais.
             </p>
           </div>
 
@@ -239,9 +255,7 @@ export default function Analyse() {
               </div>
             )}
 
-            {error && (
-              <p className="text-xs text-red-400 mt-1">❌ {error}</p>
-            )}
+            {error && <p className="text-xs text-red-400 mt-1">❌ {error}</p>}
 
             {docContext && (
               <div className="mt-2 space-y-2">
@@ -331,9 +345,7 @@ export default function Analyse() {
                     <p className="font-medium text-slate-100 truncate">
                       📄 {item.filename}
                     </p>
-                    <p className="text-slate-500 text-[10px]">
-                      🗓️ {item.timestamp}
-                    </p>
+                    <p className="text-slate-500 text-[10px]">🗓️ {item.timestamp}</p>
                   </div>
                   <details className="mt-1">
                     <summary className="cursor-pointer text-emerald-300">

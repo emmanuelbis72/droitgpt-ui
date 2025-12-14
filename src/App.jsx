@@ -3,59 +3,111 @@ import React from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import Home from "./pages/Home.jsx";
+
+import { AuthProvider } from "./auth/AuthContext.jsx";
+import ProtectedRoute from "./auth/ProtectedRoute.jsx";
+
+// Pages / components
 import ChatInterface from "./components/ChatInterface.jsx";
 import Generate from "./components/Generate.jsx";
 import Analyse from "./components/Analyse.jsx";
-
-// Assistant vocal
 import AssistantVocal from "./components/AssistantVocal.jsx";
+
+// Auth UI (dans components comme tu veux)
+import Login from "./components/Login.jsx";
+import Register from "./components/Register.jsx";
 
 // 🎓 Pages Académie
 import Academie from "./pages/Academie.jsx";
 import AcademieProgramme from "./pages/AcademieProgramme.jsx";
 import AcademieLecon from "./pages/AcademieLecon.jsx";
-import AcademieDashboard from "./pages/AcademieDashboard.jsx"; // ✅ nouveau
+import AcademieDashboard from "./pages/AcademieDashboard.jsx";
 
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        {/* Accueil */}
-        <Route path="/" element={<Home />} />
+      <AuthProvider>
+        <Routes>
+          {/* Public */}
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
-        {/* Chat juridique */}
-        <Route path="/chat" element={<ChatInterface />} />
+          {/* Protected */}
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute>
+                <ChatInterface />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Génération PDF */}
-        <Route path="/generate" element={<Generate />} />
+          <Route
+            path="/generate"
+            element={
+              <ProtectedRoute>
+                <Generate />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Analyse de documents */}
-        <Route path="/analyse" element={<Analyse />} />
+          <Route
+            path="/analyse"
+            element={
+              <ProtectedRoute>
+                <Analyse />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Assistant vocal */}
-        <Route path="/assistant-vocal" element={<AssistantVocal />} />
+          <Route
+            path="/assistant-vocal"
+            element={
+              <ProtectedRoute>
+                <AssistantVocal />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* 🎓 DroitGPT Académie – liste des modules */}
-        <Route path="/academie" element={<Academie />} />
+          {/* Académie (protégé aussi, même si le lien est “en pause”) */}
+          <Route
+            path="/academie"
+            element={
+              <ProtectedRoute>
+                <Academie />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* 🎓 Tableau de bord Académie */}
-        <Route
-          path="/academie/dashboard"
-          element={<AcademieDashboard />}
-        />
+          <Route
+            path="/academie/dashboard"
+            element={
+              <ProtectedRoute>
+                <AcademieDashboard />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* 🎓 Programme détaillé d’un module */}
-        <Route
-          path="/academie/programme/:id"
-          element={<AcademieProgramme />}
-        />
+          <Route
+            path="/academie/programme/:id"
+            element={
+              <ProtectedRoute>
+                <AcademieProgramme />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* 🎓 Chapitre / leçon d’un module */}
-        <Route
-          path="/academie/programme/:id/lesson/:lessonId"
-          element={<AcademieLecon />}
-        />
-      </Routes>
+          <Route
+            path="/academie/programme/:id/lesson/:lessonId"
+            element={
+              <ProtectedRoute>
+                <AcademieLecon />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

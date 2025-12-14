@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
 import jsPDF from "jspdf";
+import { useAuth } from "../auth/AuthContext.jsx";
 
 export default function ChatInterface() {
+  const { accessToken, logout } = useAuth();
+  const authHeaders = accessToken
+    ? { Authorization: `Bearer ${accessToken}` }
+    : {};
+
   const [messages, setMessages] = useState(() => {
     const saved = localStorage.getItem("chatMessages");
     return saved
@@ -85,6 +91,12 @@ export default function ChatInterface() {
     return "fr";
   };
 
+  const redirectToLogin = (nextPath = "/chat") => {
+    logout();
+    const next = encodeURIComponent(nextPath);
+    window.location.href = `/login?next=${next}`;
+  };
+
   const handleSend = async () => {
     if (!userInput.trim() || loading) return;
 
@@ -113,9 +125,18 @@ export default function ChatInterface() {
 
       const res = await fetch("https://droitgpt-indexer.onrender.com/ask", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
         body: JSON.stringify({ messages: messagesForApi, lang }),
       });
+
+      // ✅ backend protégé → non connecté
+      if (res.status === 401) {
+        redirectToLogin("/chat");
+        return;
+      }
 
       if (!res.ok) throw new Error("Erreur de réponse du serveur");
 
@@ -184,9 +205,18 @@ export default function ChatInterface() {
         "https://droitgpt-analysepdf.onrender.com/analyse-document",
         {
           method: "POST",
+          headers: {
+            ...authHeaders, // ✅ token
+          },
           body: formData,
         }
       );
+
+      // ✅ backend protégé → non connecté
+      if (res.status === 401) {
+        redirectToLogin("/chat");
+        return;
+      }
 
       const contentType = res.headers.get("content-type") || "";
       if (!res.ok || !contentType.includes("application/json")) {
@@ -258,7 +288,6 @@ export default function ChatInterface() {
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-        
         {/* ---------- HEADER ---------- */}
         <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/60 flex items-center justify-between gap-3">
           <div className="flex flex-col">
@@ -278,6 +307,14 @@ export default function ChatInterface() {
               🎤 Assistant vocal
             </Link>
 
+            <button
+              onClick={() => redirectToLogin("/")}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-rose-500/70 bg-slate-900/80 text-rose-200 hover:bg-rose-500/10 transition"
+              title="Se déconnecter"
+            >
+              🚪 Déconnexion
+            </button>
+
             <Link
               to="/"
               className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-600/70 bg-slate-900/80 text-slate-200 hover:bg-slate-800 transition"
@@ -289,7 +326,6 @@ export default function ChatInterface() {
 
         {/* ---------- SOUS-HEADER ---------- */}
         <div className="px-4 md:px-6 py-3 border-b border-white/10 bg-slate-950/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          
           <div>
             {docContext && (
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/5 text-[11px] text-emerald-200">
@@ -300,8 +336,6 @@ export default function ChatInterface() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs justify-end">
-
-            {/* 🔥 Bouton Documents */}
             <Link
               to="/generate"
               className="px-3 py-1.5 rounded-full border border-indigo-500/70 text-indigo-300 bg-slate-900/80 hover:bg-indigo-500/10 transition"
@@ -399,7 +433,6 @@ export default function ChatInterface() {
         {/* ---------- INPUT ---------- */}
         <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <div className="flex flex-col gap-2">
-            {/* textarea + bouton envoyer */}
             <div className="flex items-end gap-2">
               <textarea
                 className="flex-1 px-3 py-3 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent min-h-[90px] max-h-40 resize-y"
