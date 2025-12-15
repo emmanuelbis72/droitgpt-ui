@@ -5,9 +5,7 @@ import { useAuth } from "../auth/AuthContext.jsx";
 
 export default function ChatInterface() {
   const { accessToken, logout } = useAuth();
-  const authHeaders = accessToken
-    ? { Authorization: `Bearer ${accessToken}` }
-    : {};
+  const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
   const [messages, setMessages] = useState(() => {
     const saved = localStorage.getItem("chatMessages");
@@ -57,9 +55,7 @@ export default function ChatInterface() {
       hasInitDocFromLocation.current = true;
 
       setDocContext(location.state.documentText);
-      setDocTitle(
-        location.state.filename || "Document importé depuis la page Analyse"
-      );
+      setDocTitle(location.state.filename || "Document importé depuis la page Analyse");
 
       setMessages((prev) => [
         ...prev,
@@ -192,25 +188,19 @@ export default function ChatInterface() {
     if (!file) return;
 
     setLoading(true);
-    setMessages((prev) => [
-      ...prev,
-      { from: "user", text: `📄 Fichier envoyé : ${file.name}` },
-    ]);
+    setMessages((prev) => [...prev, { from: "user", text: `📄 Fichier envoyé : ${file.name}` }]);
 
     const formData = new FormData();
     formData.append("file", file);
 
     try {
-      const res = await fetch(
-        "https://droitgpt-analysepdf.onrender.com/analyse-document",
-        {
-          method: "POST",
-          headers: {
-            ...authHeaders, // ✅ token
-          },
-          body: formData,
-        }
-      );
+      const res = await fetch("https://droitgpt-analysepdf.onrender.com/analyse-document", {
+        method: "POST",
+        headers: {
+          ...authHeaders, // ✅ token
+        },
+        body: formData,
+      });
 
       // ✅ backend protégé → non connecté
       if (res.status === 401) {
@@ -267,7 +257,6 @@ export default function ChatInterface() {
       .trim();
 
     cleaned = cleaned.replace(/[^\n\r\x20-\x7E\u00A0-\u00FF]/g, "");
-
     return cleaned;
   };
 
@@ -294,9 +283,7 @@ export default function ChatInterface() {
             <h1 className="text-[13px] uppercase tracking-[0.25em] text-emerald-300 font-semibold">
               DROITGPT
             </h1>
-            <h2 className="text-lg md:text-xl font-bold mt-1">
-              IA ASSISTANT JURIDIQUE CONGOLAIS
-            </h2>
+            <h2 className="text-lg md:text-xl font-bold mt-1">IA ASSISTANT JURIDIQUE CONGOLAIS</h2>
           </div>
 
           <div className="flex items-center gap-2 text-[11px]">
@@ -361,12 +348,7 @@ export default function ChatInterface() {
 
             <label className="cursor-pointer px-3 py-1.5 rounded-full border border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/10 transition">
               📎 Joindre document (PDF/DOCX)
-              <input
-                type="file"
-                accept=".pdf,.docx"
-                hidden
-                onChange={handleFileUpload}
-              />
+              <input type="file" accept=".pdf,.docx" hidden onChange={handleFileUpload} />
             </label>
           </div>
         </div>
@@ -383,10 +365,7 @@ export default function ChatInterface() {
                 msg.text.includes("Résumé des points juridiques clés"));
 
             return (
-              <div
-                key={i}
-                className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-              >
+              <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${
                     isUser
@@ -434,17 +413,22 @@ export default function ChatInterface() {
         <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <div className="flex flex-col gap-2">
             <div className="flex items-end gap-2">
+              {/* ✅ Champ allongé en hauteur (plusieurs lignes visibles) */}
               <textarea
-                className="flex-1 px-3 py-3 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent min-h-[90px] max-h-40 resize-y"
-                placeholder="Décrivez votre situation juridique ou posez votre question ici…"
+                className="flex-1 px-4 py-4 rounded-2xl
+                           bg-slate-900/80 border border-slate-700
+                           text-sm text-slate-100 placeholder:text-slate-500
+                           leading-relaxed
+                           focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent
+                           min-h-[160px] max-h-[320px] resize-y"
+                placeholder={
+                  "Décrivez votre situation juridique en détail ou posez votre question ici…\n" +
+                  "Vous pouvez écrire sur plusieurs lignes."
+                }
                 value={userInput}
                 onChange={(e) => setUserInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    (e.ctrlKey || e.metaKey) &&
-                    userInput.trim()
-                  ) {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && userInput.trim()) {
                     e.preventDefault();
                     handleSend();
                   }
@@ -474,8 +458,8 @@ export default function ChatInterface() {
             )}
 
             <p className="text-[11px] text-slate-400">
-              ⚠️ DroitGPT ne remplace pas un avocat. Pour un litige concret,
-              consultez un professionnel du droit en RDC.
+              ⚠️ DroitGPT ne remplace pas un avocat. Pour un litige concret, consultez un professionnel du droit en
+              RDC.
             </p>
           </div>
         </div>

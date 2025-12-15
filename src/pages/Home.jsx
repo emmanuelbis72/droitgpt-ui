@@ -34,6 +34,35 @@ export default function Home() {
           </div>
         </div>
 
+        {/* 👉 GROS CTA CRÉER UN COMPTE */}
+        <div className="px-6 py-6 bg-gradient-to-r from-indigo-950/60 via-slate-900/60 to-emerald-950/60 border-b border-white/10">
+          <div className="flex flex-col items-center text-center gap-3">
+            <h2 className="text-xl font-semibold">
+              Accédez à toutes les fonctionnalités de DroitGPT
+            </h2>
+            <p className="text-sm text-slate-300 max-w-xl">
+              Créez gratuitement votre compte pour discuter avec l’assistant juridique,
+              analyser vos documents et générer des actes juridiques en quelques secondes.
+            </p>
+
+            <Link
+              to="/register"
+              className="mt-2 inline-flex items-center justify-center px-8 py-4 rounded-2xl
+                         bg-gradient-to-r from-indigo-500 to-emerald-500
+                         hover:from-indigo-600 hover:to-emerald-600
+                         text-white font-semibold text-lg
+                         shadow-2xl shadow-emerald-500/40
+                         transition"
+            >
+              🚀 Créer un compte gratuitement
+            </Link>
+
+            <p className="text-[11px] text-slate-400">
+              Aucun paiement requis • Accès immédiat
+            </p>
+          </div>
+        </div>
+
         {/* Options */}
         <div className="px-6 py-8 bg-slate-950/60">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

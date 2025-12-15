@@ -68,7 +68,9 @@ export default function Login() {
               autoComplete="tel"
               inputMode="tel"
             />
-            <p className="mt-1 text-[11px] text-slate-400">Format international requis (ex: +243…)</p>
+            <p className="mt-1 text-[11px] text-slate-400">
+              Format international requis (ex: +243…)
+            </p>
           </div>
 
           <div>
@@ -90,6 +92,7 @@ export default function Login() {
             </div>
           )}
 
+          {/* Bouton Connexion */}
           <button
             disabled={loading}
             className={`w-full px-4 py-2.5 rounded-2xl text-sm font-medium transition ${
@@ -101,12 +104,23 @@ export default function Login() {
             {loading ? "Connexion…" : "Se connecter"}
           </button>
 
-          <p className="text-[11px] text-slate-400">
-            Pas de compte ?{" "}
-            <Link to={`/register?next=${encodeURIComponent(next)}`} className="text-emerald-300 hover:underline">
-              Créer un compte
+          {/* 👉 GROS BOUTON CRÉER UN COMPTE */}
+          <div className="pt-4">
+            <Link
+              to={`/register?next=${encodeURIComponent(next)}`}
+              className="block w-full text-center px-4 py-3 rounded-2xl
+                         bg-gradient-to-r from-indigo-500 to-emerald-500
+                         hover:from-indigo-600 hover:to-emerald-600
+                         text-white font-semibold text-base
+                         shadow-xl shadow-emerald-500/30
+                         transition"
+            >
+              🚀 Créer un compte gratuitement
             </Link>
-          </p>
+            <p className="mt-2 text-center text-[11px] text-slate-400">
+              Accès immédiat à toutes les fonctionnalités
+            </p>
+          </div>
         </form>
       </div>
     </div>
