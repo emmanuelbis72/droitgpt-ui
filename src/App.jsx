@@ -1,6 +1,6 @@
 // src/App.jsx
 import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import Home from "./pages/Home.jsx";
 
@@ -13,7 +13,7 @@ import Generate from "./components/Generate.jsx";
 import Analyse from "./components/Analyse.jsx";
 import AssistantVocal from "./components/AssistantVocal.jsx";
 
-// Auth UI (dans components comme tu veux)
+// Auth UI
 import Login from "./components/Login.jsx";
 import Register from "./components/Register.jsx";
 
@@ -70,7 +70,7 @@ function App() {
             }
           />
 
-          {/* Académie (protégé aussi, même si le lien est “en pause”) */}
+          {/* Académie (protégé, même si le lien est en pause côté Home) */}
           <Route
             path="/academie"
             element={
@@ -106,6 +106,9 @@ function App() {
               </ProtectedRoute>
             }
           />
+
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

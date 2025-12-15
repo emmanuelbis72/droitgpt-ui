@@ -8,15 +8,36 @@ export default function Register() {
   const [params] = useSearchParams();
   const next = params.get("next") || "/chat";
 
-  const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState(""); // format recommandé: +243...
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const normalizePhone = (v) => {
+    // garde + et chiffres uniquement, retire espaces/traits/parenthèses
+    const raw = String(v || "").trim();
+    if (!raw) return "";
+    return raw.replace(/[()\s-]/g, "");
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+
+    const cleanName = fullName.trim();
+    const cleanPhone = normalizePhone(phone);
+
+    if (cleanName.length < 2) {
+      setError("Veuillez renseigner vos noms (au moins 2 caractères).");
+      return;
+    }
+
+    if (!/^\+\d{8,15}$/.test(cleanPhone)) {
+      setError("Numéro WhatsApp invalide. Exemple: +243816307451");
+      return;
+    }
 
     if (password.length < 6) {
       setError("Le mot de passe doit avoir au moins 6 caractères.");
@@ -29,10 +50,11 @@ export default function Register() {
 
     setLoading(true);
     try {
-      await register({ email: email.trim(), password });
+      // ✅ Nouveau format backend : { fullName, phone, password }
+      await register({ fullName: cleanName, phone: cleanPhone, password });
       navigate(next, { replace: true });
     } catch (err) {
-      setError(err.message || "Inscription impossible.");
+      setError(err?.message || "Inscription impossible.");
     } finally {
       setLoading(false);
     }
@@ -55,15 +77,33 @@ export default function Register() {
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-3">
           <div>
-            <label className="block text-xs text-slate-300 mb-1">Email</label>
+            <label className="block text-xs text-slate-300 mb-1">NOMS</label>
             <input
               className="w-full px-3 py-2 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/70"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              type="text"
               required
-              placeholder="ex: nom@email.com"
+              placeholder="ex: Bisimwa Emmanuel"
+              autoComplete="name"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-300 mb-1">Numéro WhatsApp</label>
+            <input
+              className="w-full px-3 py-2 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/70"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              type="tel"
+              required
+              placeholder="ex: +243816307451"
+              autoComplete="tel"
+              inputMode="tel"
+            />
+            <p className="mt-1 text-[11px] text-slate-400">
+              Format international requis (ex: +243…)
+            </p>
           </div>
 
           <div>
@@ -75,6 +115,7 @@ export default function Register() {
               type="password"
               required
               placeholder="••••••••"
+              autoComplete="new-password"
             />
           </div>
 
@@ -87,6 +128,7 @@ export default function Register() {
               type="password"
               required
               placeholder="••••••••"
+              autoComplete="new-password"
             />
           </div>
 
