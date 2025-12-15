@@ -7,6 +7,10 @@ import Home from "./pages/Home.jsx";
 import { AuthProvider } from "./auth/AuthContext.jsx";
 import ProtectedRoute from "./auth/ProtectedRoute.jsx";
 
+// ✅ Admin (protégé par rôle)
+import AdminRoute from "./auth/AdminRoute.jsx";
+import Admin from "./pages/Admin.jsx";
+
 // Pages / components
 import ChatInterface from "./components/ChatInterface.jsx";
 import Generate from "./components/Generate.jsx";
@@ -32,6 +36,16 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+
+          {/* ✅ Admin (invisible pour les autres) */}
+          <Route
+            path="/admin"
+            element={
+              <AdminRoute>
+                <Admin />
+              </AdminRoute>
+            }
+          />
 
           {/* Protected */}
           <Route
