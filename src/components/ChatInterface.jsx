@@ -63,11 +63,11 @@ export default function ChatInterface() {
   }, [messages]);
 
   useEffect(() => {
-    let i;
+    let interval;
     if (loading) {
-      i = setInterval(() => setDots((d) => (d.length < 3 ? d + "." : "")), 500);
+      interval = setInterval(() => setDots((d) => (d.length < 3 ? d + "." : "")), 500);
     } else setDots("");
-    return () => clearInterval(i);
+    return () => clearInterval(interval);
   }, [loading]);
 
   useEffect(() => {
@@ -86,7 +86,7 @@ export default function ChatInterface() {
           from: "assistant",
           text:
             "📂 Le document analysé a été chargé comme référence. " +
-            "Vous pouvez maintenant poser vos questions.",
+            "Vous pouvez maintenant poser vos questions basées sur ce document.",
         },
       ]);
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -114,29 +114,29 @@ export default function ChatInterface() {
     });
   };
 
-  const buildMessagesForApi = (base) => {
-    if (!docContext) return base;
+  const buildMessagesForApi = (baseMessages) => {
+    if (!docContext) return baseMessages;
     return [
       {
         from: "user",
         text:
-          "Le document suivant est la référence principale :\n\n" +
+          "Le document suivant doit servir de référence principale :\n\n" +
           docContext +
-          "\n\nExplique les implications juridiques.",
+          "\n\nExplique clairement les implications juridiques.",
       },
-      ...base,
+      ...baseMessages,
     ];
   };
 
   /* =======================
-     🟢 STREAMING SIMULÉ
+     🔥 Streaming simulé (typewriter)
   ======================= */
   const typeWriterEffect = async (html) => {
     let current = "";
     for (let i = 0; i < html.length; i++) {
       current += html[i];
       updateLastAssistantMessage(current);
-      await new Promise((r) => setTimeout(r, 8)); // vitesse écriture
+      await new Promise((r) => setTimeout(r, 8));
     }
   };
 
@@ -150,7 +150,11 @@ export default function ChatInterface() {
     setUserInput("");
     setLoading(true);
 
-    setMessages((p) => [...p, { from: "user", text: input }, { from: "assistant", text: "" }]);
+    setMessages((p) => [
+      ...p,
+      { from: "user", text: input },
+      { from: "assistant", text: "" },
+    ]);
 
     try {
       const baseMessages = buildMessagesForApi([...messages, { from: "user", text: input }]);
@@ -167,11 +171,11 @@ export default function ChatInterface() {
       if (res.status === 401) return redirectToLogin();
 
       const data = await res.json();
-      const answer = data?.answer || "❌ Réponse vide.";
+      const answer = data?.answer || "<p>❌ Réponse vide.</p>";
 
       await typeWriterEffect(answer);
-    } catch (e) {
-      updateLastAssistantMessage("❌ Erreur serveur. Réessayez.");
+    } catch (err) {
+      updateLastAssistantMessage("<p>❌ Erreur serveur. Veuillez réessayer.</p>");
     } finally {
       setLoading(false);
     }
@@ -197,45 +201,74 @@ export default function ChatInterface() {
   };
 
   /* =======================
-     UI (inchangée)
+     UI (DESIGN CONSERVÉ)
   ======================= */
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex justify-center px-4 py-6">
-      <div className="w-full max-w-5xl bg-white/5 rounded-3xl shadow-2xl flex flex-col">
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {messages.map((m, i) => (
-            <div key={i} className={m.from === "user" ? "text-right" : "text-left"}>
-              <div
-                className={`inline-block px-4 py-2 rounded-xl ${
-                  m.from === "user" ? "bg-emerald-500" : "bg-slate-800"
-                }`}
-                dangerouslySetInnerHTML={{ __html: m.text }}
-              />
-              {m.from === "assistant" && m.text && (
-                <button
-                  onClick={() => generatePDF(m.text)}
-                  className="block text-xs text-emerald-300 mt-1"
-                >
-                  PDF
-                </button>
-              )}
-            </div>
-          ))}
-          {loading && <div className="text-slate-400">Assistant rédige{dots}</div>}
+    <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
+      <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
+        {/* HEADER */}
+        <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/60 flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-[13px] uppercase tracking-[0.25em] text-emerald-300 font-semibold">
+              DROITGPT
+            </h1>
+            <h2 className="text-lg md:text-xl font-bold mt-1">
+              IA ASSISTANT JURIDIQUE CONGOLAIS
+            </h2>
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px]">
+            <Link
+              to="/assistant-vocal"
+              className="px-3 py-1.5 rounded-full border border-emerald-500/80 text-emerald-200"
+            >
+              🎤 Assistant vocal
+            </Link>
+            <button
+              onClick={redirectToLogin}
+              className="px-3 py-1.5 rounded-full border border-rose-500/70 text-rose-200"
+            >
+              🚪 Déconnexion
+            </button>
+          </div>
+        </div>
+
+        {/* MESSAGES */}
+        <div className="flex-1 overflow-y-auto px-3 md:px-5 py-4 space-y-3 bg-slate-950/70">
+          {messages.map((msg, i) => {
+            const isUser = msg.from === "user";
+            return (
+              <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
+                    isUser
+                      ? "bg-emerald-500 text-white"
+                      : "bg-slate-900/90 border border-white/10"
+                  }`}
+                  dangerouslySetInnerHTML={{ __html: msg.text }}
+                />
+              </div>
+            );
+          })}
+
+          {loading && (
+            <div className="text-xs text-slate-300">Assistant rédige{dots}</div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="p-4 border-t border-white/10">
+        {/* INPUT */}
+        <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <textarea
+            className="w-full px-4 py-4 rounded-2xl bg-slate-900 text-sm"
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
-            rows={4}
-            className="w-full p-3 rounded-xl bg-slate-900"
+            placeholder="Décrivez votre situation juridique ici…"
           />
           <button
             onClick={handleSend}
             disabled={loading}
-            className="mt-2 px-4 py-2 bg-emerald-500 rounded-xl"
+            className="mt-2 px-4 py-2 rounded-xl bg-emerald-500 text-white"
           >
             Envoyer
           </button>
