@@ -3,41 +3,43 @@ import { Link, useLocation } from "react-router-dom";
 import jsPDF from "jspdf";
 import { useAuth } from "../auth/AuthContext.jsx";
 
-const API_BASE = import.meta.env.VITE_INDEXER_URL || "https://droitgpt-indexer.onrender.com";
-
-function normalizeMessages(raw) {
-  if (!Array.isArray(raw)) return [];
-
-  return raw
-    .map((m) => {
-      // Nouveau format attendu
-      if (m && typeof m === "object" && typeof m.from === "string" && typeof m.text === "string") {
-        return { from: m.from, text: m.text };
-      }
-      // Ancien format (content/isUser)
-      if (m && typeof m === "object" && typeof m.content === "string") {
-        return { from: m.isUser ? "user" : "assistant", text: m.content };
-      }
-      return null;
-    })
-    .filter((m) => m && m.text && String(m.text).trim().length > 0);
-}
+const API_BASE = "https://droitgpt-indexer.onrender.com";
 
 export default function ChatInterface() {
   const { accessToken, logout } = useAuth();
   const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
+  // ✅ Migration auto si anciens messages (content/isUser) existent dans localStorage
+  const normalizeStoredMessages = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((m) => {
+        if (m && typeof m.from === "string" && typeof m.text === "string") return m;
+        // ancien format probable
+        if (m && typeof m.content === "string" && typeof m.isUser === "boolean") {
+          return { from: m.isUser ? "user" : "assistant", text: m.content };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  };
+
   const [messages, setMessages] = useState(() => {
-    const saved = localStorage.getItem("chatMessages");
-    const normalized = saved ? normalizeMessages(JSON.parse(saved)) : [];
-    return normalized.length
-      ? normalized
-      : [
-          {
-            from: "assistant",
-            text: `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
-          },
-        ];
+    try {
+      const saved = localStorage.getItem("chatMessages");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const norm = normalizeStoredMessages(parsed);
+        if (norm.length) return norm;
+      }
+    } catch {}
+    return [
+      {
+        from: "assistant",
+        text:
+          `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
+      },
+    ];
   });
 
   const [userInput, setUserInput] = useState("");
@@ -50,7 +52,6 @@ export default function ChatInterface() {
   const location = useLocation();
   const hasInitDocFromLocation = useRef(false);
 
-  // Streaming control
   const streamAbortRef = useRef(null);
 
   useEffect(() => {
@@ -60,9 +61,7 @@ export default function ChatInterface() {
   useEffect(() => {
     let interval;
     if (loading) {
-      interval = setInterval(() => {
-        setDots((prev) => (prev.length < 3 ? prev + "." : ""));
-      }, 500);
+      interval = setInterval(() => setDots((p) => (p.length < 3 ? p + "." : "")), 500);
     } else {
       setDots("");
     }
@@ -75,59 +74,104 @@ export default function ChatInterface() {
 
   useEffect(() => {
     if (hasInitDocFromLocation.current) return;
-
     if (location.state && location.state.documentText) {
       hasInitDocFromLocation.current = true;
 
       setDocContext(location.state.documentText);
-      setDocTitle(location.state.filename || "Document importé depuis la page Analyse");
+      setDocTitle(location.state.filename || "Document importé");
 
-      // Ajoute un message système côté UI (facultatif)
       setMessages((prev) => [
         ...prev,
         {
           from: "assistant",
-          text: `📄 <strong>Document chargé :</strong> ${location.state.filename || "Document"}<br/>Posez votre question en lien avec ce document.`,
+          text:
+            "📂 Le document analysé a été chargé comme référence. " +
+            "Vous pouvez maintenant me poser des questions en vous basant sur ce document.",
         },
       ]);
+
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [location.state]);
 
   const detectLanguage = (text) => {
-    if (!text) return "fr";
-    const hasEnglish = /\b(the|and|or|is|are|to|from|with|without)\b/i.test(text);
-    return hasEnglish ? "en" : "fr";
+    const lower = (text || "").toLowerCase();
+    const dict = {
+      fr: ["bonjour", "tribunal", "avocat", "juridique"],
+      en: ["hello", "law", "court", "legal"],
+      sw: ["habari", "sheria", "mahakama"],
+      ln: ["mbote", "mobeko"],
+      kg: ["maboko"],
+      tsh: ["moyo", "ntu"],
+    };
+    for (const [lang, words] of Object.entries(dict)) {
+      if (words.some((w) => lower.includes(w))) return lang;
+    }
+    return "fr";
   };
 
-  const redirectToLogin = (fromPath = "/chat") => {
-    // Tu peux remplacer par ton routing si besoin
-    window.location.href = `/login?from=${encodeURIComponent(fromPath)}`;
+  const redirectToLogin = (nextPath = "/chat") => {
+    logout();
+    const next = encodeURIComponent(nextPath);
+    window.location.href = `/login?next=${next}`;
   };
 
   const updateLastAssistantMessage = (newText) => {
     setMessages((prev) => {
-      if (!prev.length) return prev;
       const copy = [...prev];
-      // trouve le dernier assistant
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i]?.from === "assistant") {
           copy[i] = { ...copy[i], text: newText };
-          break;
+          return copy;
         }
       }
-      return copy;
+      return [...copy, { from: "assistant", text: newText }];
     });
   };
 
-  // ✅ Streaming SSE: lit event: delta / done / error
+  const buildMessagesForApi = (baseMessages) => {
+    if (!docContext) return baseMessages;
+
+    return [
+      {
+        from: "user",
+        text:
+          "Le document suivant doit servir de référence principale pour répondre à ma question :\n\n" +
+          docContext +
+          "\n\nMerci d'expliquer clairement les implications juridiques basées sur ce document.",
+      },
+      ...baseMessages,
+    ];
+  };
+
+  // ✅ Fallback JSON /ask (toujours renvoyer un texte)
+  const askJsonFallback = async ({ messagesForApi, lang }) => {
+    const r2 = await fetch(`${API_BASE}/ask`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ messages: messagesForApi, lang }),
+    });
+
+    if (r2.status === 401) {
+      redirectToLogin("/chat");
+      return;
+    }
+
+    const data = await r2.json().catch(() => ({}));
+    const reply = data?.answer || (data?.error ? `❌ ${data.error}` : "❌ Réponse vide.");
+    updateLastAssistantMessage(reply);
+  };
+
+  // ✅ Streaming SSE /ask-stream : lit event: delta / done / error / ping
   const streamAsk = async ({ messagesForApi, lang }) => {
-    // Annule un stream précédent si existant
+    // stop stream précédent
     if (streamAbortRef.current) {
       try {
         streamAbortRef.current.abort();
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
 
     const controller = new AbortController();
@@ -144,19 +188,22 @@ export default function ChatInterface() {
       signal: controller.signal,
     });
 
-    // 🔒 backend protégé → non connecté
     if (res.status === 401) {
       redirectToLogin("/chat");
       return;
     }
 
-    // Si le backend n'a pas encore /ask-stream (404), on repassera en fallback JSON
-    if (res.status === 404) {
-      throw new Error("STREAM_NOT_AVAILABLE");
+    const ct = res.headers.get("content-type") || "";
+
+    // Si le serveur renvoie JSON (ex: 400) -> fallback
+    if (!res.ok) {
+      await askJsonFallback({ messagesForApi, lang });
+      return;
     }
 
-    if (!res.ok || !res.body) {
-      throw new Error("Erreur de streaming (réponse serveur invalide).");
+    if (!ct.includes("text/event-stream") || !res.body) {
+      await askJsonFallback({ messagesForApi, lang });
+      return;
     }
 
     const reader = res.body.getReader();
@@ -164,14 +211,23 @@ export default function ChatInterface() {
 
     let buffer = "";
     let assistantHtml = "";
+    let gotDelta = false;
+
+    // sécurité: si rien n’arrive, fallback
+    const timer = setTimeout(async () => {
+      if (!gotDelta) {
+        try {
+          controller.abort();
+        } catch {}
+        await askJsonFallback({ messagesForApi, lang });
+      }
+    }, 9000);
 
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-
-      // SSE = blocs séparés par \n\n
       const parts = buffer.split("\n\n");
       buffer = parts.pop() || "";
 
@@ -180,19 +236,28 @@ export default function ChatInterface() {
         const eventLine = lines.find((l) => l.startsWith("event:"));
         const dataLine = lines.find((l) => l.startsWith("data:"));
 
-        const event = eventLine?.replace("event:", "").trim();
-        const dataRaw = dataLine?.replace("data:", "").trim();
-
-        if (!event || !dataRaw) continue;
+        const event = eventLine?.replace("event:", "").trim() || "";
+        const raw = dataLine?.replace("data:", "").trim() || "";
+        if (!raw) continue;
 
         let payload;
         try {
-          payload = JSON.parse(dataRaw);
+          payload = JSON.parse(raw);
         } catch {
           continue;
         }
 
+        if (event === "ping" || event === "ready") continue;
+
+        if (event === "error") {
+          clearTimeout(timer);
+          await askJsonFallback({ messagesForApi, lang });
+          return;
+        }
+
         if (event === "delta") {
+          gotDelta = true;
+          clearTimeout(timer);
           const chunk = payload?.content || "";
           if (chunk) {
             assistantHtml += chunk;
@@ -200,218 +265,326 @@ export default function ChatInterface() {
           }
         }
 
-        if (event === "error") {
-          throw new Error(payload?.error || "Erreur streaming.");
-        }
-
         if (event === "done") {
+          clearTimeout(timer);
+          if (!gotDelta) {
+            await askJsonFallback({ messagesForApi, lang });
+          }
           return;
         }
-
-        // event ping -> ignore
       }
     }
-  };
 
-  const askJsonFallback = async ({ messagesForApi, lang }) => {
-    const res = await fetch(`${API_BASE}/ask`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders,
-      },
-      body: JSON.stringify({ messages: messagesForApi, lang }),
-    });
-
-    if (res.status === 401) {
-      redirectToLogin("/chat");
-      return;
+    clearTimeout(timer);
+    if (!gotDelta) {
+      await askJsonFallback({ messagesForApi, lang });
     }
-
-    if (!res.ok) throw new Error("Erreur de réponse du serveur");
-
-    const data = await res.json();
-    return data?.answer || "❌ Réponse vide.";
   };
 
   const handleSend = async () => {
     if (!userInput.trim() || loading) return;
 
-    const input = userInput;
-
-    // ✅ Normalise au cas où localStorage contient d'anciens objets
-    const normalizedCurrent = normalizeMessages(messages);
-
-    // 1) Ajoute le message user
-    const newMessages = [...normalizedCurrent, { from: "user", text: input }];
-    setMessages(newMessages);
+    const input = userInput.trim();
     setUserInput("");
 
-    // 2) Ajoute un message assistant vide (placeholder) → sera rempli en streaming
-    setMessages((prev) => [...prev, { from: "assistant", text: "" }]);
-
+    // ✅ Ajout en 1 seule fois (évite incohérences)
+    setMessages((prev) => [...prev, { from: "user", text: input }, { from: "assistant", text: "" }]);
     setLoading(true);
 
     try {
       const lang = detectLanguage(input);
 
-      let messagesForApi = [...newMessages];
-
-      if (docContext) {
-        messagesForApi = [
-          {
-            from: "user",
-            text:
-              "Le document suivant doit servir de référence principale pour répondre à ma question :\n\n" +
-              docContext +
-              "\n\nMerci d'expliquer clairement les implications juridiques basées sur ce document.",
-          },
-          ...newMessages,
-        ];
-      }
-
-      // 3) Streaming (rapide comme ChatGPT). Fallback automatique si /ask-stream indisponible.
+      // ⚠️ messages state peut être “en retard”, donc on reconstruit depuis localStorage proprement
+      let current = messages;
       try {
-        await streamAsk({ messagesForApi, lang });
-      } catch (e) {
-        if (String(e?.message || e) === "STREAM_NOT_AVAILABLE") {
-          const reply = await askJsonFallback({ messagesForApi, lang });
-          let finalReply = reply;
+        const saved = localStorage.getItem("chatMessages");
+        if (saved) current = normalizeStoredMessages(JSON.parse(saved)) || messages;
+      } catch {}
 
-          if (docContext) {
-            finalReply =
-              `<div class="mb-2 text-xs text-emerald-300">📂 Cette réponse tient compte du document que vous avez joint.</div>` +
-              finalReply;
-          }
+      const baseMessages = [...current, { from: "user", text: input }];
+      const messagesForApi = buildMessagesForApi(baseMessages);
 
-          updateLastAssistantMessage(finalReply);
-        } else {
-          throw e;
-        }
-      }
+      await streamAsk({ messagesForApi, lang });
     } catch (err) {
-      console.error("Erreur Chat:", err);
-      updateLastAssistantMessage("❌ Réponse vide (fallback).");
+      updateLastAssistantMessage(`❌ Erreur: ${err?.message || "Veuillez réessayer."}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLogout = () => {
+  const handleReset = () => {
+    if (streamAbortRef.current) {
+      try {
+        streamAbortRef.current.abort();
+      } catch {}
+      streamAbortRef.current = null;
+    }
+
+    setMessages([
+      {
+        from: "assistant",
+        text:
+          `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
+      },
+    ]);
+    setUserInput("");
+    setDocContext(null);
+    setDocTitle(null);
+    localStorage.removeItem("chatMessages");
+  };
+
+  const handleClearDocument = () => {
+    setDocContext(null);
+    setDocTitle(null);
+    setMessages((prev) => [
+      ...prev,
+      {
+        from: "assistant",
+        text: "🔄 Document retiré. Retour au chat normal.",
+      },
+    ]);
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    setMessages((prev) => [...prev, { from: "user", text: `📄 Fichier envoyé : ${file.name}` }]);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
     try {
-      logout?.();
-    } catch {
-      // ignore
+      const res = await fetch("https://droitgpt-analysepdf.onrender.com/analyse-document", {
+        method: "POST",
+        headers: { ...authHeaders },
+        body: formData,
+      });
+
+      if (res.status === 401) {
+        redirectToLogin("/chat");
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      const result = data.analysis || "❌ Analyse vide.";
+
+      if (data.documentText) {
+        setDocContext(data.documentText);
+        setDocTitle(file.name);
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          from: "assistant",
+          text:
+            "📑 <strong>Analyse du document :</strong><br/>" +
+            result +
+            "<br/><br/>💬 Vous pouvez maintenant poser des questions basées sur ce document.",
+        },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { from: "assistant", text: "❌ Erreur analyse document : " + (err?.message || "") },
+      ]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const exportChatToPDF = () => {
+  const htmlToPlainForPdf = (html) => {
+    if (!html) return "";
+    return String(html)
+      .replace(/<li>/gi, "• ")
+      .replace(/<\/(p|div|h[1-6]|li|ul|ol|br)>/gi, "\n\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  };
+
+  const generatePDF = (content) => {
     const doc = new jsPDF();
-    let y = 10;
-    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(15);
+    doc.text("Analyse juridique – DroitGPT", 20, 20);
 
-    doc.text("DroitGPT - Historique de conversation", 10, y);
-    y += 10;
-
-    messages.forEach((m) => {
-      const label = m.from === "user" ? "Vous" : "DroitGPT";
-      const text = (m.text || "").replace(/<[^>]*>/g, ""); // enlève HTML
-      const lines = doc.splitTextToSize(`${label}: ${text}`, 180);
-      doc.text(lines, 10, y);
-      y += lines.length * 7 + 2;
-
-      if (y > 280) {
-        doc.addPage();
-        y = 10;
-      }
-    });
-
-    doc.save("droitgpt_chat.pdf");
+    doc.setFontSize(11);
+    const plain = htmlToPlainForPdf(content);
+    const lines = doc.splitTextToSize(plain, 170);
+    doc.text(lines, 20, 30);
+    doc.save("analyse_droitgpt.pdf");
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <div className="mx-auto max-w-5xl px-4 py-6">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold">DroitGPT</h1>
-            <p className="text-xs text-slate-400">
-              Assistant juridique RDC • Mode streaming activé (si disponible)
-            </p>
-            {docTitle ? (
-              <p className="mt-1 text-xs text-emerald-300">📎 Document: {docTitle}</p>
-            ) : null}
+    <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
+      <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
+        {/* HEADER */}
+        <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/60 flex items-center justify-between gap-3">
+          <div className="flex flex-col">
+            <h1 className="text-[13px] uppercase tracking-[0.25em] text-emerald-300 font-semibold">
+              DROITGPT
+            </h1>
+            <h2 className="text-lg md:text-xl font-bold mt-1">IA ASSISTANT JURIDIQUE CONGOLAIS</h2>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={exportChatToPDF}
-              className="rounded-md bg-slate-800 px-3 py-2 text-xs hover:bg-slate-700"
+          <div className="flex items-center gap-2 text-[11px]">
+            <Link
+              to="/assistant-vocal"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-emerald-500/80 bg-slate-900/80 text-emerald-200 hover:bg-emerald-500/10 transition"
             >
-              Télécharger PDF
-            </button>
+              🎤 Assistant vocal
+            </Link>
+
             <button
-              onClick={handleLogout}
-              className="rounded-md bg-slate-800 px-3 py-2 text-xs hover:bg-slate-700"
+              onClick={() => redirectToLogin("/")}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-rose-500/70 bg-slate-900/80 text-rose-200 hover:bg-rose-500/10 transition"
+              title="Se déconnecter"
             >
-              Déconnexion
+              🚪 Déconnexion
             </button>
-            <Link to="/" className="text-xs text-slate-300 hover:text-white">
-              Accueil
+
+            <Link
+              to="/"
+              className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-600/70 bg-slate-900/80 text-slate-200 hover:bg-slate-800 transition"
+            >
+              ⬅️ Accueil
             </Link>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-          <div className="h-[65vh] overflow-y-auto pr-2">
-            {messages.map((m, idx) => {
-              const isUser = m.from === "user";
-              return (
-                <div key={idx} className={`mb-3 flex ${isUser ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={[
-                      "max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                      isUser ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-100",
-                    ].join(" ")}
-                  >
-                    <div dangerouslySetInnerHTML={{ __html: m.text }} />
-                  </div>
-                </div>
-              );
-            })}
+        {/* SOUS-HEADER */}
+        <div className="px-4 md:px-6 py-3 border-b border-white/10 bg-slate-950/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            {docContext && (
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/5 text-[11px] text-emerald-200">
+                📂 <strong>Document chargé :</strong>
+                <span className="truncate max-w-[180px]">{docTitle}</span>
+              </div>
+            )}
+          </div>
 
-            {loading ? (
-              <div className="mb-3 flex justify-start">
-                <div className="max-w-[85%] rounded-2xl bg-slate-800 px-4 py-3 text-sm text-slate-100">
-                  DroitGPT écrit{dots}
+          <div className="flex flex-wrap items-center gap-2 text-xs justify-end">
+            <Link
+              to="/generate"
+              className="px-3 py-1.5 rounded-full border border-indigo-500/70 text-indigo-300 bg-slate-900/80 hover:bg-indigo-500/10 transition"
+            >
+              📝 Générer un document juridique
+            </Link>
+
+            {docContext && (
+              <button
+                onClick={handleClearDocument}
+                className="px-3 py-1.5 rounded-full border border-amber-400/80 text-amber-200 bg-slate-900/80 hover:bg-amber-500/10 transition"
+              >
+                🔄 Chat normal (sans document)
+              </button>
+            )}
+
+            <button
+              onClick={handleReset}
+              className="px-3 py-1.5 rounded-full border border-rose-500/70 text-rose-300 hover:bg-rose-500/10 transition"
+            >
+              Réinitialiser
+            </button>
+
+            <label className="cursor-pointer px-3 py-1.5 rounded-full border border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/10 transition">
+              📎 Joindre document (PDF/DOCX)
+              <input type="file" accept=".pdf,.docx" hidden onChange={handleFileUpload} />
+            </label>
+          </div>
+        </div>
+
+        {/* MESSAGES */}
+        <div className="flex-1 overflow-y-auto px-3 md:px-5 py-4 space-y-3 bg-slate-950/70">
+          {messages.map((msg, i) => {
+            const isUser = msg.from === "user";
+            const isAssistant = msg.from === "assistant";
+            const showPdfButton =
+              isAssistant &&
+              (String(msg.text).includes("Analyse du document") ||
+                String(msg.text).includes("Résumé des points juridiques clés"));
+
+            return (
+              <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${
+                    isUser
+                      ? "bg-emerald-500 text-white rounded-br-sm"
+                      : "bg-slate-900/90 text-slate-50 rounded-bl-sm border border-white/10"
+                  }`}
+                >
+                  {isAssistant && (
+                    <div className="text-[10px] uppercase tracking-wide mb-1 text-slate-300/80">
+                      DroitGPT • Réponse juridique
+                    </div>
+                  )}
+
+                  <div
+                    className="prose prose-sm max-w-none prose-invert prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-emerald-300"
+                    dangerouslySetInnerHTML={{ __html: msg.text }}
+                  />
+
+                  {showPdfButton && (
+                    <button
+                      onClick={() => generatePDF(msg.text)}
+                      className="absolute -right-8 top-2 text-[11px] text-emerald-300 hover:text-emerald-200 underline"
+                    >
+                      PDF
+                    </button>
+                  )}
                 </div>
               </div>
-            ) : null}
+            );
+          })}
 
-            <div ref={messagesEndRef} />
-          </div>
+          {loading && (
+            <div className="flex justify-start">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 border border-white/10 text-xs text-slate-300">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                <span>Assistant rédige{dots}</span>
+              </div>
+            </div>
+          )}
 
-          <div className="mt-4 flex gap-2">
-            <input
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSend();
-              }}
-              placeholder="Écrivez votre question…"
-              className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm outline-none focus:border-emerald-500"
-            />
-            <button
-              onClick={handleSend}
-              disabled={loading || !userInput.trim()}
-              className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium disabled:opacity-50"
-            >
-              Envoyer
-            </button>
-          </div>
+          <div ref={messagesEndRef} />
+        </div>
 
-          <div className="mt-2 text-[11px] text-slate-500">
-            Astuce: si tu vois encore des erreurs 400, vide le cache du chat (localStorage) ou reconnecte-toi.
+        {/* INPUT */}
+        <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-end gap-2">
+              <textarea
+                className="flex-1 px-4 py-4 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent min-h-[160px] max-h-[320px] resize-y"
+                placeholder={"Décrivez votre situation juridique en détail ou posez votre question ici…\nVous pouvez écrire sur plusieurs lignes."}
+                value={userInput}
+                onChange={(e) => setUserInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && userInput.trim()) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+              />
+
+              <button
+                className={`inline-flex items-center justify-center px-4 py-2 rounded-2xl text-sm font-medium transition self-stretch ${
+                  loading || !userInput.trim()
+                    ? "bg-slate-700 text-slate-400 cursor-not-allowed"
+                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
+                }`}
+                onClick={handleSend}
+                disabled={loading || !userInput.trim()}
+              >
+                Envoyer
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              ⚠️ DroitGPT ne remplace pas un avocat. Pour un litige concret, consultez un professionnel du droit en RDC.
+            </p>
           </div>
         </div>
       </div>
