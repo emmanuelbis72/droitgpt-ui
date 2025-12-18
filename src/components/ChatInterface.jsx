@@ -24,13 +24,9 @@ export default function ChatInterface() {
   const [dots, setDots] = useState("");
   const [docContext, setDocContext] = useState(null);
   const [docTitle, setDocTitle] = useState(null);
-
   const messagesEndRef = useRef(null);
   const location = useLocation();
   const hasInitDocFromLocation = useRef(false);
-
-  // Pour pouvoir annuler un stream si nécessaire (ex: nouveau message)
-  const streamAbortRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem("chatMessages", JSON.stringify(messages));
@@ -97,142 +93,16 @@ export default function ChatInterface() {
     window.location.href = `/login?next=${next}`;
   };
 
-  // ✅ Met à jour le dernier message assistant (pendant le stream)
-  const updateLastAssistantMessage = (newText) => {
-    setMessages((prev) => {
-      if (!prev.length) return prev;
-      const copy = [...prev];
-      for (let i = copy.length - 1; i >= 0; i--) {
-        if (copy[i]?.from === "assistant") {
-          copy[i] = { ...copy[i], text: newText };
-          return copy;
-        }
-      }
-      // fallback si jamais pas trouvé
-      return [...copy, { from: "assistant", text: newText }];
-    });
-  };
-
-  // ✅ Streaming SSE: lit event: delta / done / error
-  const streamAsk = async ({ messagesForApi, lang }) => {
-    // Annule un stream précédent si existant
-    if (streamAbortRef.current) {
-      try {
-        streamAbortRef.current.abort();
-      } catch {
-        // ignore
-      }
-    }
-
-    const controller = new AbortController();
-    streamAbortRef.current = controller;
-
-    const res = await fetch("https://droitgpt-indexer.onrender.com/ask-stream", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        ...authHeaders,
-      },
-      body: JSON.stringify({ messages: messagesForApi, lang }),
-      signal: controller.signal,
-    });
-
-    // 🔒 backend protégé → non connecté
-    if (res.status === 401) {
-      redirectToLogin("/chat");
-      return;
-    }
-
-    if (!res.ok || !res.body) {
-      throw new Error("Erreur de streaming (réponse serveur invalide).");
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-
-    let buffer = "";
-    let assistantHtml = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE = blocs séparés par \n\n
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-
-      for (const part of parts) {
-        const lines = part.split("\n");
-        const eventLine = lines.find((l) => l.startsWith("event:"));
-        const dataLine = lines.find((l) => l.startsWith("data:"));
-
-        const event = eventLine?.replace("event:", "").trim();
-        const dataRaw = dataLine?.replace("data:", "").trim();
-
-        if (!event || !dataRaw) continue;
-
-        let payload;
-        try {
-          payload = JSON.parse(dataRaw);
-        } catch {
-          continue;
-        }
-
-        if (event === "delta") {
-          const chunk = payload?.content || "";
-          if (chunk) {
-            assistantHtml += chunk;
-            updateLastAssistantMessage(assistantHtml);
-          }
-        }
-
-        if (event === "error") {
-          throw new Error(payload?.error || "Erreur streaming.");
-        }
-
-        if (event === "done") {
-          // payload.answer contient toute la réponse (optionnel)
-          return;
-        }
-
-        // event ping -> ignore
-      }
-    }
-  };
-
   const handleSend = async () => {
     if (!userInput.trim() || loading) return;
 
-    const input = userInput;
-
-    // 1) Ajoute le message user
-    setMessages((prev) => [...prev, { from: "user", text: input }]);
+    const newMessages = [...messages, { from: "user", text: userInput }];
+    setMessages(newMessages);
     setUserInput("");
-
-    // 2) Ajoute un message assistant vide (placeholder) → sera rempli en streaming
-    setMessages((prev) => [...prev, { from: "assistant", text: "" }]);
-
     setLoading(true);
 
     try {
-      const lang = detectLanguage(input);
-
-      // Important: reconstruire messagesForApi depuis l’état "messages"
-      // On prend une photo cohérente en lisant la version la plus récente via localStorage fallback,
-      // puis on ajoute input. (Évite l’effet “stale state”)
-      const current = (() => {
-        try {
-          const saved = localStorage.getItem("chatMessages");
-          return saved ? JSON.parse(saved) : messages;
-        } catch {
-          return messages;
-        }
-      })();
-
-      const newMessages = [...current, { from: "user", text: input }];
+      const lang = detectLanguage(userInput);
 
       let messagesForApi = [...newMessages];
 
@@ -249,62 +119,47 @@ export default function ChatInterface() {
         ];
       }
 
-      // ✅ Streaming
-      await streamAsk({ messagesForApi, lang });
-
-      // ✅ Badge document (si docContext) : on préfixe la réponse finale
-      if (docContext) {
-        setMessages((prev) => {
-          // trouver le dernier assistant et préfixer si pas déjà préfixé
-          const copy = [...prev];
-          for (let i = copy.length - 1; i >= 0; i--) {
-            if (copy[i]?.from === "assistant") {
-              const existing = copy[i]?.text || "";
-              const prefix =
-                `<div class="mb-2 text-xs text-emerald-300">📂 Cette réponse tient compte du document que vous avez joint.</div>`;
-              if (!existing.startsWith(prefix)) {
-                copy[i] = { ...copy[i], text: prefix + existing };
-              }
-              break;
-            }
-          }
-          return copy;
-        });
-      }
-    } catch (err) {
-      setMessages((prev) => {
-        // remplace le dernier assistant vide par un message d’erreur
-        const copy = [...prev];
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i]?.from === "assistant") {
-            copy[i] = {
-              from: "assistant",
-              text: `❌ Erreur serveur. ${err.message || "Veuillez réessayer."}`,
-            };
-            return copy;
-          }
-        }
-        return [
-          ...copy,
-          { from: "assistant", text: `❌ Erreur serveur. ${err.message || "Veuillez réessayer."}` },
-        ];
+      const res = await fetch("https://droitgpt-indexer.onrender.com/ask", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
+        body: JSON.stringify({ messages: messagesForApi, lang }),
       });
+
+      // ✅ backend protégé → non connecté
+      if (res.status === 401) {
+        redirectToLogin("/chat");
+        return;
+      }
+
+      if (!res.ok) throw new Error("Erreur de réponse du serveur");
+
+      const data = await res.json();
+      let reply = data.answer || "❌ Réponse vide.";
+
+      if (docContext) {
+        reply =
+          `<div class="mb-2 text-xs text-emerald-300">📂 Cette réponse tient compte du document que vous avez joint.</div>` +
+          reply;
+      }
+
+      setMessages([...newMessages, { from: "assistant", text: reply }]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          from: "assistant",
+          text: `❌ Erreur serveur. ${err.message || "Veuillez réessayer."}`,
+        },
+      ]);
     }
 
     setLoading(false);
   };
 
   const handleReset = () => {
-    // stop stream if running
-    if (streamAbortRef.current) {
-      try {
-        streamAbortRef.current.abort();
-      } catch {
-        // ignore
-      }
-      streamAbortRef.current = null;
-    }
-
     const welcome = {
       from: "assistant",
       text: `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
@@ -342,11 +197,12 @@ export default function ChatInterface() {
       const res = await fetch("https://droitgpt-analysepdf.onrender.com/analyse-document", {
         method: "POST",
         headers: {
-          ...authHeaders,
+          ...authHeaders, // ✅ token
         },
         body: formData,
       });
 
+      // ✅ backend protégé → non connecté
       if (res.status === 401) {
         redirectToLogin("/chat");
         return;
@@ -381,7 +237,7 @@ export default function ChatInterface() {
         ...prev,
         {
           from: "assistant",
-          text: "❌ Erreur analyse document : " + (err.message || "Veuillez réessayer."),
+          text: "❌ Erreur analyse document : " + err.message,
         },
       ]);
     }
@@ -557,6 +413,7 @@ export default function ChatInterface() {
         <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <div className="flex flex-col gap-2">
             <div className="flex items-end gap-2">
+              {/* ✅ Champ allongé en hauteur (plusieurs lignes visibles) */}
               <textarea
                 className="flex-1 px-4 py-4 rounded-2xl
                            bg-slate-900/80 border border-slate-700
