@@ -3,6 +3,8 @@ import { Link, useLocation } from "react-router-dom";
 import jsPDF from "jspdf";
 import { useAuth } from "../auth/AuthContext.jsx";
 
+const API_BASE = "https://droitgpt-indexer.onrender.com";
+
 export default function ChatInterface() {
   const { accessToken, logout } = useAuth();
   const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
@@ -27,6 +29,9 @@ export default function ChatInterface() {
   const messagesEndRef = useRef(null);
   const location = useLocation();
   const hasInitDocFromLocation = useRef(false);
+
+  // permet d’annuler un stream en cours si l’utilisateur renvoie un nouveau message
+  const streamAbortRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem("chatMessages", JSON.stringify(messages));
@@ -93,73 +98,243 @@ export default function ChatInterface() {
     window.location.href = `/login?next=${next}`;
   };
 
+  // ✅ Met à jour le dernier message assistant (pendant le stream)
+  const updateLastAssistantMessage = (newText) => {
+    setMessages((prev) => {
+      if (!prev.length) return prev;
+      const copy = [...prev];
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i]?.from === "assistant") {
+          copy[i] = { ...copy[i], text: newText };
+          return copy;
+        }
+      }
+      return [...copy, { from: "assistant", text: newText }];
+    });
+  };
+
+  const buildMessagesForApi = (baseMessages) => {
+    if (!docContext) return baseMessages;
+
+    return [
+      {
+        from: "user",
+        text:
+          "Le document suivant doit servir de référence principale pour répondre à ma question :\n\n" +
+          docContext +
+          "\n\nMerci d'expliquer clairement les implications juridiques basées sur ce document.",
+      },
+      ...baseMessages,
+    ];
+  };
+
+  // ✅ Fallback JSON /ask (si stream ne démarre pas / proxy / erreur)
+  const askJsonFallback = async ({ messagesForApi, lang }) => {
+    const r2 = await fetch(`${API_BASE}/ask`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ messages: messagesForApi, lang }),
+    });
+
+    if (r2.status === 401) {
+      redirectToLogin("/chat");
+      return;
+    }
+
+    const data = await r2.json().catch(() => ({}));
+    let reply = data?.answer || "❌ Réponse vide (fallback).";
+
+    if (docContext) {
+      reply =
+        `<div class="mb-2 text-xs text-emerald-300">📂 Cette réponse tient compte du document que vous avez joint.</div>` +
+        reply;
+    }
+
+    updateLastAssistantMessage(reply);
+  };
+
+  // ✅ Streaming SSE /ask-stream (affiche token par token)
+  const askStream = async ({ messagesForApi, lang }) => {
+    // stop stream précédent
+    if (streamAbortRef.current) {
+      try {
+        streamAbortRef.current.abort();
+      } catch {
+        // ignore
+      }
+    }
+
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+
+    const res = await fetch(`${API_BASE}/ask-stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ messages: messagesForApi, lang }),
+      signal: controller.signal,
+    });
+
+    if (res.status === 401) {
+      redirectToLogin("/chat");
+      return;
+    }
+
+    // Si pas OK → fallback direct
+    if (!res.ok) {
+      await askJsonFallback({ messagesForApi, lang });
+      return;
+    }
+
+    const ct = res.headers.get("content-type") || "";
+
+    // ✅ Si le serveur renvoie autre chose que SSE → fallback JSON
+    if (!ct.includes("text/event-stream") || !res.body) {
+      await askJsonFallback({ messagesForApi, lang });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+
+    let buffer = "";
+    let assistantHtml = "";
+    let started = false;
+
+    // ✅ timeout sécurité : si rien n’arrive en X secondes → fallback
+    const startTimeoutMs = 9000;
+    const startTimer = setTimeout(async () => {
+      if (!started) {
+        try {
+          controller.abort();
+        } catch {
+          // ignore
+        }
+        await askJsonFallback({ messagesForApi, lang });
+      }
+    }, startTimeoutMs);
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE = blocs séparés par \n\n
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        const lines = part.split("\n");
+
+        const eventLine = lines.find((l) => l.startsWith("event:"));
+        const dataLine = lines.find((l) => l.startsWith("data:"));
+
+        const event = eventLine?.replace("event:", "").trim() || "";
+        const dataRaw = dataLine?.replace("data:", "").trim() || "";
+
+        if (!dataRaw) continue;
+
+        let payload;
+        try {
+          payload = JSON.parse(dataRaw);
+        } catch {
+          continue;
+        }
+
+        // le backend envoie event: ready (donc started = true)
+        if (event === "ready") {
+          started = true;
+          clearTimeout(startTimer);
+          continue;
+        }
+
+        if (event === "ping") continue;
+
+        if (event === "error") {
+          clearTimeout(startTimer);
+          await askJsonFallback({ messagesForApi, lang });
+          return;
+        }
+
+        if (event === "delta") {
+          started = true;
+          clearTimeout(startTimer);
+
+          const chunk = payload?.content || "";
+          if (chunk) {
+            assistantHtml += chunk;
+
+            let display = assistantHtml;
+            if (docContext) {
+              display =
+                `<div class="mb-2 text-xs text-emerald-300">📂 Cette réponse tient compte du document que vous avez joint.</div>` +
+                assistantHtml;
+            }
+
+            updateLastAssistantMessage(display);
+          }
+        }
+
+        if (event === "done") {
+          clearTimeout(startTimer);
+          return;
+        }
+      }
+    }
+
+    clearTimeout(startTimer);
+
+    // si stream finit sans delta → fallback
+    if (!started) {
+      await askJsonFallback({ messagesForApi, lang });
+    }
+  };
+
   const handleSend = async () => {
     if (!userInput.trim() || loading) return;
 
-    const newMessages = [...messages, { from: "user", text: userInput }];
-    setMessages(newMessages);
+    const input = userInput;
+
+    // 1) Ajoute message user + placeholder assistant (en un seul setMessages, plus stable)
+    setMessages((prev) => [...prev, { from: "user", text: input }, { from: "assistant", text: "" }]);
     setUserInput("");
     setLoading(true);
 
     try {
-      const lang = detectLanguage(userInput);
+      const lang = detectLanguage(input);
 
-      let messagesForApi = [...newMessages];
+      // Base messages = état actuel + message user (sans le placeholder)
+      const baseMessages = [...messages, { from: "user", text: input }];
 
-      if (docContext) {
-        messagesForApi = [
-          {
-            from: "user",
-            text:
-              "Le document suivant doit servir de référence principale pour répondre à ma question :\n\n" +
-              docContext +
-              "\n\nMerci d'expliquer clairement les implications juridiques basées sur ce document.",
-          },
-          ...newMessages,
-        ];
-      }
+      const messagesForApi = buildMessagesForApi(baseMessages);
 
-      const res = await fetch("https://droitgpt-indexer.onrender.com/ask", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders,
-        },
-        body: JSON.stringify({ messages: messagesForApi, lang }),
-      });
-
-      // ✅ backend protégé → non connecté
-      if (res.status === 401) {
-        redirectToLogin("/chat");
-        return;
-      }
-
-      if (!res.ok) throw new Error("Erreur de réponse du serveur");
-
-      const data = await res.json();
-      let reply = data.answer || "❌ Réponse vide.";
-
-      if (docContext) {
-        reply =
-          `<div class="mb-2 text-xs text-emerald-300">📂 Cette réponse tient compte du document que vous avez joint.</div>` +
-          reply;
-      }
-
-      setMessages([...newMessages, { from: "assistant", text: reply }]);
+      // 2) Streaming (avec fallback)
+      await askStream({ messagesForApi, lang });
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          from: "assistant",
-          text: `❌ Erreur serveur. ${err.message || "Veuillez réessayer."}`,
-        },
-      ]);
+      updateLastAssistantMessage(`❌ Erreur serveur. ${err.message || "Veuillez réessayer."}`);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   const handleReset = () => {
+    // stop stream if running
+    if (streamAbortRef.current) {
+      try {
+        streamAbortRef.current.abort();
+      } catch {
+        // ignore
+      }
+      streamAbortRef.current = null;
+    }
+
     const welcome = {
       from: "assistant",
       text: `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
@@ -202,7 +377,6 @@ export default function ChatInterface() {
         body: formData,
       });
 
-      // ✅ backend protégé → non connecté
       if (res.status === 401) {
         redirectToLogin("/chat");
         return;
@@ -361,8 +535,7 @@ export default function ChatInterface() {
 
             const showPdfButton =
               isAssistant &&
-              (msg.text.includes("Analyse du document") ||
-                msg.text.includes("Résumé des points juridiques clés"));
+              (msg.text.includes("Analyse du document") || msg.text.includes("Résumé des points juridiques clés"));
 
             return (
               <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -413,7 +586,6 @@ export default function ChatInterface() {
         <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <div className="flex flex-col gap-2">
             <div className="flex items-end gap-2">
-              {/* ✅ Champ allongé en hauteur (plusieurs lignes visibles) */}
               <textarea
                 className="flex-1 px-4 py-4 rounded-2xl
                            bg-slate-900/80 border border-slate-700
@@ -458,8 +630,7 @@ export default function ChatInterface() {
             )}
 
             <p className="text-[11px] text-slate-400">
-              ⚠️ DroitGPT ne remplace pas un avocat. Pour un litige concret, consultez un professionnel du droit en
-              RDC.
+              ⚠️ DroitGPT ne remplace pas un avocat. Pour un litige concret, consultez un professionnel du droit en RDC.
             </p>
           </div>
         </div>
