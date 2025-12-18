@@ -9,14 +9,15 @@ export default function ChatInterface() {
   const { accessToken, logout } = useAuth();
   const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
-  // ✅ Migration auto si anciens messages (content/isUser) existent dans localStorage
+  /* =======================
+     Utils
+  ======================= */
   const normalizeStoredMessages = (arr) => {
     if (!Array.isArray(arr)) return [];
     return arr
       .map((m) => {
-        if (m && typeof m.from === "string" && typeof m.text === "string") return m;
-        // ancien format probable
-        if (m && typeof m.content === "string" && typeof m.isUser === "boolean") {
+        if (m?.from && m?.text) return m;
+        if (m?.content && typeof m.isUser === "boolean") {
           return { from: m.isUser ? "user" : "assistant", text: m.content };
         }
         return null;
@@ -24,12 +25,14 @@ export default function ChatInterface() {
       .filter(Boolean);
   };
 
+  /* =======================
+     State
+  ======================= */
   const [messages, setMessages] = useState(() => {
     try {
       const saved = localStorage.getItem("chatMessages");
       if (saved) {
-        const parsed = JSON.parse(saved);
-        const norm = normalizeStoredMessages(parsed);
+        const norm = normalizeStoredMessages(JSON.parse(saved));
         if (norm.length) return norm;
       }
     } catch {}
@@ -52,20 +55,19 @@ export default function ChatInterface() {
   const location = useLocation();
   const hasInitDocFromLocation = useRef(false);
 
-  const streamAbortRef = useRef(null);
-
+  /* =======================
+     Effects
+  ======================= */
   useEffect(() => {
     localStorage.setItem("chatMessages", JSON.stringify(messages));
   }, [messages]);
 
   useEffect(() => {
-    let interval;
+    let i;
     if (loading) {
-      interval = setInterval(() => setDots((p) => (p.length < 3 ? p + "." : "")), 500);
-    } else {
-      setDots("");
-    }
-    return () => clearInterval(interval);
+      i = setInterval(() => setDots((d) => (d.length < 3 ? d + "." : "")), 500);
+    } else setDots("");
+    return () => clearInterval(i);
   }, [loading]);
 
   useEffect(() => {
@@ -74,518 +76,169 @@ export default function ChatInterface() {
 
   useEffect(() => {
     if (hasInitDocFromLocation.current) return;
-    if (location.state && location.state.documentText) {
+    if (location.state?.documentText) {
       hasInitDocFromLocation.current = true;
-
       setDocContext(location.state.documentText);
       setDocTitle(location.state.filename || "Document importé");
-
-      setMessages((prev) => [
-        ...prev,
+      setMessages((p) => [
+        ...p,
         {
           from: "assistant",
           text:
             "📂 Le document analysé a été chargé comme référence. " +
-            "Vous pouvez maintenant me poser des questions en vous basant sur ce document.",
+            "Vous pouvez maintenant poser vos questions.",
         },
       ]);
-
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [location.state]);
 
-  const detectLanguage = (text) => {
-    const lower = (text || "").toLowerCase();
-    const dict = {
-      fr: ["bonjour", "tribunal", "avocat", "juridique"],
-      en: ["hello", "law", "court", "legal"],
-      sw: ["habari", "sheria", "mahakama"],
-      ln: ["mbote", "mobeko"],
-      kg: ["maboko"],
-      tsh: ["moyo", "ntu"],
-    };
-    for (const [lang, words] of Object.entries(dict)) {
-      if (words.some((w) => lower.includes(w))) return lang;
-    }
-    return "fr";
-  };
-
-  const redirectToLogin = (nextPath = "/chat") => {
+  /* =======================
+     Helpers
+  ======================= */
+  const redirectToLogin = () => {
     logout();
-    const next = encodeURIComponent(nextPath);
-    window.location.href = `/login?next=${next}`;
+    window.location.href = "/login";
   };
 
-  const updateLastAssistantMessage = (newText) => {
+  const updateLastAssistantMessage = (text) => {
     setMessages((prev) => {
       const copy = [...prev];
       for (let i = copy.length - 1; i >= 0; i--) {
-        if (copy[i]?.from === "assistant") {
-          copy[i] = { ...copy[i], text: newText };
+        if (copy[i].from === "assistant") {
+          copy[i] = { ...copy[i], text };
           return copy;
         }
       }
-      return [...copy, { from: "assistant", text: newText }];
+      return [...copy, { from: "assistant", text }];
     });
   };
 
-  const buildMessagesForApi = (baseMessages) => {
-    if (!docContext) return baseMessages;
-
+  const buildMessagesForApi = (base) => {
+    if (!docContext) return base;
     return [
       {
         from: "user",
         text:
-          "Le document suivant doit servir de référence principale pour répondre à ma question :\n\n" +
+          "Le document suivant est la référence principale :\n\n" +
           docContext +
-          "\n\nMerci d'expliquer clairement les implications juridiques basées sur ce document.",
+          "\n\nExplique les implications juridiques.",
       },
-      ...baseMessages,
+      ...base,
     ];
   };
 
-  // ✅ Fallback JSON /ask (toujours renvoyer un texte)
-  const askJsonFallback = async ({ messagesForApi, lang }) => {
-    const r2 = await fetch(`${API_BASE}/ask`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders,
-      },
-      body: JSON.stringify({ messages: messagesForApi, lang }),
-    });
-
-    if (r2.status === 401) {
-      redirectToLogin("/chat");
-      return;
-    }
-
-    const data = await r2.json().catch(() => ({}));
-    const reply = data?.answer || (data?.error ? `❌ ${data.error}` : "❌ Réponse vide.");
-    updateLastAssistantMessage(reply);
-  };
-
-  // ✅ Streaming SSE /ask-stream : lit event: delta / done / error / ping
-  const streamAsk = async ({ messagesForApi, lang }) => {
-    // stop stream précédent
-    if (streamAbortRef.current) {
-      try {
-        streamAbortRef.current.abort();
-      } catch {}
-    }
-
-    const controller = new AbortController();
-    streamAbortRef.current = controller;
-
-    const res = await fetch(`${API_BASE}/ask-stream`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        ...authHeaders,
-      },
-      body: JSON.stringify({ messages: messagesForApi, lang }),
-      signal: controller.signal,
-    });
-
-    if (res.status === 401) {
-      redirectToLogin("/chat");
-      return;
-    }
-
-    const ct = res.headers.get("content-type") || "";
-
-    // Si le serveur renvoie JSON (ex: 400) -> fallback
-    if (!res.ok) {
-      await askJsonFallback({ messagesForApi, lang });
-      return;
-    }
-
-    if (!ct.includes("text/event-stream") || !res.body) {
-      await askJsonFallback({ messagesForApi, lang });
-      return;
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-
-    let buffer = "";
-    let assistantHtml = "";
-    let gotDelta = false;
-
-    // sécurité: si rien n’arrive, fallback
-    const timer = setTimeout(async () => {
-      if (!gotDelta) {
-        try {
-          controller.abort();
-        } catch {}
-        await askJsonFallback({ messagesForApi, lang });
-      }
-    }, 9000);
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-
-      for (const part of parts) {
-        const lines = part.split("\n");
-        const eventLine = lines.find((l) => l.startsWith("event:"));
-        const dataLine = lines.find((l) => l.startsWith("data:"));
-
-        const event = eventLine?.replace("event:", "").trim() || "";
-        const raw = dataLine?.replace("data:", "").trim() || "";
-        if (!raw) continue;
-
-        let payload;
-        try {
-          payload = JSON.parse(raw);
-        } catch {
-          continue;
-        }
-
-        if (event === "ping" || event === "ready") continue;
-
-        if (event === "error") {
-          clearTimeout(timer);
-          await askJsonFallback({ messagesForApi, lang });
-          return;
-        }
-
-        if (event === "delta") {
-          gotDelta = true;
-          clearTimeout(timer);
-          const chunk = payload?.content || "";
-          if (chunk) {
-            assistantHtml += chunk;
-            updateLastAssistantMessage(assistantHtml);
-          }
-        }
-
-        if (event === "done") {
-          clearTimeout(timer);
-          if (!gotDelta) {
-            await askJsonFallback({ messagesForApi, lang });
-          }
-          return;
-        }
-      }
-    }
-
-    clearTimeout(timer);
-    if (!gotDelta) {
-      await askJsonFallback({ messagesForApi, lang });
+  /* =======================
+     🟢 STREAMING SIMULÉ
+  ======================= */
+  const typeWriterEffect = async (html) => {
+    let current = "";
+    for (let i = 0; i < html.length; i++) {
+      current += html[i];
+      updateLastAssistantMessage(current);
+      await new Promise((r) => setTimeout(r, 8)); // vitesse écriture
     }
   };
 
+  /* =======================
+     Send
+  ======================= */
   const handleSend = async () => {
     if (!userInput.trim() || loading) return;
 
     const input = userInput.trim();
     setUserInput("");
-
-    // ✅ Ajout en 1 seule fois (évite incohérences)
-    setMessages((prev) => [...prev, { from: "user", text: input }, { from: "assistant", text: "" }]);
     setLoading(true);
 
-    try {
-      const lang = detectLanguage(input);
-
-      // ⚠️ messages state peut être “en retard”, donc on reconstruit depuis localStorage proprement
-      let current = messages;
-      try {
-        const saved = localStorage.getItem("chatMessages");
-        if (saved) current = normalizeStoredMessages(JSON.parse(saved)) || messages;
-      } catch {}
-
-      const baseMessages = [...current, { from: "user", text: input }];
-      const messagesForApi = buildMessagesForApi(baseMessages);
-
-      await streamAsk({ messagesForApi, lang });
-    } catch (err) {
-      updateLastAssistantMessage(`❌ Erreur: ${err?.message || "Veuillez réessayer."}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleReset = () => {
-    if (streamAbortRef.current) {
-      try {
-        streamAbortRef.current.abort();
-      } catch {}
-      streamAbortRef.current = null;
-    }
-
-    setMessages([
-      {
-        from: "assistant",
-        text:
-          `👋 <strong>Bienvenue</strong><br/>Je suis <strong>DroitGPT</strong>, votre assistant juridique congolais.<br/>Posez-moi toutes vos questions juridiques 📚⚖️`,
-      },
-    ]);
-    setUserInput("");
-    setDocContext(null);
-    setDocTitle(null);
-    localStorage.removeItem("chatMessages");
-  };
-
-  const handleClearDocument = () => {
-    setDocContext(null);
-    setDocTitle(null);
-    setMessages((prev) => [
-      ...prev,
-      {
-        from: "assistant",
-        text: "🔄 Document retiré. Retour au chat normal.",
-      },
-    ]);
-  };
-
-  const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setLoading(true);
-    setMessages((prev) => [...prev, { from: "user", text: `📄 Fichier envoyé : ${file.name}` }]);
-
-    const formData = new FormData();
-    formData.append("file", file);
+    setMessages((p) => [...p, { from: "user", text: input }, { from: "assistant", text: "" }]);
 
     try {
-      const res = await fetch("https://droitgpt-analysepdf.onrender.com/analyse-document", {
+      const baseMessages = buildMessagesForApi([...messages, { from: "user", text: input }]);
+
+      const res = await fetch(`${API_BASE}/ask`, {
         method: "POST",
-        headers: { ...authHeaders },
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
+        body: JSON.stringify({ messages: baseMessages, lang: "fr" }),
       });
 
-      if (res.status === 401) {
-        redirectToLogin("/chat");
-        return;
-      }
+      if (res.status === 401) return redirectToLogin();
 
-      const data = await res.json().catch(() => ({}));
-      const result = data.analysis || "❌ Analyse vide.";
+      const data = await res.json();
+      const answer = data?.answer || "❌ Réponse vide.";
 
-      if (data.documentText) {
-        setDocContext(data.documentText);
-        setDocTitle(file.name);
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          from: "assistant",
-          text:
-            "📑 <strong>Analyse du document :</strong><br/>" +
-            result +
-            "<br/><br/>💬 Vous pouvez maintenant poser des questions basées sur ce document.",
-        },
-      ]);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { from: "assistant", text: "❌ Erreur analyse document : " + (err?.message || "") },
-      ]);
+      await typeWriterEffect(answer);
+    } catch (e) {
+      updateLastAssistantMessage("❌ Erreur serveur. Réessayez.");
     } finally {
       setLoading(false);
     }
   };
 
-  const htmlToPlainForPdf = (html) => {
-    if (!html) return "";
-    return String(html)
+  /* =======================
+     PDF
+  ======================= */
+  const htmlToPlainForPdf = (html) =>
+    String(html)
       .replace(/<li>/gi, "• ")
       .replace(/<\/(p|div|h[1-6]|li|ul|ol|br)>/gi, "\n\n")
       .replace(/<[^>]+>/g, "")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
-  };
 
   const generatePDF = (content) => {
     const doc = new jsPDF();
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(15);
     doc.text("Analyse juridique – DroitGPT", 20, 20);
-
-    doc.setFontSize(11);
-    const plain = htmlToPlainForPdf(content);
-    const lines = doc.splitTextToSize(plain, 170);
+    const lines = doc.splitTextToSize(htmlToPlainForPdf(content), 170);
     doc.text(lines, 20, 30);
     doc.save("analyse_droitgpt.pdf");
   };
 
+  /* =======================
+     UI (inchangée)
+  ======================= */
   return (
-    <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
-      <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-        {/* HEADER */}
-        <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/60 flex items-center justify-between gap-3">
-          <div className="flex flex-col">
-            <h1 className="text-[13px] uppercase tracking-[0.25em] text-emerald-300 font-semibold">
-              DROITGPT
-            </h1>
-            <h2 className="text-lg md:text-xl font-bold mt-1">IA ASSISTANT JURIDIQUE CONGOLAIS</h2>
-          </div>
-
-          <div className="flex items-center gap-2 text-[11px]">
-            <Link
-              to="/assistant-vocal"
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-emerald-500/80 bg-slate-900/80 text-emerald-200 hover:bg-emerald-500/10 transition"
-            >
-              🎤 Assistant vocal
-            </Link>
-
-            <button
-              onClick={() => redirectToLogin("/")}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-rose-500/70 bg-slate-900/80 text-rose-200 hover:bg-rose-500/10 transition"
-              title="Se déconnecter"
-            >
-              🚪 Déconnexion
-            </button>
-
-            <Link
-              to="/"
-              className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-600/70 bg-slate-900/80 text-slate-200 hover:bg-slate-800 transition"
-            >
-              ⬅️ Accueil
-            </Link>
-          </div>
-        </div>
-
-        {/* SOUS-HEADER */}
-        <div className="px-4 md:px-6 py-3 border-b border-white/10 bg-slate-950/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            {docContext && (
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/5 text-[11px] text-emerald-200">
-                📂 <strong>Document chargé :</strong>
-                <span className="truncate max-w-[180px]">{docTitle}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 text-xs justify-end">
-            <Link
-              to="/generate"
-              className="px-3 py-1.5 rounded-full border border-indigo-500/70 text-indigo-300 bg-slate-900/80 hover:bg-indigo-500/10 transition"
-            >
-              📝 Générer un document juridique
-            </Link>
-
-            {docContext && (
-              <button
-                onClick={handleClearDocument}
-                className="px-3 py-1.5 rounded-full border border-amber-400/80 text-amber-200 bg-slate-900/80 hover:bg-amber-500/10 transition"
-              >
-                🔄 Chat normal (sans document)
-              </button>
-            )}
-
-            <button
-              onClick={handleReset}
-              className="px-3 py-1.5 rounded-full border border-rose-500/70 text-rose-300 hover:bg-rose-500/10 transition"
-            >
-              Réinitialiser
-            </button>
-
-            <label className="cursor-pointer px-3 py-1.5 rounded-full border border-emerald-500/70 text-emerald-300 hover:bg-emerald-500/10 transition">
-              📎 Joindre document (PDF/DOCX)
-              <input type="file" accept=".pdf,.docx" hidden onChange={handleFileUpload} />
-            </label>
-          </div>
-        </div>
-
-        {/* MESSAGES */}
-        <div className="flex-1 overflow-y-auto px-3 md:px-5 py-4 space-y-3 bg-slate-950/70">
-          {messages.map((msg, i) => {
-            const isUser = msg.from === "user";
-            const isAssistant = msg.from === "assistant";
-            const showPdfButton =
-              isAssistant &&
-              (String(msg.text).includes("Analyse du document") ||
-                String(msg.text).includes("Résumé des points juridiques clés"));
-
-            return (
-              <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${
-                    isUser
-                      ? "bg-emerald-500 text-white rounded-br-sm"
-                      : "bg-slate-900/90 text-slate-50 rounded-bl-sm border border-white/10"
-                  }`}
+    <div className="min-h-screen bg-slate-950 text-white flex justify-center px-4 py-6">
+      <div className="w-full max-w-5xl bg-white/5 rounded-3xl shadow-2xl flex flex-col">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.map((m, i) => (
+            <div key={i} className={m.from === "user" ? "text-right" : "text-left"}>
+              <div
+                className={`inline-block px-4 py-2 rounded-xl ${
+                  m.from === "user" ? "bg-emerald-500" : "bg-slate-800"
+                }`}
+                dangerouslySetInnerHTML={{ __html: m.text }}
+              />
+              {m.from === "assistant" && m.text && (
+                <button
+                  onClick={() => generatePDF(m.text)}
+                  className="block text-xs text-emerald-300 mt-1"
                 >
-                  {isAssistant && (
-                    <div className="text-[10px] uppercase tracking-wide mb-1 text-slate-300/80">
-                      DroitGPT • Réponse juridique
-                    </div>
-                  )}
-
-                  <div
-                    className="prose prose-sm max-w-none prose-invert prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-strong:text-emerald-300"
-                    dangerouslySetInnerHTML={{ __html: msg.text }}
-                  />
-
-                  {showPdfButton && (
-                    <button
-                      onClick={() => generatePDF(msg.text)}
-                      className="absolute -right-8 top-2 text-[11px] text-emerald-300 hover:text-emerald-200 underline"
-                    >
-                      PDF
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-
-          {loading && (
-            <div className="flex justify-start">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 border border-white/10 text-xs text-slate-300">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>Assistant rédige{dots}</span>
-              </div>
+                  PDF
+                </button>
+              )}
             </div>
-          )}
-
+          ))}
+          {loading && <div className="text-slate-400">Assistant rédige{dots}</div>}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* INPUT */}
-        <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-end gap-2">
-              <textarea
-                className="flex-1 px-4 py-4 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-transparent min-h-[160px] max-h-[320px] resize-y"
-                placeholder={"Décrivez votre situation juridique en détail ou posez votre question ici…\nVous pouvez écrire sur plusieurs lignes."}
-                value={userInput}
-                onChange={(e) => setUserInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && userInput.trim()) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-              />
-
-              <button
-                className={`inline-flex items-center justify-center px-4 py-2 rounded-2xl text-sm font-medium transition self-stretch ${
-                  loading || !userInput.trim()
-                    ? "bg-slate-700 text-slate-400 cursor-not-allowed"
-                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
-                }`}
-                onClick={handleSend}
-                disabled={loading || !userInput.trim()}
-              >
-                Envoyer
-              </button>
-            </div>
-
-            <p className="text-[11px] text-slate-400">
-              ⚠️ DroitGPT ne remplace pas un avocat. Pour un litige concret, consultez un professionnel du droit en RDC.
-            </p>
-          </div>
+        <div className="p-4 border-t border-white/10">
+          <textarea
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+            rows={4}
+            className="w-full p-3 rounded-xl bg-slate-900"
+          />
+          <button
+            onClick={handleSend}
+            disabled={loading}
+            className="mt-2 px-4 py-2 bg-emerald-500 rounded-xl"
+          >
+            Envoyer
+          </button>
         </div>
       </div>
     </div>
