@@ -99,14 +99,36 @@ export default function ChatInterface() {
   };
 
   /* =======================
-     Streaming simulé (effet ChatGPT)
+     Streaming simulé (effet ChatGPT) — OPTIMISÉ
+     -> évite d'ajouter un faux retard sur longues réponses
   ======================= */
   const typeWriterEffect = async (html) => {
-    let current = "";
-    for (let i = 0; i < html.length; i++) {
-      current += html[i];
+    if (!html) return;
+
+    // Durée max totale de l’animation (ms) : ajuste si tu veux
+    const MAX_DURATION = 2500;
+
+    // Affiche immédiatement un petit début pour impression "instant"
+    const PREVIEW = 160;
+
+    const first = html.slice(0, PREVIEW);
+    updateLastAssistantMessage(first);
+
+    const remaining = html.slice(PREVIEW);
+    if (!remaining) return;
+
+    // On limite le nombre d'updates (pour perf) et la durée totale (pour vitesse)
+    const MAX_UPDATES = 80;
+    const step = Math.max(6, Math.ceil(remaining.length / MAX_UPDATES));
+    const delay = Math.max(6, Math.floor(MAX_DURATION / MAX_UPDATES));
+
+    let current = first;
+    for (let i = 0; i < remaining.length; i += step) {
+      current += remaining.slice(i, i + step);
       updateLastAssistantMessage(current);
-      await new Promise((r) => setTimeout(r, 8));
+      // petite pause contrôlée (ne dépasse pas ~MAX_DURATION)
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, delay));
     }
   };
 
@@ -158,7 +180,6 @@ export default function ChatInterface() {
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-6xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-
         {/* HEADER + MENU */}
         <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/60">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -240,8 +261,7 @@ export default function ChatInterface() {
         {/* INPUT */}
         <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <textarea
-            className="w-full px-4 py-4 rounded-2xl bg-slate-900 text-sm
-                       min-h-[180px] max-h-[360px] resize-y"
+            className="w-full px-4 py-4 rounded-2xl bg-slate-900 text-sm min-h-[180px] max-h-[360px] resize-y"
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
             placeholder="Décrivez votre situation juridique ici…"
