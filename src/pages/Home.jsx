@@ -5,7 +5,6 @@ export default function Home() {
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-        
         {/* Header */}
         <div className="px-6 py-6 border-b border-white/10 bg-slate-950/70 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
@@ -66,8 +65,7 @@ export default function Home() {
         {/* Options */}
         <div className="px-6 py-8 bg-slate-950/60">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            
-            {/* Chatbot juridique */}
+            {/* 1) Chatbot juridique */}
             <Link
               to="/chat"
               className="group rounded-2xl border border-white/10 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-emerald-400/70 hover:bg-slate-900 transition"
@@ -82,6 +80,46 @@ export default function Home() {
               <p className="text-xs text-slate-300">
                 Posez vos questions juridiques et recevez des explications claires basées sur le droit congolais.
               </p>
+            </Link>
+
+            {/* 2) ⚖️ Justice Lab (position 2) + badge Nouveau animé */}
+            <Link
+              to="/justice-lab"
+              className="group rounded-2xl border border-rose-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-rose-300 hover:bg-slate-900 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">⚖️</span>
+
+                {/* Badge animé */}
+                <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] font-semibold text-rose-200">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-400" />
+                  </span>
+                  Nouveau
+                </span>
+              </div>
+
+              <h2 className="text-lg font-semibold">
+                Justice Lab <span className="text-xs">(jeu IA)</span>
+              </h2>
+
+              <p className="text-xs text-slate-300">
+                Cas pratiques congolais simulés : procédure → <strong>Audience</strong> (objections) → décision →{" "}
+                <strong>Cour d’appel</strong> + scoring.
+              </p>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  🏛️ Audience
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  🧠 Feedback instant
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  ⚖️ Appel
+                </span>
+              </div>
             </Link>
 
             {/* Assistant vocal */}
@@ -154,7 +192,6 @@ export default function Home() {
                 Générez automatiquement des contrats, actes et documents juridiques en PDF.
               </p>
             </Link>
-
           </div>
         </div>
       </div>

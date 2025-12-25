@@ -1,0 +1,1351 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+
+import { CASES } from "../justiceLab/cases.js";
+import {
+  createNewRun,
+  scoreRun,
+  mergeAudienceWithTemplates,
+  setAudienceScene as setAudienceSceneOnRun,
+  applyAudienceDecision,
+} from "../justiceLab/engine.js";
+
+import {
+  addRun,
+  updateGlobalStats,
+  readRuns,
+  upsertAndSetActive,
+  patchActiveRun,
+  ensureActiveRunValid,
+  setActiveRunId,
+} from "../justiceLab/storage.js";
+
+const API_BASE =
+  (import.meta?.env?.VITE_API_URL || "https://droitgpt-indexer.onrender.com").replace(/\/$/, "");
+
+const PROCEDURE_CHOICES = [
+  { id: "A", title: "Mesures conservatoires / garanties + audience rapide", hint: "Équilibrée" },
+  { id: "B", title: "Renvoi / instruction complémentaire (dossier incomplet)", hint: "Prudent si pièces insuffisantes" },
+  { id: "C", title: "Décision immédiate sur base des éléments disponibles", hint: "Risque si garanties faibles" },
+];
+
+const ROLES = [
+  { id: "Juge", label: "👨🏽‍⚖️ Juge", desc: "Tranche les objections, dirige l’audience, décide." },
+  { id: "Procureur", label: "🟥 Procureur", desc: "Soutient l’accusation / l’ordre public, propose réquisitions." },
+  { id: "Avocat", label: "🟦 Avocat", desc: "Défense / intérêts privés, exceptions & nullités." },
+];
+
+// ✅ cache local des dossiers dynamiques
+const CASE_CACHE_KEY = "justicelab_caseCache_v1";
+function loadCaseCache() {
+  try {
+    const raw = localStorage.getItem(CASE_CACHE_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === "object" ? obj : {};
+  } catch {
+    return {};
+  }
+}
+function saveCaseToCache(caseData) {
+  try {
+    if (!caseData?.caseId) return;
+    const cache = loadCaseCache();
+    cache[caseData.caseId] = caseData;
+    localStorage.setItem(CASE_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // ignore
+  }
+}
+
+function getAuthToken() {
+  const candidates = ["token", "authToken", "accessToken", "droitgpt_token"];
+  for (const k of candidates) {
+    const v = localStorage.getItem(k);
+    if (v && v.trim().length > 10) return v.trim();
+  }
+  return null;
+}
+
+function toFlagsFromAi(ai) {
+  const flags = [];
+  const critical = Array.isArray(ai?.criticalErrors) ? ai.criticalErrors : [];
+  const warnings = Array.isArray(ai?.warnings) ? ai.warnings : [];
+  for (const c of critical)
+    flags.push({
+      level: "critical",
+      label: c?.label || "Erreur critique",
+      detail: c?.detail || "",
+    });
+  for (const w of warnings)
+    flags.push({ level: "warn", label: w?.label || "Avertissement", detail: w?.detail || "" });
+  return flags;
+}
+
+function toDebriefFromAi(ai) {
+  const strengths = Array.isArray(ai?.strengths) ? ai.strengths : [];
+  const feedback = Array.isArray(ai?.feedback) ? ai.feedback : [];
+  const appealRisk = ai?.appealRisk ? `📌 Risque d’annulation en appel (simulation) : ${ai.appealRisk}.` : null;
+
+  const out = [];
+  for (const s of strengths.slice(0, 5)) out.push(`✅ ${s}`);
+  for (const f of feedback.slice(0, 7)) out.push(`⚙️ ${f}`);
+  if (appealRisk) out.push(appealRisk);
+
+  return out.length ? out : ["⚠️ Débrief indisponible."];
+}
+
+async function postJSON(url, body) {
+  const token = getAuthToken();
+  if (!token) throw new Error("AUTH_TOKEN_MISSING");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`HTTP_${resp.status}:${text.slice(0, 200)}`);
+    }
+    return await resp.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ======= helpers live feedback =======
+function nowIso() {
+  return new Date().toISOString();
+}
+function formatTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+function setDiff(nextArr, prevArr) {
+  const next = new Set(Array.isArray(nextArr) ? nextArr : []);
+  const prev = new Set(Array.isArray(prevArr) ? prevArr : []);
+  const added = [];
+  for (const x of next) if (!prev.has(x)) added.push(x);
+  return added;
+}
+
+function bestChoiceForRole(obj, role) {
+  if (obj?.bestChoiceByRole?.[role]) return obj.bestChoiceByRole[role];
+
+  const t = `${obj?.title || ""} ${obj?.statement || ""}`.toLowerCase();
+  if (role === "Juge") return "Demander précision";
+  if (role === "Procureur") {
+    if (
+      t.includes("null") ||
+      t.includes("irr") ||
+      t.includes("vice") ||
+      t.includes("tardiv") ||
+      t.includes("recev")
+    )
+      return "Rejeter";
+    return "Rejeter";
+  }
+  if (t.includes("null") || t.includes("irr") || t.includes("vice") || t.includes("defense") || t.includes("contradic"))
+    return "Accueillir";
+  if (t.includes("tardiv") || t.includes("recev")) return "Rejeter";
+  return "Accueillir";
+}
+
+// ✅ récupère un caseData : CASES → cache local → dernier run (fallback)
+function resolveCaseData(decodedCaseId) {
+  const fromStatic = CASES.find((c) => c.caseId === decodedCaseId);
+  if (fromStatic) return fromStatic;
+
+  const cache = loadCaseCache();
+  if (cache?.[decodedCaseId]) return cache[decodedCaseId];
+
+  try {
+    const runs = readRuns();
+    const r = (runs || []).find((x) => x?.caseMeta?.caseId === decodedCaseId);
+    if (r?.caseMeta?.caseData) return r.caseMeta.caseData;
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+function PedagogyPanel({ caseData, compact = false }) {
+  const p = caseData?.pedagogy;
+  if (!p) return null;
+
+  const objectifs = Array.isArray(p.objectifs) ? p.objectifs : [];
+  const erreurs = Array.isArray(p.erreursFrequentes) ? p.erreursFrequentes : [];
+  const checklist = Array.isArray(p.checklistAudience) ? p.checklistAudience : [];
+
+  return (
+    <div className={`rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4 ${compact ? "" : ""}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-violet-300/80">Didacticiel</div>
+          <div className="mt-1 text-sm font-semibold text-violet-100">
+            Objectifs pédagogiques • Niveau: {p.level || caseData?.niveau || "—"}
+          </div>
+        </div>
+        <div className="text-[11px] text-slate-300">{caseData?.meta?.city ? `Ville: ${caseData.meta.city}` : ""}</div>
+      </div>
+
+      <div className={`mt-3 grid gap-3 ${compact ? "md:grid-cols-2" : "md:grid-cols-3"}`}>
+        <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+          <div className="text-xs text-slate-200 font-semibold">🎯 Objectifs</div>
+          <ul className="mt-2 space-y-1 text-xs text-slate-200">
+            {objectifs.slice(0, compact ? 4 : 6).map((x, i) => (
+              <li key={i}>• {x}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+          <div className="text-xs text-slate-200 font-semibold">⚠️ Erreurs fréquentes</div>
+          <ul className="mt-2 space-y-1 text-xs text-slate-200">
+            {erreurs.slice(0, compact ? 4 : 6).map((x, i) => (
+              <li key={i}>• {x}</li>
+            ))}
+          </ul>
+        </div>
+
+        {!compact && (
+          <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+            <div className="text-xs text-slate-200 font-semibold">✅ Checklist audience</div>
+            <ul className="mt-2 space-y-1 text-xs text-slate-200">
+              {checklist.slice(0, 6).map((x, i) => (
+                <li key={i}>• {x}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 text-[11px] text-slate-300">
+        Astuce : pendant l’audience, motive en 2–5 phrases et note l’impact sur le contradictoire / recevabilité / proportionnalité.
+      </div>
+    </div>
+  );
+}
+
+export default function JusticeLabPlay() {
+  const { caseId } = useParams();
+  const navigate = useNavigate();
+
+  const decodedCaseId = useMemo(() => decodeURIComponent(caseId || ""), [caseId]);
+  const caseData = useMemo(() => resolveCaseData(decodedCaseId), [decodedCaseId]);
+
+  useMemo(() => {
+    if (caseData?.caseId) saveCaseToCache(caseData);
+    return null;
+  }, [caseData]);
+
+  // ✅ init run: si une run active correspond au caseId, on la reprend (sinon nouvelle)
+  const [run, setRun] = useState(() => {
+    if (!caseData) return null;
+    const active = ensureActiveRunValid();
+    const activeCaseId = active?.caseId || active?.caseMeta?.caseId;
+    if (active && activeCaseId === caseData.caseId) return active;
+    return createNewRun(caseData);
+  });
+
+  const [step, setStep] = useState("ROLE");
+
+  // Audience
+  const [audienceScene, setAudienceScene] = useState(() => run?.answers?.audience?.scene || null);
+  const [isLoadingAudience, setIsLoadingAudience] = useState(false);
+
+  // Scoring IA + Appeal IA
+  const [isScoring, setIsScoring] = useState(false);
+  const [scoreError, setScoreError] = useState(null);
+  const [appealError, setAppealError] = useState(null);
+  const [progress, setProgress] = useState(0);
+
+  // ✅ mini feedback IA local (instant) + impact
+  const [liveFeedback, setLiveFeedback] = useState([]);
+  const [feedbackByObjection, setFeedbackByObjection] = useState({});
+
+  // ✅ verrouillage du textarea de motivation (objections)
+  const [editReasoningById, setEditReasoningById] = useState({});
+  const [draftReasoningById, setDraftReasoningById] = useState({});
+
+  // UI toggles
+  const [showAudit, setShowAudit] = useState(true);
+  const [showPiecesImpact, setShowPiecesImpact] = useState(true);
+
+  // ✅ persister run en storage comme active
+  useEffect(() => {
+    if (!run?.runId) return;
+    try {
+      upsertAndSetActive(run);
+      setActiveRunId(run.runId);
+    } catch {
+      // ignore
+    }
+  }, [run?.runId]);
+
+  // ✅ sync audienceScene depuis run
+  useEffect(() => {
+    const sc = run?.answers?.audience?.scene || null;
+    if (sc && sc !== audienceScene) setAudienceScene(sc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.answers?.audience?.scene]);
+
+  if (!caseData || !run) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
+        <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
+          <p className="text-sm text-slate-200 font-semibold">Dossier introuvable.</p>
+          <p className="text-sm text-slate-300 mt-2">
+            Si ce dossier a été généré dynamiquement, assure-toi qu’il est encore dans le cache local
+            (ou regénère-le depuis Justice Lab).
+          </p>
+          <div className="mt-4 flex gap-2">
+            <Link className="inline-flex text-emerald-300 underline" to="/justice-lab">
+              Retour Justice Lab
+            </Link>
+            <button
+              type="button"
+              className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm"
+              onClick={() => window.location.reload()}
+            >
+              Réessayer
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const piecesById = useMemo(() => {
+    const m = new Map();
+    (caseData.pieces || []).forEach((p) => m.set(p.id, p));
+    return m;
+  }, [caseData]);
+
+  const excludedIds = run.state?.excludedPieceIds || [];
+  const admittedLateIds = run.state?.admittedLatePieceIds || [];
+  const tasks = run.state?.pendingTasks || [];
+  const audit = run.state?.auditLog || [];
+
+  const excludedPieces = excludedIds.map((id) => piecesById.get(id)).filter(Boolean);
+  const admittedLatePieces = admittedLateIds.map((id) => piecesById.get(id)).filter(Boolean);
+
+  const excludedCount = excludedIds.length || 0;
+  const admittedLateCount = admittedLateIds.length || 0;
+  const tasksCount = tasks.length || 0;
+
+  const goNext = async () => {
+    if (isScoring || isLoadingAudience) return;
+
+    if (step === "ROLE") return setStep("BRIEFING");
+    if (step === "BRIEFING") return setStep("QUALIFICATION");
+    if (step === "QUALIFICATION") return setStep("PROCEDURE");
+    if (step === "PROCEDURE") {
+      await loadAudience();
+      return setStep("AUDIENCE");
+    }
+    if (step === "AUDIENCE") return setStep("DECISION");
+    if (step === "DECISION") return finalize();
+  };
+
+  const goPrev = () => {
+    if (isScoring || isLoadingAudience) return;
+    if (step === "BRIEFING") return setStep("ROLE");
+    if (step === "QUALIFICATION") return setStep("BRIEFING");
+    if (step === "PROCEDURE") return setStep("QUALIFICATION");
+    if (step === "AUDIENCE") return setStep("PROCEDURE");
+    if (step === "DECISION") return setStep("AUDIENCE");
+  };
+
+  const saveRunState = (nextRunOrPatch) => {
+    // nextRunOrPatch peut être soit un objet run complet, soit un patch
+    const next =
+      nextRunOrPatch && nextRunOrPatch.runId
+        ? nextRunOrPatch
+        : patchActiveRun(nextRunOrPatch);
+
+    if (next?.runId) {
+      upsertAndSetActive(next);
+      setActiveRunId(next.runId);
+      setRun(next);
+    }
+    return next;
+  };
+
+  const loadAudience = async () => {
+    if (audienceScene?.objections?.length) return;
+
+    setIsLoadingAudience(true);
+    try {
+      const payload = {
+        caseId: run.caseId || run.caseMeta?.caseId,
+        role: run.answers?.role || "Juge",
+        difficulty: caseData?.niveau || "Intermédiaire",
+        facts: caseData?.resume || "",
+        parties: caseData?.parties || {},
+        pieces: (caseData?.pieces || []).map((p) => ({
+          id: p.id,
+          title: p.title,
+          type: p.type,
+          content: (p.content || "").slice(0, 900),
+        })),
+        legalIssues: caseData?.legalIssues || [],
+        procedureChoice: run.answers?.procedureChoice || null,
+        procedureJustification: run.answers?.procedureJustification || "",
+        language: "fr",
+      };
+
+      const data = await postJSON(`${API_BASE}/justice-lab/audience`, payload);
+
+      const merged = mergeAudienceWithTemplates(caseData, data);
+      setAudienceScene(merged);
+
+      const nextRun = setAudienceSceneOnRun(run, merged);
+      saveRunState(nextRun);
+    } catch (e) {
+      console.warn(e);
+      const fallback = {
+        turns: [
+          { speaker: "Greffier", text: "Affaire appelée. Parties présentes." },
+          { speaker: "Juge", text: "L’audience est ouverte. Nous allons entendre les incidents." },
+          { speaker: "Procureur", text: "Le parquet conteste l’exception et invoque l’intérêt public." },
+          { speaker: "Avocat", text: "La défense insiste sur le contradictoire et l’égalité des armes." },
+        ],
+        objections: [
+          {
+            id: "OBJ1",
+            by: "Avocat",
+            title: "Exception de nullité / irrégularité",
+            statement: "La défense soutient qu’un acte essentiel est irrégulier et doit être écarté.",
+            options: ["Accueillir", "Rejeter", "Demander précision"],
+          },
+          {
+            id: "OBJ2",
+            by: "Procureur",
+            title: "Recevabilité / preuve tardive",
+            statement: "Le parquet conteste une pièce produite tardivement et en discute la recevabilité.",
+            options: ["Accueillir", "Rejeter", "Demander précision"],
+          },
+        ],
+      };
+
+      const merged = mergeAudienceWithTemplates(caseData, fallback);
+      setAudienceScene(merged);
+
+      const nextRun = setAudienceSceneOnRun(run, merged);
+      saveRunState(nextRun);
+    } finally {
+      setIsLoadingAudience(false);
+    }
+  };
+
+  // ✅ applique la décision (ENGINE V5) + calcule feedback instantané offline + impacts
+  const applyDecisionHybrid = (obj, decision, reasoning) => {
+    setRun((prev) => {
+      const before = prev;
+
+      const beforeExcluded = before.state?.excludedPieceIds || [];
+      const beforeLate = before.state?.admittedLatePieceIds || [];
+      const beforeTasks = before.state?.pendingTasks || [];
+      const beforeAudit = before.state?.auditLog || [];
+
+      const role = (before.answers?.role || "").trim() || "Juge";
+
+      // ✅ V5 payload
+      const payload = {
+        objectionId: obj?.id,
+        decision,
+        reasoning: (reasoning || "").slice(0, 1200),
+        role,
+        effects: obj?.effects || obj?.effect || null,
+      };
+
+      const next = applyAudienceDecision(before, payload);
+
+      const addedExcluded = setDiff(next.state?.excludedPieceIds, beforeExcluded);
+      const addedLate = setDiff(next.state?.admittedLatePieceIds, beforeLate);
+
+      const addedTasks = setDiff(
+        (next.state?.pendingTasks || []).map((t) => `${t.type}|${t.label}|${t.detail}`),
+        beforeTasks.map((t) => `${t.type}|${t.label}|${t.detail}`)
+      );
+
+      const lastAudit =
+        (next.state?.auditLog || []).slice(0, 1)[0] ||
+        (next.state?.auditLog || []).slice(-1)[0] ||
+        (beforeAudit || []).slice(0, 1)[0] ||
+        (beforeAudit || []).slice(-1)[0] ||
+        null;
+
+      const best = bestChoiceForRole(obj, role);
+      const ok = decision === best;
+
+      const impactLines = [];
+      if (addedExcluded.length) {
+        const labels = addedExcluded.map((id) => piecesById.get(id)?.title || id).slice(0, 3);
+        impactLines.push(`🧾 Pièces écartées: ${labels.join(" • ")}`);
+      }
+      if (addedLate.length) {
+        const labels = addedLate.map((id) => piecesById.get(id)?.title || id).slice(0, 3);
+        impactLines.push(`📎 Pièces admises tardives: ${labels.join(" • ")}`);
+      }
+      if (addedTasks.length) {
+        const lastTasks = (next.state?.pendingTasks || [])
+          .slice(-Math.min(2, addedTasks.length))
+          .map((t) => t.label || t.type);
+        impactLines.push(`✅ Actions: ${lastTasks.join(" • ")}`);
+      }
+      if (!impactLines.length) impactLines.push("ℹ️ Impact: pas d’effet procédural majeur (bonus/penalty interne possible).");
+
+      const fb = {
+        id: `fb_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        at: nowIso(),
+        objId: obj?.id || "",
+        title: obj?.title || "Objection",
+        decision,
+        role,
+        verdict: ok ? "BON" : "À AMÉLIORER",
+        headline: ok ? "✅ Bonne décision (cohérence rôle/garanties)" : "⚠️ Décision discutable (risque procédural)",
+        suggestion: ok
+          ? "Continue : motive brièvement (contradictoire / recevabilité / proportionnalité)."
+          : `Suggestion IA (instant) : pour le rôle ${role}, un choix souvent plus sûr est “${best}”.`,
+        impact: impactLines,
+        audit: lastAudit
+          ? `${lastAudit.title || lastAudit.action || lastAudit.type || "Acte"}${lastAudit.detail ? ` — ${lastAudit.detail}` : ""}`
+          : null,
+      };
+
+      setLiveFeedback((arr) => [fb, ...(arr || [])].slice(0, 4));
+      if (obj?.id) setFeedbackByObjection((m) => ({ ...(m || {}), [obj.id]: fb }));
+
+      // ✅ persistance storage active
+      try {
+        upsertAndSetActive(next);
+        setActiveRunId(next.runId);
+      } catch {
+        // ignore
+      }
+
+      return next;
+    });
+  };
+
+  const finalize = async () => {
+    setScoreError(null);
+    setAppealError(null);
+    setIsScoring(true);
+    setProgress(8);
+
+    try {
+      const local = scoreRun(run);
+      setProgress(15);
+
+      // ✅ payload unifié (compatible plusieurs versions backend)
+      const casePayload = {
+        caseId: run.caseId || run.caseMeta?.caseId,
+        domaine: caseData?.domaine,
+        niveau: caseData?.niveau,
+        titre: caseData?.titre,
+      };
+
+      let aiScore = null;
+      try {
+        aiScore = await postJSON(`${API_BASE}/justice-lab/score`, {
+          // nouveau style
+          caseData,
+          runData: run,
+          // ancien style (fallback)
+          caseId: casePayload.caseId,
+          role: run.answers?.role || "Juge",
+          facts: caseData?.resume || "",
+          qualification: run.answers?.qualification || "",
+          procedureChoice: run.answers?.procedureChoice || null,
+          procedureJustification: run.answers?.procedureJustification || "",
+          audience: run.answers?.audience || {},
+          decisionMotivation: run.answers?.decisionMotivation || "",
+          decisionDispositif: run.answers?.decisionDispositif || "",
+          language: "fr",
+        });
+        setProgress(55);
+      } catch (e) {
+        console.warn("score ia failed", e);
+      }
+
+      let appeal = null;
+      try {
+        appeal = await postJSON(`${API_BASE}/justice-lab/appeal`, {
+          // nouveau style
+          caseData,
+          runData: run,
+          scored: aiScore || local,
+          // ancien style (fallback)
+          caseId: casePayload.caseId,
+          role: run.answers?.role || "Juge",
+          facts: caseData?.resume || "",
+          decisionMotivation: run.answers?.decisionMotivation || "",
+          decisionDispositif: run.answers?.decisionDispositif || "",
+          audience: run.answers?.audience || {},
+          language: "fr",
+        });
+        setProgress(80);
+      } catch (e) {
+        console.warn("appeal ia failed", e);
+      }
+
+      const scoreGlobal = typeof aiScore?.scoreGlobal === "number" ? aiScore.scoreGlobal : local?.scoreGlobal || 0;
+      const scores = aiScore?.scores || local?.scores || {};
+      const flags = aiScore
+        ? toFlagsFromAi(aiScore)
+        : (local?.flags || []).map((x) => ({ level: "warn", label: x, detail: "" }));
+      const debrief = aiScore ? toDebriefFromAi(aiScore) : local?.debrief || [];
+
+      const finalRun = {
+        ...run,
+        scoreGlobal,
+        scores,
+        flags,
+        debrief,
+        ai: aiScore || null,
+        appeal: appeal || null,
+        finishedAt: nowIso(),
+        caseMeta: {
+          ...(run.caseMeta || {}),
+          caseId: run.caseId || run.caseMeta?.caseId,
+          caseData,
+        },
+      };
+
+      addRun(finalRun);
+      updateGlobalStats(finalRun);
+
+      setProgress(100);
+      navigate("/justice-lab/results", { state: { runId: finalRun.runId, runData: finalRun } });
+    } catch (e) {
+      console.error(e);
+      setScoreError("Erreur scoring. Vérifie le token, réseau ou endpoint /justice-lab/score.");
+    } finally {
+      setIsScoring(false);
+    }
+  };
+
+  const roleCard = (r) => {
+    const active = (run.answers?.role || "Juge") === r.id;
+    return (
+      <button
+        key={r.id}
+        type="button"
+        onClick={() =>
+          saveRunState({
+            ...run,
+            answers: { ...run.answers, role: r.id },
+          })
+        }
+        className={`w-full text-left rounded-2xl border p-4 transition ${
+          active ? "border-emerald-500/50 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+        }`}
+      >
+        <div className="text-sm font-semibold text-slate-100">{r.label}</div>
+        <div className="text-xs text-slate-300 mt-1">{r.desc}</div>
+      </button>
+    );
+  };
+
+  const procedureCard = (c) => {
+    const active = run.answers?.procedureChoice === c.id;
+    return (
+      <button
+        key={c.id}
+        type="button"
+        onClick={() =>
+          saveRunState({
+            ...run,
+            answers: { ...run.answers, procedureChoice: c.id },
+          })
+        }
+        className={`w-full text-left rounded-2xl border p-4 transition ${
+          active ? "border-emerald-500/50 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-100">
+            {c.id}. {c.title}
+          </div>
+          <div className="text-[11px] text-slate-400">{c.hint}</div>
+        </div>
+      </button>
+    );
+  };
+
+  const recentAudit = useMemo(() => {
+    const arr = Array.isArray(audit) ? audit : [];
+    return arr.slice(0, 12).map((a) => ({
+      at: a.ts || a.at || nowIso(),
+      kind: a.type || a.kind || "Action",
+      action: a.title || a.action || a.label || "Action",
+      detail: a.detail || a.description || "",
+    }));
+  }, [audit]);
+
+  // ✅ Helper: récupérer décision V5 pour une objection
+  const getDecisionForObj = (objId) => {
+    const decisions = Array.isArray(run?.answers?.audience?.decisions) ? run.answers.audience.decisions : [];
+    return decisions.find((d) => d.objectionId === objId) || null;
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs text-slate-400">
+              <Link to="/justice-lab" className="hover:underline">
+                Justice Lab
+              </Link>{" "}
+              <span className="opacity-60">/</span>{" "}
+              <span className="text-slate-200 font-semibold">{caseData.caseId}</span>
+              {caseData?.meta?.seed ? (
+                <span className="ml-2 text-[11px] text-slate-500">seed: {String(caseData.meta.seed).slice(0, 22)}</span>
+              ) : null}
+            </div>
+            <h1 className="text-2xl font-bold mt-2">{caseData.titre}</h1>
+            <p className="text-sm text-slate-300 mt-1">{caseData.resume}</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm"
+              onClick={() => navigate("/justice-lab")}
+            >
+              Quitter
+            </button>
+          </div>
+        </div>
+
+        {/* ✅ Didacticiel (top) */}
+        <div className="mt-6">
+          <PedagogyPanel caseData={caseData} compact />
+        </div>
+
+        {/* top controls */}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-3 py-1 rounded-full border border-white/10 bg-white/5">
+              Étape: <span className="text-slate-100 font-semibold">{step}</span>
+            </span>
+
+            {step === "AUDIENCE" ? (
+              <span className="text-xs px-3 py-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-200">
+                Gestion d’audience: {run?.scores?.audience ?? 0}/100
+              </span>
+            ) : null}
+
+            {excludedCount ? (
+              <span className="text-xs px-3 py-1 rounded-full border border-amber-500/20 bg-amber-500/10 text-amber-200">
+                Pièces écartées: {excludedCount}
+              </span>
+            ) : null}
+
+            {admittedLateCount ? (
+              <span className="text-xs px-3 py-1 rounded-full border border-violet-500/20 bg-violet-500/10 text-violet-200">
+                Tardives admises: {admittedLateCount}
+              </span>
+            ) : null}
+
+            {tasksCount ? (
+              <span className="text-xs px-3 py-1 rounded-full border border-sky-500/20 bg-sky-500/10 text-sky-200">
+                Actions: {tasksCount}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              disabled={isScoring || isLoadingAudience || step === "ROLE"}
+              onClick={goPrev}
+              className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition text-sm"
+            >
+              ← Retour
+            </button>
+
+            <button
+              disabled={isScoring || isLoadingAudience}
+              onClick={goNext}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition font-semibold text-sm"
+            >
+              {step === "DECISION" ? "Terminer & scorer" : "Continuer →"}
+            </button>
+          </div>
+        </div>
+
+        {/* content */}
+        <div className="mt-6">
+          {/* ROLE */}
+          {step === "ROLE" && (
+            <div className="grid gap-4 md:grid-cols-3">
+              {ROLES.map(roleCard)}
+              <div className="md:col-span-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="text-sm text-slate-200 font-semibold">🎮 Mode “jeu”</div>
+                <div className="text-xs text-slate-300 mt-1">
+                  Choisis ton rôle. Le moteur adaptera le feedback (contradictoire, recevabilité, proportionnalité).
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* BRIEFING */}
+          {step === "BRIEFING" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-sm font-semibold text-slate-100">📌 Faits & parties</h2>
+                <p className="text-sm text-slate-300 mt-2">{caseData.resume}</p>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {Object.entries(caseData.parties || {}).map(([k, v]) => (
+                    <div key={k} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                      <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">{k}</div>
+                      <div className="text-sm text-slate-100 font-semibold mt-1">{v?.nom || "-"}</div>
+                      <div className="text-xs text-slate-300 mt-1">{v?.statut || ""}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4">
+                  <PedagogyPanel caseData={caseData} />
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <h2 className="text-sm font-semibold text-emerald-200">🧾 Pièces au dossier</h2>
+                <div className="mt-3 space-y-2">
+                  {(caseData.pieces || []).map((p) => (
+                    <div key={p.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-slate-100">
+                          {p.id} • {p.title}
+                        </div>
+                        <div className="text-[11px] text-slate-400">{p.type}</div>
+                      </div>
+                      <div className="text-xs text-slate-300 mt-1">{(p.content || "").slice(0, 180)}…</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* QUALIFICATION */}
+          {step === "QUALIFICATION" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <h2 className="text-sm font-semibold text-emerald-200 mb-2">🧠 Qualification</h2>
+                <p className="text-xs text-emerald-50/90 mb-3">
+                  Décris la qualification, les questions litigieuses, et les garanties (faits → questions → règles → application).
+                </p>
+                <textarea
+                  value={run.answers.qualification}
+                  onChange={(e) =>
+                    saveRunState({
+                      ...run,
+                      answers: { ...run.answers, qualification: e.target.value },
+                    })
+                  }
+                  rows={10}
+                  className="w-full rounded-2xl border border-emerald-500/30 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400"
+                  placeholder="Ex: question de recevabilité… droits de défense… délais…"
+                />
+              </section>
+
+              <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-sm font-semibold text-slate-100 mb-2">🎯 Axes juridiques</h2>
+                <ul className="space-y-2 text-sm text-slate-300">
+                  {(caseData.legalIssues || []).map((x, i) => (
+                    <li key={i} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                      {x}
+                    </li>
+                  ))}
+                </ul>
+
+                {caseData?.pedagogy?.erreursFrequentes?.length ? (
+                  <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3">
+                    <div className="text-xs text-amber-100 font-semibold">⚠️ Attention (erreurs fréquentes)</div>
+                    <ul className="mt-2 text-xs text-amber-50 space-y-1">
+                      {caseData.pedagogy.erreursFrequentes.slice(0, 4).map((x, i) => (
+                        <li key={i}>• {x}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </section>
+            </div>
+          )}
+
+          {/* PROCEDURE */}
+          {step === "PROCEDURE" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <h2 className="text-sm font-semibold text-slate-100 mb-2">⚙️ Procédure</h2>
+                <p className="text-xs text-slate-300 mb-3">Choisis l’orientation procédurale la plus cohérente.</p>
+                <div className="space-y-2">{PROCEDURE_CHOICES.map(procedureCard)}</div>
+
+                <div className="mt-3">
+                  <textarea
+                    value={run.answers.procedureJustification}
+                    onChange={(e) =>
+                      saveRunState({
+                        ...run,
+                        answers: { ...run.answers, procedureJustification: e.target.value },
+                      })
+                    }
+                    rows={5}
+                    className="w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
+                    placeholder="Justifie en 3–6 lignes : garanties, délais, droits, charge de preuve..."
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <h2 className="text-sm font-semibold text-emerald-200 mb-2">➡️ Étape suivante : Audience IA</h2>
+                <p className="text-sm text-slate-200/90">
+                  Après PROCÉDURE, le jeu lance une audience simulée : objections, gestion de débats, pièces tardives, audit log en direct.
+                </p>
+                <div className="mt-4 flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isLoadingAudience}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 disabled:opacity-60 transition font-semibold"
+                    onClick={async () => {
+                      await loadAudience();
+                      setStep("AUDIENCE");
+                    }}
+                  >
+                    {isLoadingAudience ? "Chargement audience..." : "Lancer l’audience →"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition"
+                    onClick={() => navigate("/justice-lab/audience")}
+                  >
+                    Ouvrir page Audience
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* AUDIENCE */}
+          {step === "AUDIENCE" && (
+            <div className="grid gap-4 lg:grid-cols-3">
+              {/* left: scene + pieces */}
+              <section className="lg:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">🏛️ Audience simulée</h2>
+                    <p className="text-xs text-slate-300 mt-1">
+                      Phase interactive: objections + décisions + journal d’audience (audit log) + impact sur pièces.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className={`px-3 py-2 rounded-xl border text-xs transition ${
+                        showPiecesImpact ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100" : "border-white/10 bg-white/5 hover:bg-white/10"
+                      }`}
+                      onClick={() => setShowPiecesImpact((v) => !v)}
+                    >
+                      Pièces (impact)
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-3 py-2 rounded-xl border text-xs transition ${
+                        showAudit ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100" : "border-white/10 bg-white/5 hover:bg-white/10"
+                      }`}
+                      onClick={() => setShowAudit((v) => !v)}
+                    >
+                      Audit log
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Dialogue (extraits)</div>
+                    <div className="mt-2 space-y-2 max-h-[280px] overflow-auto pr-1">
+                      {(audienceScene?.turns || []).map((t, i) => (
+                        <div key={i} className="rounded-xl border border-white/10 bg-slate-950/50 p-3">
+                          <div className="text-xs text-slate-400">{t.speaker}</div>
+                          <div className="text-sm text-slate-100 mt-1">{t.text}</div>
+                        </div>
+                      ))}
+                      {!audienceScene?.turns?.length ? <div className="text-sm text-slate-400">Chargement...</div> : null}
+                    </div>
+                  </div>
+
+                  {/* ✅ pieces impact */}
+                  {showPiecesImpact && (
+                    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                      <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Pièces & incidents</div>
+
+                      <div className="mt-2 space-y-3">
+                        <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                          <div className="text-xs text-slate-300 font-semibold">🧾 Pièces écartées</div>
+                          {excludedPieces.length ? (
+                            <ul className="mt-2 text-xs text-slate-200 space-y-1">
+                              {excludedPieces.slice(0, 6).map((p) => (
+                                <li key={p.id}>• {p.title}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="mt-2 text-xs text-slate-400">Aucune.</div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                          <div className="text-xs text-slate-300 font-semibold">📎 Pièces tardives admises</div>
+                          {admittedLatePieces.length ? (
+                            <ul className="mt-2 text-xs text-slate-200 space-y-1">
+                              {admittedLatePieces.slice(0, 6).map((p) => (
+                                <li key={p.id}>• {p.title}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="mt-2 text-xs text-slate-400">Aucune.</div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                          <div className="text-xs text-slate-300 font-semibold">✅ Actions / tâches</div>
+                          {tasks.length ? (
+                            <ul className="mt-2 text-xs text-slate-200 space-y-1">
+                              {tasks.slice(0, 6).map((t, i) => (
+                                <li key={i}>• {t.label || t.type}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="mt-2 text-xs text-slate-400">Aucune.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ✅ Instant feedback panel */}
+                {liveFeedback.length > 0 && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Feedback instant (offline)</div>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      {liveFeedback.map((fb) => (
+                        <div
+                          key={fb.id}
+                          className={`rounded-2xl border p-3 ${
+                            fb.verdict === "BON" ? "border-emerald-500/30 bg-emerald-500/10" : "border-amber-500/30 bg-amber-500/10"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-slate-200">
+                              <span className="text-slate-400">{formatTime(fb.at)}</span> •{" "}
+                              <span className="text-slate-100 font-semibold">{fb.title}</span>{" "}
+                              <span className="text-slate-400">({fb.decision})</span>
+                            </div>
+                            <div
+                              className={`text-[11px] px-2 py-1 rounded-full border ${
+                                fb.verdict === "BON"
+                                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                                  : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                              }`}
+                            >
+                              {fb.verdict}
+                            </div>
+                          </div>
+
+                          <div className="mt-2 text-sm text-slate-100">{fb.headline}</div>
+                          <div className="mt-1 text-xs text-slate-300">{fb.suggestion}</div>
+
+                          <div className="mt-2 text-xs text-slate-200">
+                            <div className="text-slate-400">Impact :</div>
+                            <ul className="mt-1 space-y-1">
+                              {fb.impact.map((x, i) => (
+                                <li key={i} className="text-slate-200">
+                                  • {x}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          {fb.audit ? <div className="mt-2 text-[11px] text-slate-400">Journal: {fb.audit}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ✅ Audit log panel */}
+                {showAudit && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Journal d’audience (live)</div>
+                    {recentAudit.length ? (
+                      <div className="mt-2 space-y-2 max-h-[360px] overflow-auto pr-1">
+                        {recentAudit.map((a, idx) => (
+                          <div key={idx} className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs text-slate-200">
+                                <span className="text-slate-400">{formatTime(a.at)}</span> •{" "}
+                                <span className="text-slate-100 font-semibold">{a.kind}</span>
+                              </div>
+                              <div className="text-[11px] text-slate-400">{a.action}</div>
+                            </div>
+                            {a.detail ? <div className="mt-1 text-xs text-slate-300">{a.detail}</div> : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-xs text-slate-400">Aucune action enregistrée pour le moment.</div>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              {/* right: objections */}
+              <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <h2 className="text-sm font-semibold text-emerald-200 mb-2">🎯 Objections à trancher</h2>
+                <p className="text-xs text-emerald-50/90 mb-3">
+                  Choisis une décision. La motivation est <b>verrouillée</b> : clique “Modifier” pour éditer puis “Enregistrer”.
+                </p>
+
+                {(audienceScene?.objections || []).length === 0 ? (
+                  <div className="text-sm text-slate-300">Aucune objection.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {(audienceScene?.objections || []).map((obj) => {
+                      const d = getDecisionForObj(obj.id);
+                      const current = {
+                        decision: d?.decision || "",
+                        reasoning: d?.reasoning || "",
+                      };
+
+                      const offlineFb = obj?.id ? feedbackByObjection[obj.id] : null;
+                      const isEditing = !!editReasoningById[obj.id];
+
+                      const role = (run.answers?.role || "").trim() || "Juge";
+                      const best = bestChoiceForRole(obj, role);
+
+                      return (
+                        <div key={obj.id} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
+                          <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80">
+                            {obj.by} • {obj.id}
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-slate-100">{obj.title}</div>
+                          <div className="mt-2 text-sm text-slate-200/90">{obj.statement}</div>
+
+                          <div className="mt-2 text-[11px] text-slate-300">
+                            IA instant (rôle {role}) : option souvent la plus sûre →{" "}
+                            <span className="text-slate-100 font-semibold">“{best}”</span>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {(obj.options || ["Accueillir", "Rejeter", "Demander précision"]).map((opt) => {
+                              const active = (current?.decision || "") === opt;
+                              return (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  className={`px-3 py-2 rounded-xl border text-xs transition ${
+                                    active
+                                      ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-100"
+                                      : "border-white/10 bg-white/5 hover:bg-white/10 text-slate-100"
+                                  }`}
+                                  onClick={() => {
+                                    const rr = isEditing
+                                      ? (draftReasoningById[obj.id] ?? current?.reasoning ?? "")
+                                      : (current?.reasoning || "");
+                                    applyDecisionHybrid(obj, opt, rr);
+
+                                    // ✅ persister aussi dans answers (décisions)
+                                    // applyAudienceDecision le fait déjà, donc pas besoin d’autre patch.
+                                  }}
+                                >
+                                  {opt}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Motivation (verrouillée par défaut) */}
+                          <div className="mt-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-[11px] text-slate-400">
+                                Motivation (2–5 phrases). {isEditing ? "✍️ édition" : "🔒 verrouillé"}
+                              </div>
+
+                              {!isEditing ? (
+                                <button
+                                  type="button"
+                                  className="text-[11px] px-2 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition"
+                                  onClick={() => {
+                                    setEditReasoningById((mm) => ({ ...(mm || {}), [obj.id]: true }));
+                                    setDraftReasoningById((mm) => ({ ...(mm || {}), [obj.id]: current?.reasoning || "" }));
+                                  }}
+                                >
+                                  Modifier
+                                </button>
+                              ) : (
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    className="text-[11px] px-2 py-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/15 transition text-emerald-100"
+                                    onClick={() => {
+                                      const val = (draftReasoningById[obj.id] ?? current?.reasoning ?? "").trim();
+                                      const chosen = (current?.decision || "").trim() || "Demander précision";
+                                      applyDecisionHybrid(obj, chosen, val);
+                                      setEditReasoningById((mm) => ({ ...(mm || {}), [obj.id]: false }));
+                                    }}
+                                  >
+                                    Enregistrer
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-[11px] px-2 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition"
+                                    onClick={() => {
+                                      setEditReasoningById((mm) => ({ ...(mm || {}), [obj.id]: false }));
+                                      setDraftReasoningById((mm) => {
+                                        const next = { ...(mm || {}) };
+                                        delete next[obj.id];
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    Annuler
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            <textarea
+                              value={
+                                isEditing
+                                  ? (draftReasoningById[obj.id] ?? current?.reasoning ?? "")
+                                  : (current?.reasoning || "")
+                              }
+                              onChange={(e) => {
+                                if (!isEditing) return;
+                                setDraftReasoningById((mm) => ({ ...(mm || {}), [obj.id]: e.target.value }));
+                              }}
+                              rows={3}
+                              disabled={!isEditing}
+                              className={`mt-2 w-full rounded-xl border px-3 py-2 text-sm text-slate-100 outline-none ${
+                                isEditing
+                                  ? "border-emerald-500/30 bg-slate-950/70 focus:border-emerald-400"
+                                  : "border-white/10 bg-slate-950/40 opacity-80 cursor-not-allowed"
+                              }`}
+                              placeholder="Justification courte : contradictoire, pertinence, régularité, droits de défense…"
+                            />
+                          </div>
+
+                          {/* mini feedback par objection */}
+                          {offlineFb && offlineFb.objId === obj.id ? (
+                            <div
+                              className={`mt-3 rounded-xl border p-3 text-xs ${
+                                offlineFb.verdict === "BON"
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-50"
+                                  : "border-amber-500/30 bg-amber-500/10 text-amber-50"
+                              }`}
+                            >
+                              <div className="font-semibold">{offlineFb.headline}</div>
+                              <div className="mt-1 opacity-90">{offlineFb.suggestion}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {/* DECISION */}
+          {step === "DECISION" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <h2 className="text-sm font-semibold text-emerald-200 mb-2">🧾 Motivation</h2>
+                <p className="text-xs text-emerald-50/90 mb-3">Faits → Questions → Droit → Application → Conclusion</p>
+
+                <textarea
+                  value={run.answers.decisionMotivation}
+                  onChange={(e) =>
+                    saveRunState({
+                      ...run,
+                      answers: { ...run.answers, decisionMotivation: e.target.value },
+                    })
+                  }
+                  rows={10}
+                  className="w-full rounded-2xl border border-emerald-500/30 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400"
+                  placeholder="Attendu que… Considérant que… Au regard de…"
+                  disabled={isScoring}
+                />
+
+                <div className="mt-4">
+                  <PedagogyPanel caseData={caseData} compact />
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-700/70 bg-slate-950/70 p-4">
+                <h2 className="text-sm font-semibold text-slate-100 mb-2">Dispositif</h2>
+
+                <textarea
+                  value={run.answers.decisionDispositif}
+                  onChange={(e) =>
+                    saveRunState({
+                      ...run,
+                      answers: { ...run.answers, decisionDispositif: e.target.value },
+                    })
+                  }
+                  rows={10}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
+                  placeholder="Par ces motifs… Le tribunal…"
+                  disabled={isScoring}
+                />
+
+                {isScoring ? (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+                    <div className="text-xs text-slate-300">Scoring en cours…</div>
+                    <div className="mt-2 h-2 rounded-full bg-white/10 overflow-hidden">
+                      <div className="h-2 bg-emerald-500/80" style={{ width: `${progress}%` }} />
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-2">{progress}%</div>
+                  </div>
+                ) : null}
+
+                {scoreError ? (
+                  <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-100">
+                    {scoreError}
+                  </div>
+                ) : null}
+
+                {appealError ? (
+                  <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                    {appealError}
+                  </div>
+                ) : null}
+              </section>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

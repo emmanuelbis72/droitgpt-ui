@@ -27,6 +27,33 @@ import AcademieProgramme from "./pages/AcademieProgramme.jsx";
 import AcademieLecon from "./pages/AcademieLecon.jsx";
 import AcademieDashboard from "./pages/AcademieDashboard.jsx";
 
+// ⚖️ Justice Lab (jeu de cas pratiques)
+import JusticeLab from "./pages/JusticeLab.jsx";
+import JusticeLabPlay from "./pages/JusticeLabPlay.jsx";
+import JusticeLabResults from "./pages/JusticeLabResults.jsx";
+import JusticeLabDashboard from "./pages/JusticeLabDashboard.jsx";
+
+// ✅ NOUVEAU: phases dédiées
+import JusticeLabAudience from "./pages/JusticeLabAudience.jsx";
+import JusticeLabAppeal from "./pages/JusticeLabAppeal.jsx";
+
+// ✅ Journal (audit log)
+import JusticeLabJournal from "./pages/JusticeLabJournal.jsx";
+
+// ✅ Redirect helper (fallback “dernier run”)
+import { readRuns } from "./justiceLab/storage.js";
+
+function JusticeLabResultsFallback() {
+  try {
+    const runs = readRuns();
+    const last = runs?.[0] || null;
+    if (last?.runId) return <Navigate to={`/justice-lab/results/${encodeURIComponent(last.runId)}`} replace />;
+  } catch {
+    // ignore
+  }
+  return <Navigate to="/justice-lab" replace />;
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -80,6 +107,87 @@ function App() {
             element={
               <ProtectedRoute>
                 <AssistantVocal />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* ⚖️ Justice Lab (protégé) */}
+          <Route
+            path="/justice-lab"
+            element={
+              <ProtectedRoute>
+                <JusticeLab />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/justice-lab/dashboard"
+            element={
+              <ProtectedRoute>
+                <JusticeLabDashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/justice-lab/play/:caseId"
+            element={
+              <ProtectedRoute>
+                <JusticeLabPlay />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* ✅ Results (robuste) :
+              - /justice-lab/results (state-run ou fallback dernier run)
+              - /justice-lab/results/:runId (URL classique)
+          */}
+          <Route
+            path="/justice-lab/results"
+            element={
+              <ProtectedRoute>
+                {/* JusticeLabResults sait lire location.state.runData / runId,
+                    sinon on redirige vers le dernier run */}
+                <JusticeLabResultsFallback />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/justice-lab/results/:runId"
+            element={
+              <ProtectedRoute>
+                <JusticeLabResults />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* ✅ Journal (audit log) */}
+          <Route
+            path="/justice-lab/journal/:runId"
+            element={
+              <ProtectedRoute>
+                <JusticeLabJournal />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* ✅ Routes phases (protégées) */}
+          <Route
+            path="/justice-lab/audience"
+            element={
+              <ProtectedRoute>
+                <JusticeLabAudience />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/justice-lab/appeal"
+            element={
+              <ProtectedRoute>
+                <JusticeLabAppeal />
               </ProtectedRoute>
             }
           />
