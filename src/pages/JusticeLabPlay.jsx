@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { CASES } from "../justiceLab/cases.js";
 import {
   createNewRun,
   scoreRun,
@@ -20,8 +19,11 @@ import {
   setActiveRunId,
 } from "../justiceLab/storage.js";
 
-const API_BASE =
-  (import.meta?.env?.VITE_API_URL || "https://droitgpt-indexer.onrender.com").replace(/\/$/, "");
+const API_BASE = (
+  import.meta?.env?.VITE_API_BASE ||
+  import.meta?.env?.VITE_API_URL ||
+  "https://droitgpt-indexer.onrender.com"
+).replace(/\/$/, "");
 
 const PROCEDURE_CHOICES = [
   { id: "A", title: "Mesures conservatoires / garanties + audience rapide", hint: "Équilibrée" },
@@ -35,11 +37,26 @@ const ROLES = [
   { id: "Avocat", label: "🟦 Avocat", desc: "Défense / intérêts privés, exceptions & nullités." },
 ];
 
-// ✅ cache local des dossiers dynamiques
-const CASE_CACHE_KEY = "justicelab_caseCache_v1";
-function loadCaseCache() {
+// ✅ cache local dossiers dynamiques (v2 + fallback v1)
+const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
+const CASE_CACHE_KEY_V1 = "justicelab_caseCache_v1";
+
+function lsAvailable() {
   try {
-    const raw = localStorage.getItem(CASE_CACHE_KEY);
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const k = "__t";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadCaseCacheByKey(key) {
+  if (!lsAvailable()) return {};
+  try {
+    const raw = localStorage.getItem(key);
     if (!raw) return {};
     const obj = JSON.parse(raw);
     return obj && typeof obj === "object" ? obj : {};
@@ -47,12 +64,21 @@ function loadCaseCache() {
     return {};
   }
 }
+
+function loadCaseCache() {
+  // merge v2 + v1 (v2 prioritaire)
+  const v2 = loadCaseCacheByKey(CASE_CACHE_KEY_V2);
+  const v1 = loadCaseCacheByKey(CASE_CACHE_KEY_V1);
+  return { ...(v1 || {}), ...(v2 || {}) };
+}
+
 function saveCaseToCache(caseData) {
+  if (!lsAvailable()) return;
   try {
     if (!caseData?.caseId) return;
-    const cache = loadCaseCache();
+    const cache = loadCaseCacheByKey(CASE_CACHE_KEY_V2);
     cache[caseData.caseId] = caseData;
-    localStorage.setItem(CASE_CACHE_KEY, JSON.stringify(cache));
+    localStorage.setItem(CASE_CACHE_KEY_V2, JSON.stringify(cache));
   } catch {
     // ignore
   }
@@ -161,11 +187,8 @@ function bestChoiceForRole(obj, role) {
   return "Accueillir";
 }
 
-// ✅ récupère un caseData : CASES → cache local → dernier run (fallback)
+// ✅ récupère un caseData : cache local (v2/v1) → runs (fallback)
 function resolveCaseData(decodedCaseId) {
-  const fromStatic = CASES.find((c) => c.caseId === decodedCaseId);
-  if (fromStatic) return fromStatic;
-
   const cache = loadCaseCache();
   if (cache?.[decodedCaseId]) return cache[decodedCaseId];
 
@@ -178,6 +201,19 @@ function resolveCaseData(decodedCaseId) {
   }
 
   return null;
+}
+
+function normalizePartyValue(v) {
+  if (!v) return { title: "-", sub: "" };
+  // string simple (nouveau cases.js)
+  if (typeof v === "string") return { title: v, sub: "" };
+  // objet (ancien format)
+  if (typeof v === "object") {
+    const title = v.nom || v.name || v.label || "-";
+    const sub = v.statut || v.role || v.desc || "";
+    return { title, sub };
+  }
+  return { title: String(v), sub: "" };
 }
 
 function PedagogyPanel({ caseData, compact = false }) {
@@ -232,7 +268,8 @@ function PedagogyPanel({ caseData, compact = false }) {
       </div>
 
       <div className="mt-3 text-[11px] text-slate-300">
-        Astuce : pendant l’audience, motive en 2–5 phrases et note l’impact sur le contradictoire / recevabilité / proportionnalité.
+        Astuce : pendant l’audience, motive en 2–5 phrases et note l’impact sur le contradictoire / recevabilité /
+        proportionnalité.
       </div>
     </div>
   );
@@ -250,13 +287,16 @@ export default function JusticeLabPlay() {
     return null;
   }, [caseData]);
 
-  // ✅ init run: si une run active correspond au caseId, on la reprend (sinon nouvelle)
+  // ✅ init run: reprend active run si correspond au caseId, sinon nouvelle
   const [run, setRun] = useState(() => {
     if (!caseData) return null;
     const active = ensureActiveRunValid();
     const activeCaseId = active?.caseId || active?.caseMeta?.caseId;
     if (active && activeCaseId === caseData.caseId) return active;
-    return createNewRun(caseData);
+
+    // ⚠️ IMPORTANT: on injecte caseData dans caseMeta pour que /results, /appeal etc gardent tout
+    const r = createNewRun(caseData);
+    return { ...r, caseMeta: { ...(r.caseMeta || {}), caseId: caseData.caseId, caseData } };
   });
 
   const [step, setStep] = useState("ROLE");
@@ -271,11 +311,11 @@ export default function JusticeLabPlay() {
   const [appealError, setAppealError] = useState(null);
   const [progress, setProgress] = useState(0);
 
-  // ✅ mini feedback IA local (instant) + impact
+  // ✅ mini feedback offline + map par objection
   const [liveFeedback, setLiveFeedback] = useState([]);
   const [feedbackByObjection, setFeedbackByObjection] = useState({});
 
-  // ✅ verrouillage du textarea de motivation (objections)
+  // ✅ verrouillage motivation (objections)
   const [editReasoningById, setEditReasoningById] = useState({});
   const [draftReasoningById, setDraftReasoningById] = useState({});
 
@@ -369,11 +409,8 @@ export default function JusticeLabPlay() {
   };
 
   const saveRunState = (nextRunOrPatch) => {
-    // nextRunOrPatch peut être soit un objet run complet, soit un patch
     const next =
-      nextRunOrPatch && nextRunOrPatch.runId
-        ? nextRunOrPatch
-        : patchActiveRun(nextRunOrPatch);
+      nextRunOrPatch && nextRunOrPatch.runId ? nextRunOrPatch : patchActiveRun(nextRunOrPatch);
 
     if (next?.runId) {
       upsertAndSetActive(next);
@@ -450,7 +487,7 @@ export default function JusticeLabPlay() {
     }
   };
 
-  // ✅ applique la décision (ENGINE V5) + calcule feedback instantané offline + impacts
+  // ✅ applique décision V5 + feedback instant offline + impacts
   const applyDecisionHybrid = (obj, decision, reasoning) => {
     setRun((prev) => {
       const before = prev;
@@ -462,7 +499,6 @@ export default function JusticeLabPlay() {
 
       const role = (before.answers?.role || "").trim() || "Juge";
 
-      // ✅ V5 payload
       const payload = {
         objectionId: obj?.id,
         decision,
@@ -529,7 +565,6 @@ export default function JusticeLabPlay() {
       setLiveFeedback((arr) => [fb, ...(arr || [])].slice(0, 4));
       if (obj?.id) setFeedbackByObjection((m) => ({ ...(m || {}), [obj.id]: fb }));
 
-      // ✅ persistance storage active
       try {
         upsertAndSetActive(next);
         setActiveRunId(next.runId);
@@ -551,22 +586,13 @@ export default function JusticeLabPlay() {
       const local = scoreRun(run);
       setProgress(15);
 
-      // ✅ payload unifié (compatible plusieurs versions backend)
-      const casePayload = {
-        caseId: run.caseId || run.caseMeta?.caseId,
-        domaine: caseData?.domaine,
-        niveau: caseData?.niveau,
-        titre: caseData?.titre,
-      };
-
       let aiScore = null;
       try {
         aiScore = await postJSON(`${API_BASE}/justice-lab/score`, {
-          // nouveau style
           caseData,
           runData: run,
-          // ancien style (fallback)
-          caseId: casePayload.caseId,
+          // compat ancien backend
+          caseId: run.caseId || run.caseMeta?.caseId,
           role: run.answers?.role || "Juge",
           facts: caseData?.resume || "",
           qualification: run.answers?.qualification || "",
@@ -585,12 +611,11 @@ export default function JusticeLabPlay() {
       let appeal = null;
       try {
         appeal = await postJSON(`${API_BASE}/justice-lab/appeal`, {
-          // nouveau style
           caseData,
           runData: run,
           scored: aiScore || local,
-          // ancien style (fallback)
-          caseId: casePayload.caseId,
+          // compat ancien backend
+          caseId: run.caseId || run.caseMeta?.caseId,
           role: run.answers?.role || "Juge",
           facts: caseData?.resume || "",
           decisionMotivation: run.answers?.decisionMotivation || "",
@@ -697,7 +722,6 @@ export default function JusticeLabPlay() {
     }));
   }, [audit]);
 
-  // ✅ Helper: récupérer décision V5 pour une objection
   const getDecisionForObj = (objId) => {
     const decisions = Array.isArray(run?.answers?.audience?.decisions) ? run.answers.audience.decisions : [];
     return decisions.find((d) => d.objectionId === objId) || null;
@@ -714,8 +738,8 @@ export default function JusticeLabPlay() {
               </Link>{" "}
               <span className="opacity-60">/</span>{" "}
               <span className="text-slate-200 font-semibold">{caseData.caseId}</span>
-              {caseData?.meta?.seed ? (
-                <span className="ml-2 text-[11px] text-slate-500">seed: {String(caseData.meta.seed).slice(0, 22)}</span>
+              {caseData?.seed ? (
+                <span className="ml-2 text-[11px] text-slate-500">seed: {String(caseData.seed).slice(0, 22)}</span>
               ) : null}
             </div>
             <h1 className="text-2xl font-bold mt-2">{caseData.titre}</h1>
@@ -733,7 +757,7 @@ export default function JusticeLabPlay() {
           </div>
         </div>
 
-        {/* ✅ Didacticiel (top) */}
+        {/* Didacticiel top (si présent) */}
         <div className="mt-6">
           <PedagogyPanel caseData={caseData} compact />
         </div>
@@ -812,13 +836,16 @@ export default function JusticeLabPlay() {
                 <p className="text-sm text-slate-300 mt-2">{caseData.resume}</p>
 
                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  {Object.entries(caseData.parties || {}).map(([k, v]) => (
-                    <div key={k} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
-                      <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">{k}</div>
-                      <div className="text-sm text-slate-100 font-semibold mt-1">{v?.nom || "-"}</div>
-                      <div className="text-xs text-slate-300 mt-1">{v?.statut || ""}</div>
-                    </div>
-                  ))}
+                  {Object.entries(caseData.parties || {}).map(([k, v]) => {
+                    const pv = normalizePartyValue(v);
+                    return (
+                      <div key={k} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                        <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">{k}</div>
+                        <div className="text-sm text-slate-100 font-semibold mt-1">{pv.title}</div>
+                        {pv.sub ? <div className="text-xs text-slate-300 mt-1">{pv.sub}</div> : null}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <div className="mt-4">
@@ -876,17 +903,6 @@ export default function JusticeLabPlay() {
                     </li>
                   ))}
                 </ul>
-
-                {caseData?.pedagogy?.erreursFrequentes?.length ? (
-                  <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3">
-                    <div className="text-xs text-amber-100 font-semibold">⚠️ Attention (erreurs fréquentes)</div>
-                    <ul className="mt-2 text-xs text-amber-50 space-y-1">
-                      {caseData.pedagogy.erreursFrequentes.slice(0, 4).map((x, i) => (
-                        <li key={i}>• {x}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
               </section>
             </div>
           )}
@@ -918,7 +934,8 @@ export default function JusticeLabPlay() {
               <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
                 <h2 className="text-sm font-semibold text-emerald-200 mb-2">➡️ Étape suivante : Audience IA</h2>
                 <p className="text-sm text-slate-200/90">
-                  Après PROCÉDURE, le jeu lance une audience simulée : objections, gestion de débats, pièces tardives, audit log en direct.
+                  Après PROCÉDURE, le jeu lance une audience simulée : objections, gestion de débats, pièces tardives,
+                  audit log en direct.
                 </p>
                 <div className="mt-4 flex items-center gap-2">
                   <button
@@ -948,7 +965,6 @@ export default function JusticeLabPlay() {
           {/* AUDIENCE */}
           {step === "AUDIENCE" && (
             <div className="grid gap-4 lg:grid-cols-3">
-              {/* left: scene + pieces */}
               <section className="lg:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -962,7 +978,9 @@ export default function JusticeLabPlay() {
                     <button
                       type="button"
                       className={`px-3 py-2 rounded-xl border text-xs transition ${
-                        showPiecesImpact ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100" : "border-white/10 bg-white/5 hover:bg-white/10"
+                        showPiecesImpact
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                          : "border-white/10 bg-white/5 hover:bg-white/10"
                       }`}
                       onClick={() => setShowPiecesImpact((v) => !v)}
                     >
@@ -971,7 +989,9 @@ export default function JusticeLabPlay() {
                     <button
                       type="button"
                       className={`px-3 py-2 rounded-xl border text-xs transition ${
-                        showAudit ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100" : "border-white/10 bg-white/5 hover:bg-white/10"
+                        showAudit
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                          : "border-white/10 bg-white/5 hover:bg-white/10"
                       }`}
                       onClick={() => setShowAudit((v) => !v)}
                     >
@@ -994,7 +1014,6 @@ export default function JusticeLabPlay() {
                     </div>
                   </div>
 
-                  {/* ✅ pieces impact */}
                   {showPiecesImpact && (
                     <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                       <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Pièces & incidents</div>
@@ -1043,7 +1062,6 @@ export default function JusticeLabPlay() {
                   )}
                 </div>
 
-                {/* ✅ Instant feedback panel */}
                 {liveFeedback.length > 0 && (
                   <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
                     <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Feedback instant (offline)</div>
@@ -1052,7 +1070,9 @@ export default function JusticeLabPlay() {
                         <div
                           key={fb.id}
                           className={`rounded-2xl border p-3 ${
-                            fb.verdict === "BON" ? "border-emerald-500/30 bg-emerald-500/10" : "border-amber-500/30 bg-amber-500/10"
+                            fb.verdict === "BON"
+                              ? "border-emerald-500/30 bg-emerald-500/10"
+                              : "border-amber-500/30 bg-amber-500/10"
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -1093,7 +1113,6 @@ export default function JusticeLabPlay() {
                   </div>
                 )}
 
-                {/* ✅ Audit log panel */}
                 {showAudit && (
                   <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
                     <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Journal d’audience (live)</div>
@@ -1119,7 +1138,7 @@ export default function JusticeLabPlay() {
                 )}
               </section>
 
-              {/* right: objections */}
+              {/* Objections */}
               <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
                 <h2 className="text-sm font-semibold text-emerald-200 mb-2">🎯 Objections à trancher</h2>
                 <p className="text-xs text-emerald-50/90 mb-3">
@@ -1173,9 +1192,6 @@ export default function JusticeLabPlay() {
                                       ? (draftReasoningById[obj.id] ?? current?.reasoning ?? "")
                                       : (current?.reasoning || "");
                                     applyDecisionHybrid(obj, opt, rr);
-
-                                    // ✅ persister aussi dans answers (décisions)
-                                    // applyAudienceDecision le fait déjà, donc pas besoin d’autre patch.
                                   }}
                                 >
                                   {opt}
@@ -1184,7 +1200,7 @@ export default function JusticeLabPlay() {
                             })}
                           </div>
 
-                          {/* Motivation (verrouillée par défaut) */}
+                          {/* Motivation verrouillée */}
                           <div className="mt-3">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-[11px] text-slate-400">
@@ -1255,7 +1271,6 @@ export default function JusticeLabPlay() {
                             />
                           </div>
 
-                          {/* mini feedback par objection */}
                           {offlineFb && offlineFb.objId === obj.id ? (
                             <div
                               className={`mt-3 rounded-xl border p-3 text-xs ${

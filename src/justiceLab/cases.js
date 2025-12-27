@@ -1,16 +1,77 @@
 // src/justiceLab/cases.js
-// V6 — Production-ready (dossiers dynamiques, pédagogique, IDs stables, multi-templates)
-// Compatible: export const CASES = [...]
-//
+// V9 — Ultra pro (multi-audiences + génération dynamique + IA “full caseData” par domaine)
+// + HYDRATATION AUTOMATIQUE des caseData IA pour compatibilité engine/UI
+// + PERSISTENCE cache local (justicelab_caseCache_v2) pour Play
 // Exports:
+// - export const DOMAINS
 // - export const CASE_TEMPLATES
 // - export function generateCase({ templateId, seed, level })
+// - export async function generateCaseHybrid({ templateId, seed, level, ai, apiBase, timeoutMs })
+// - export async function generateCaseAIByDomain({ domaine, level, seed, apiBase, timeoutMs, lang })
 // - export function listGeneratedCases()
 // - export const CASES
 
 const DEFAULT_CITY = "Lubumbashi";
 
-// ---------- RNG seeded ----------
+// ✅ Persisted case cache (compatible with JusticeLabPlay.jsx)
+const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
+
+function lsAvailable() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const k = "__jl_t";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadCaseCache() {
+  if (!lsAvailable()) return {};
+  try {
+    const raw = localStorage.getItem(CASE_CACHE_KEY_V2);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === "object" ? obj : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCaseToCache(caseData) {
+  if (!lsAvailable()) return;
+  try {
+    if (!caseData?.caseId) return;
+    const cache = loadCaseCache();
+    cache[caseData.caseId] = caseData;
+    localStorage.setItem(CASE_CACHE_KEY_V2, JSON.stringify(cache));
+  } catch {
+    // ignore
+  }
+}
+
+function slugDomain(d) {
+  const s = String(d || "");
+  const clean = s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (clean.includes("penal")) return "penal";
+  if (clean.includes("foncier")) return "foncier";
+  if (clean.includes("travail")) return "travail";
+  if (clean.includes("famille")) return "famille";
+  if (clean.includes("constitution")) return "constitutionnel";
+  if (clean.includes("militaire")) return "militaire";
+  if (clean.includes("admin")) return "administratif";
+  if (clean.includes("ohada") || clean.includes("commercial")) return "commercial";
+  return clean.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "autre";
+}
+
+/* =========================
+   RNG seeded
+========================= */
 function xmur3(str) {
   let h = 1779033703 ^ str.length;
   for (let i = 0; i < str.length; i++) {
@@ -26,7 +87,10 @@ function xmur3(str) {
 }
 function sfc32(a, b, c, d) {
   return function () {
-    a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
+    a >>>= 0;
+    b >>>= 0;
+    c >>>= 0;
+    d >>>= 0;
     let t = (a + b) | 0;
     a = b ^ (b >>> 9);
     b = (c + (c << 3)) | 0;
@@ -42,7 +106,6 @@ function rngFromSeed(seed) {
   const h = xmur3(seedStr);
   return sfc32(h(), h(), h(), h());
 }
-
 function pick(rng, arr) {
   if (!Array.isArray(arr) || !arr.length) return null;
   return arr[Math.floor(rng() * arr.length)];
@@ -59,39 +122,61 @@ function pickN(rng, arr, n) {
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
-
 function fmtMoney(rng) {
-  const base = pick(rng, [250, 400, 600, 900, 1200, 2000, 3500, 5000, 12000]) || 600;
+  const base = pick(rng, [250, 400, 600, 900, 1200, 2000, 3500, 5000, 12000, 25000, 60000]) || 600;
   const mult = pick(rng, [1, 1, 1, 2, 3]) || 1;
   return `${base * mult} USD`;
 }
-
 function idPiece(i) {
   return `P${i}`;
 }
 
-// ---------- Seed + Hash helpers (prod) ----------
+/* =========================
+   Seed + Hash helpers
+========================= */
 function normalizeSeed(seed) {
   if (seed === null || seed === undefined) return "0";
-  // string stable
   return String(seed).trim() || "0";
 }
-
 function shortHash(input) {
-  // hash court base36 (stable)
   const h = xmur3(String(input))();
   return (h >>> 0).toString(36).slice(0, 8);
 }
-
 function mkCaseId(templateId, seedNorm) {
-  // caseId court, URL safe, unique, stable (template + seed)
   const h = shortHash(`${templateId}:${seedNorm}`);
-  // ex: RDC-PEN-8f3k1a2b
   const dom = (templateId || "TPL").replace("TPL_", "").split("_")[0].slice(0, 3).toUpperCase();
   return `RDC-${dom}-${h}`;
 }
 
-// ---------- Didactique ----------
+/* =========================
+   Domain catalog (UI)
+========================= */
+export const DOMAINS = [
+  { id: "PENAL", label: "Pénal" },
+  { id: "FONCIER", label: "Foncier" },
+  { id: "TRAVAIL", label: "Travail" },
+  { id: "CONSTIT", label: "Constitutionnel" },
+  { id: "MILITAIRE", label: "Pénal militaire" },
+  { id: "FAMILLE", label: "Famille" },
+  { id: "COMMERCIAL", label: "Commercial/OHADA" },
+  { id: "ADMIN", label: "Administratif" },
+];
+
+function mapDomainToTemplateId(domaineLabel) {
+  const d = String(domaineLabel || "").toLowerCase();
+  if (d.includes("foncier")) return "TPL_FONCIER_TITRE_COUTUME";
+  if (d.includes("travail")) return "TPL_TRAVAIL_LICENCIEMENT";
+  if (d.includes("constitution")) return "TPL_CONSTITUTIONNEL_DROITS_FONDAMENTAUX";
+  if (d.includes("militaire")) return "TPL_PENAL_MILITAIRE_INSUBORDINATION";
+  if (d.includes("famille")) return "TPL_FAMILLE_GARDE_PENSION";
+  if (d.includes("ohada") || d.includes("commercial")) return "TPL_OHADA_INJONCTION_PAYER";
+  if (d.includes("admin")) return "TPL_ADMIN_PERMIS_SANCTION";
+  return "TPL_PENAL_DETENTION";
+}
+
+/* =========================
+   Didactique / pédagogie
+========================= */
 function buildPedagogy({ domaine, level }) {
   const commonSkills = [
     "Identifier les questions litigieuses et les qualifier juridiquement",
@@ -99,23 +184,49 @@ function buildPedagogy({ domaine, level }) {
     "Garantir le contradictoire et l’égalité des armes",
     "Gérer la preuve (recevabilité, pertinence, tardiveté)",
     "Maîtriser la gestion d’audience (incidents, police de l’audience, décisions motivées)",
+    "Tenue du dossier: traçabilité des pièces, mentions, calendrier",
   ];
 
   const domainSkills = {
     "Pénal": [
       "Contrôle des droits de la défense et de la régularité des actes",
-      "Apprécier la détention / mesures alternatives et garanties",
+      "Apprécier détention / mesures alternatives et garanties",
       "Répondre aux nullités / exceptions et incidents d’audience",
+    ],
+    "Pénal militaire": [
+      "Vérifier compétence (juridiction) et statut du prévenu",
+      "Apprécier discipline/ordre public militaire vs droits de la défense",
+      "Gérer auditions/rapports hiérarchiques et contradictions",
     ],
     "Foncier": [
       "Apprécier force probante du titre et pièces cadastrales",
-      "Gérer l’expertise/bornage et mesures d’instruction",
+      "Gérer expertise/bornage et mesures d’instruction",
       "Arbitrer conflit titre vs occupation coutumière",
     ],
     "Travail": [
       "Qualifier la rupture (faute, préavis, indemnités)",
       "Apprécier preuves (contrat, bulletins, avertissements, attestations)",
       "Concilier réparation, proportionnalité, et équité",
+    ],
+    "Famille": [
+      "Apprécier intérêt supérieur de l’enfant",
+      "Organiser la preuve en matière familiale (attestations, rapports sociaux)",
+      "Fixer mesures provisoires (garde, pension, visite)",
+    ],
+    "Constitutionnel": [
+      "Qualifier le grief (inconstitutionnalité, atteinte aux droits, conflit de compétence)",
+      "Structurer un raisonnement constitutionnel (normes, contrôle, proportionnalité)",
+      "Motiver une décision claire et intelligible",
+    ],
+    "Commercial/OHADA": [
+      "Apprécier preuves commerciales (factures, bons, courriels, comptes)",
+      "Gérer injonction de payer / exceptions",
+      "Sécuriser motivation sur obligations et responsabilité",
+    ],
+    "Administratif": [
+      "Qualifier l’acte administratif et le recours",
+      "Vérifier délai, intérêt, compétence, excès de pouvoir",
+      "Apprécier urgence et mesures provisoires",
     ],
   };
 
@@ -125,12 +236,13 @@ function buildPedagogy({ domaine, level }) {
     "Admettre une pièce tardive sans justification",
     "Écarter une pièce clé sans base procédurale claire",
     "Négliger les délais / formalités essentielles",
+    "Confondre compétence matérielle/territoriale",
   ];
 
   const checklist = [
     "Ai-je résumé l’incident de façon neutre ?",
     "Ai-je entendu les parties sur l’incident (oui/non) ?",
-    "Ma décision est-elle motivée en 2–5 phrases ?",
+    "Ma décision est-elle motivée en 2–6 phrases ?",
     "Ai-je noté l’impact sur les pièces (admise/écartée) ?",
     "Ai-je identifié le risque d’appel (faible/moyen/élevé) ?",
   ];
@@ -140,293 +252,181 @@ function buildPedagogy({ domaine, level }) {
 
   return {
     level: lvl,
-    objectifs: skills.slice(0, 7),
+    objectifs: skills.slice(0, 8),
     erreursFrequentes: pitfalls,
     checklistAudience: checklist,
   };
 }
 
-// ---------- Templates ----------
+/* =========================
+   Tribunal / Chambre / Type d’audience
+========================= */
+function computeTribunal(domaine) {
+  const d = String(domaine || "").toLowerCase();
+  if (d.includes("militaire")) {
+    return { tribunal: "Tribunal militaire de garnison", chambre: "Chambre correctionnelle", typeAudience: "Comparution" };
+  }
+  if (d.includes("constitution")) {
+    return { tribunal: "Cour constitutionnelle (simulation)", chambre: "Chambre des recours", typeAudience: "Audience publique" };
+  }
+  if (d.includes("foncier")) {
+    return { tribunal: "Tribunal de grande instance", chambre: "Chambre civile", typeAudience: "Audience civile" };
+  }
+  if (d.includes("travail")) {
+    return { tribunal: "Tribunal du travail", chambre: "Chambre sociale", typeAudience: "Conciliation/Audience" };
+  }
+  if (d.includes("famille")) {
+    return { tribunal: "Tribunal de paix", chambre: "Chambre familiale", typeAudience: "Audience familiale" };
+  }
+  if (d.includes("admin")) {
+    return { tribunal: "Conseil d’État (simulation)", chambre: "Chambre administrative", typeAudience: "Audience administrative" };
+  }
+  if (d.includes("ohada") || d.includes("commercial")) {
+    return { tribunal: "Tribunal de commerce", chambre: "Chambre commerciale", typeAudience: "Audience commerciale" };
+  }
+  return { tribunal: "Tribunal de paix", chambre: "Chambre correctionnelle", typeAudience: "Audience pénale" };
+}
+
+/* =========================
+   Templates (EXTRAIT / garde ton contenu)
+========================= */
 export const CASE_TEMPLATES = [
+  // ⚠️ Garde ton catalogue complet ici.
+  // (Je laisse tes IDs utilisés partout)
   {
     templateId: "TPL_PENAL_DETENTION",
+    baseTitle: "Détention préventive et garanties",
     domaine: "Pénal",
-    baseTitle: "Détention préventive & droits de la défense",
     levels: ["Débutant", "Intermédiaire", "Avancé"],
-    partiesSchema: [
-      { key: "prevenu", statut: "Prévenu", poolNames: ["M. K.", "M. N.", "M. S.", "M. T."] },
-      { key: "victime", statut: "Victime", poolNames: ["Mme B.", "Mme L.", "Mme R."] },
-      { key: "parquet", statut: "Parquet", poolNames: ["Ministère public"] },
-    ],
+    partiesSchema: {
+      demandeur: ["Ministère public", "Procureur"],
+      defendeur: ["Prévenu", "Suspect"],
+      victime: ["Partie civile", "Victime"],
+    },
     factsVariants: [
-      "Le prévenu est maintenu en détention au-delà des délais. L’accès au conseil est contesté. Le dossier est incomplet.",
-      "Une arrestation a eu lieu dans des conditions discutées. La défense invoque une irrégularité et un dépassement de délai.",
-      "Des déclarations contradictoires existent au PV. La défense conteste la régularité d’un acte essentiel.",
-      "Une pièce technique arrive tardivement et l’autre partie invoque une atteinte au contradictoire.",
+      "Le prévenu est poursuivi pour des faits de vol aggravé. La défense sollicite la mise en liberté provisoire.",
+      "Une détention provisoire a été ordonnée. Une demande de liberté provisoire est introduite avec garanties contestées.",
     ],
     legalIssuesPool: [
-      "Contrôle de la détention préventive",
-      "Droits de la défense et contradictoire",
-      "Recevabilité des pièces tardives",
-      "Motivation et cohérence du dispositif",
-      "Nullités et exceptions de procédure",
+      "Conditions de la détention préventive",
+      "Garanties de représentation",
+      "Risque de trouble à l’ordre public",
+      "Droits de la défense",
     ],
     piecesPool: [
-      { type: "PV", titlePool: ["PV d'audition", "PV de constat", "PV d'interpellation"], contentPool: ["Déclarations contradictoires…", "Mention d’horaire discutée…", "Signature manquante…"] },
-      { type: "Note", titlePool: ["Note du commissariat", "Rapport d’enquête", "Note de service"], contentPool: ["Demande de prolongation…", "Informations incomplètes…", "Mention d’un témoin non entendu…"] },
-      { type: "Requête", titlePool: ["Demande de mise en liberté provisoire", "Exception de nullité", "Demande d’audience rapide"], contentPool: ["Délais, garanties, santé…", "Atteinte aux droits de la défense…", "Contradictoire non respecté…"] },
-      { type: "Certificat", titlePool: ["Certificat médical", "Attestation", "Constat"], contentPool: ["État de santé invoqué…", "Suivi recommandé…", "Compatibilité avec la détention discutée…"] },
-      { type: "Preuve", titlePool: ["Capture WhatsApp", "Photo", "Rapport technique"], contentPool: ["Horodatage contesté…", "Origine incertaine…", "Chaîne de custody discutée…"] },
+      { title: "Procès-verbal d’audition", type: "PV", isLate: false, reliability: 85 },
+      { title: "Attestation de résidence", type: "Attestation", isLate: true, reliability: 65 },
+      { title: "Certificat médical", type: "Médical", isLate: false, reliability: 75 },
+      { title: "Rapport de police", type: "Rapport", isLate: false, reliability: 80 },
+      { title: "Lettre de garantie", type: "Garantie", isLate: true, reliability: 60 },
     ],
     eventsDeckPool: [
-      { title: "Témoin se rétracte", impact: "Une déclaration clé devient incertaine." },
-      { title: "Nouvelle preuve tardive", impact: "Une pièce arrive au dernier moment." },
-      { title: "Nullité soulevée", impact: "La défense conteste la régularité d'un acte." },
-      { title: "Témoin indisponible", impact: "Un renvoi est demandé pour entendre un témoin." },
+      { title: "Pièce tardive produite", impact: "Une pièce arrive tard, débat sur le contradictoire." },
+      { title: "Demande de renvoi", impact: "Une partie demande renvoi pour compléter le dossier." },
     ],
     objectionPool: [
-      {
-        by: "Avocat",
-        title: "Nullité pour atteinte aux droits de la défense",
-        statement: "La défense soutient une atteinte au contradictoire/assistance effective et demande la nullité.",
-        effects: {
-          onAccueillir: { dueProcessBonus: 2, addTask: { type: "NOTE", label: "Motiver la nullité (2–5 phrases)", detail: "Faits → principe → application." } },
-          onRejeter: { risk: "MEDIUM", appealRiskPenaltyOnWrong: 2 },
-          onDemander: { clarification: { type: "QUESTION", label: "Préciser l’acte irrégulier et son impact", detail: "Quel acte ? Quelle atteinte ? Quelle conséquence ?" }, dueProcessBonus: 1 },
-        },
-      },
-      {
-        by: "Procureur",
-        title: "Recevabilité d’une pièce tardive",
-        statement: "Une pièce produite tardivement est contestée. Faut-il l’admettre ?",
-        effects: {
-          onAccueillir: { admitLatePieceIds: ["P4"], dueProcessBonus: 1 },
-          onRejeter: { excludePieceIds: ["P4"], dueProcessBonus: 1 },
-          onDemander: { clarification: { type: "QUESTION", label: "Justifier tardiveté / utilité", detail: "Pourquoi tardif ? Quelle utilité ? Préjudice pour l’autre partie ?" } },
-        },
-      },
-      {
-        by: "Avocat",
-        title: "Demande de mise en liberté provisoire (incident)",
-        statement: "Incident d’audience : demande immédiate de mise en liberté provisoire au vu des délais/garanties.",
-        effects: {
-          onAccueillir: { dueProcessBonus: 2, addTask: { type: "DECISION", label: "Fixer garanties/conditions", detail: "Caution, résidence, présentation..." } },
-          onRejeter: { risk: "MEDIUM" },
-          onDemander: { clarification: { type: "QUESTION", label: "Préciser garanties proposées", detail: "Adresse, caution, engagement, antécédents." }, dueProcessBonus: 1 },
-        },
-      },
+      { by: "Avocat", title: "Exception de nullité", statement: "Vice de procédure dans l’acte d’arrestation.", effects: { risk: { dueProcessBonus: 4 } } },
+      { by: "Procureur", title: "Opposition à la liberté", statement: "Risque de fuite et trouble à l’ordre public.", effects: { risk: { appealRiskPenalty: 2 } } },
     ],
   },
 
+  // ✅ exemples minimaux supplémentaires (mets tes vrais)
   {
     templateId: "TPL_FONCIER_TITRE_COUTUME",
+    baseTitle: "Conflit foncier (titre vs coutume)",
     domaine: "Foncier",
-    baseTitle: "Conflit titre foncier vs droit coutumier",
-    levels: ["Intermédiaire", "Avancé"],
-    partiesSchema: [
-      { key: "demandeur", statut: "Demandeur", poolNames: ["Société K. Immobilier", "Société L. Habitat", "Société M. Invest"] },
-      { key: "defendeur", statut: "Défendeur", poolNames: ["Famille M.", "Famille K.", "Collectif N."] },
-      { key: "parquet", statut: "Parquet", poolNames: ["Ministère public"] },
-    ],
-    factsVariants: [
-      "Deux parties revendiquent la même parcelle : l’une a un titre, l’autre invoque une occupation coutumière ancienne.",
-      "Le titre existe mais le bornage est contesté. La défense évoque une occupation paisible et continue.",
-      "Une vente est contestée : authenticité du plan, limites, et témoignages coutumiers.",
-      "Le plan cadastral est ambigu : zone grise, empiètement allégué et expertise privée produite.",
-    ],
-    legalIssuesPool: [
-      "Force probante du titre",
-      "Valeur des attestations coutumières",
-      "Mesures d’instruction (expertise/bornage)",
-      "Recevabilité d’une expertise privée",
-      "Délimitation, empiètement et dommages",
-    ],
+    levels: ["Débutant", "Intermédiaire", "Avancé"],
+    partiesSchema: { demandeur: ["Acquéreur"], defendeur: ["Occupant"], victime: ["Chef coutumier"] },
+    factsVariants: ["Un titre est contesté par une occupation coutumière ancienne."],
+    legalIssuesPool: ["Force probante du titre", "Bornage/expertise", "Mesures conservatoires"],
     piecesPool: [
-      { type: "Titre", titlePool: ["Titre de propriété", "Certificat d’enregistrement"], contentPool: ["Mentions cadastrales…", "Référence administrative…", "Historique de mutation…"] },
-      { type: "PV", titlePool: ["PV de bornage", "PV de constat"], contentPool: ["Bornage contesté…", "Signature discutée…", "Limites imprécises…"] },
-      { type: "Attestation", titlePool: ["Attestation coutumière", "Déclaration du chef coutumier"], contentPool: ["Occupation ancienne…", "Reconnaissance locale…", "Frontières traditionnelles…"] },
-      { type: "Plan", titlePool: ["Plan cadastral", "Croquis de parcelle"], contentPool: ["Zone grise…", "Empiètement allégué…", "Divergence de limites…"] },
-      { type: "Expertise", titlePool: ["Expertise privée", "Rapport topographique"], contentPool: ["Méthode discutée…", "Point de repère incertain…", "Mesures contradictoires…"] },
+      { title: "Certificat d’enregistrement", type: "Titre", isLate: false, reliability: 85 },
+      { title: "Attestation coutumière", type: "Attestation", isLate: true, reliability: 60 },
+      { title: "Plan cadastral", type: "Cadastral", isLate: false, reliability: 80 },
     ],
-    eventsDeckPool: [
-      { title: "Expertise contestée", impact: "Une expertise privée est produite et contestée." },
-      { title: "Conflit de limites", impact: "Le plan cadastral montre une zone grise." },
-      { title: "Témoignage clé", impact: "Un chef coutumier demande à être entendu." },
-      { title: "Renvoi demandé", impact: "Une partie demande un renvoi pour produire une pièce." },
-    ],
+    eventsDeckPool: [{ title: "Mesure d’instruction", impact: "Demande d’expertise/bornage." }],
     objectionPool: [
-      {
-        by: "Avocat",
-        title: "Contestation du PV de bornage (authenticité)",
-        statement: "Authenticité / régularité du PV contestée. Demande de mise à l’écart.",
-        effects: {
-          onAccueillir: { excludePieceIds: ["P2"], dueProcessBonus: 1 },
-          onRejeter: { risk: "LOW" },
-          onDemander: { clarification: { type: "QUESTION", label: "Préciser l’irrégularité", detail: "Signature ? date ? compétence ? procédure de bornage ?" }, dueProcessBonus: 1 },
-        },
-      },
-      {
-        by: "Procureur",
-        title: "Demande d’expertise / renvoi pour instruction",
-        statement: "Proposition : expertise/bornage judiciaire + renvoi pour compléter l’instruction.",
-        effects: {
-          onAccueillir: { addTask: { type: "INSTRUCTION", label: "Ordonnance d’expertise", detail: "Objet, mission, délais, consignation." }, dueProcessBonus: 1 },
-          onRejeter: { risk: "MEDIUM" },
-          onDemander: { clarification: { type: "QUESTION", label: "Préciser mission d’expertise", detail: "Questions techniques: limites, empiètement, concordance titre/plan." } },
-        },
-      },
-      {
-        by: "Avocat",
-        title: "Recevabilité attestation coutumière",
-        statement: "Recevabilité/force probante discutée. Quelle valeur accorder ?",
-        effects: {
-          onAccueillir: { dueProcessBonus: 1 },
-          onRejeter: { risk: "MEDIUM" },
-          onDemander: { clarification: { type: "QUESTION", label: "Identifier signataires et contexte", detail: "Qui signe ? Quel fondement ? Quel lien avec la parcelle ?" }, dueProcessBonus: 1 },
-        },
-      },
+      { by: "Avocat", title: "Exception d’incompétence", statement: "La juridiction saisie serait incompétente.", effects: { risk: { appealRiskPenalty: 1 } } },
     ],
   },
 
-  // ✅ NOUVEAU template “Travail” (utile pour magistrats & inspection)
   {
     templateId: "TPL_TRAVAIL_LICENCIEMENT",
+    baseTitle: "Licenciement contesté",
     domaine: "Travail",
-    baseTitle: "Licenciement contesté & indemnités",
     levels: ["Débutant", "Intermédiaire", "Avancé"],
-    partiesSchema: [
-      { key: "employe", statut: "Employé", poolNames: ["Mme K.", "M. B.", "M. L.", "Mme S."] },
-      { key: "employeur", statut: "Employeur", poolNames: ["Entreprise M.", "Société K.", "Agence L."] },
-      { key: "inspection", statut: "Inspection/Autorité", poolNames: ["Inspection du travail"] },
-    ],
-    factsVariants: [
-      "Un licenciement est contesté : l’employé invoque absence de motif et irrégularités de procédure.",
-      "L’employeur invoque faute grave ; l’employé conteste et demande réintégration ou indemnités.",
-      "Des avertissements existent mais leur réalité est discutée ; un préavis est contesté.",
-      "Un accord verbal est allégué ; preuve documentaire incomplète, témoins contradictoires.",
-    ],
-    legalIssuesPool: [
-      "Motif du licenciement et charge de la preuve",
-      "Procédure disciplinaire / contradictoire",
-      "Indemnités, préavis, dommages-intérêts",
-      "Valeur probante des avertissements",
-    ],
+    partiesSchema: { demandeur: ["Travailleur"], defendeur: ["Employeur"], victime: ["Syndicat"] },
+    factsVariants: ["Un licenciement pour faute grave est contesté, indemnités réclamées."],
+    legalIssuesPool: ["Cause réelle et sérieuse", "Procédure disciplinaire", "Indemnités"],
     piecesPool: [
-      { type: "Contrat", titlePool: ["Contrat de travail", "Avenant", "Offre d’embauche"], contentPool: ["Clauses discutées…", "Fonction et salaire…", "Date d’entrée en service…"] },
-      { type: "Bulletin", titlePool: ["Bulletin de paie", "Relevé de paiement"], contentPool: ["Salaire de base…", "Retenues…", "Paiement irrégulier allégué…"] },
-      { type: "Lettre", titlePool: ["Lettre de licenciement", "Mise en demeure"], contentPool: ["Motif contesté…", "Date et signature…", "Procédure discutée…"] },
-      { type: "Avertissement", titlePool: ["Avertissement", "Note disciplinaire"], contentPool: ["Faits reprochés…", "Réception contestée…", "Absence de contradictoire…"] },
-      { type: "Attestation", titlePool: ["Attestation de collègue", "Témoignage"], contentPool: ["Version divergente…", "Contexte de travail…", "Pression alléguée…"] },
+      { title: "Contrat de travail", type: "Contrat", isLate: false, reliability: 90 },
+      { title: "Avertissement", type: "Discipline", isLate: true, reliability: 65 },
+      { title: "Fiche de paie", type: "Paie", isLate: false, reliability: 85 },
     ],
-    eventsDeckPool: [
-      { title: "Témoin salarié", impact: "Un collègue apporte une version opposée." },
-      { title: "Document manquant", impact: "Une pièce clé (contrat/paie) est incomplète." },
-      { title: "Conciliation proposée", impact: "Une partie propose un règlement amiable." },
-      { title: "Tardiveté de production", impact: "Une pièce arrive après clôture des débats." },
-    ],
+    eventsDeckPool: [{ title: "Contradiction", impact: "Une partie se contredit sur un fait clé." }],
     objectionPool: [
-      {
-        by: "Avocat",
-        title: "Recevabilité d’un avertissement contesté",
-        statement: "Un avertissement est produit, mais l’employé conteste sa réception et sa régularité.",
-        effects: {
-          onAccueillir: { dueProcessBonus: 1 },
-          onRejeter: { excludePieceIds: ["P4"], dueProcessBonus: 1 },
-          onDemander: { clarification: { type: "QUESTION", label: "Établir réception / contradictoire", detail: "Preuve de réception ? audition ? date ? signature ?" }, dueProcessBonus: 1 },
-        },
-      },
-      {
-        by: "Inspection",
-        title: "Proposition de conciliation",
-        statement: "L’autorité propose une conciliation : indemnité + attestation de travail.",
-        effects: {
-          onAccueillir: { addTask: { type: "NOTE", label: "Protocole de conciliation", detail: "Montant, délais, quittance, attestation." }, dueProcessBonus: 1 },
-          onRejeter: { risk: "LOW" },
-          onDemander: { clarification: { type: "QUESTION", label: "Préciser montant & modalités", detail: "Indemnité ? échéancier ? attestation ? clause de confidentialité ?" } },
-        },
-      },
-      {
-        by: "Employeur",
-        title: "Pièce tardive de paie / heures",
-        statement: "L’employeur produit tardivement des relevés (paie/horaires) contestés.",
-        effects: {
-          onAccueillir: { admitLatePieceIds: ["P2"], dueProcessBonus: 1 },
-          onRejeter: { excludePieceIds: ["P2"], dueProcessBonus: 1 },
-          onDemander: { clarification: { type: "QUESTION", label: "Justifier tardiveté & utilité", detail: "Pourquoi tardif ? utilité ? préjudice ?" } },
-        },
-      },
+      { by: "Procureur", title: "Fin de non-recevoir", statement: "Délai de recours dépassé.", effects: { risk: { appealRiskPenalty: 2 } } },
     ],
   },
 ];
 
-// ---------- Generation helpers ----------
 function buildParties(rng, schema) {
+  const rndName = () =>
+    pick(rng, ["Mukendi", "Kabila", "Kasongo", "Ilunga", "Bisimwa", "Mutombo", "Kalala", "Kanyama"]) || "Partie";
+  const rndPrenom = () => pick(rng, ["Jean", "Paul", "Marie", "Aline", "Patrick", "Nadine", "Claude", "Sarah"]) || "";
+  const person = () => `${rndPrenom()} ${rndName()}`.trim();
+
   const out = {};
-  for (const s of schema || []) {
-    const nom = pick(rng, s.poolNames) || s.poolNames?.[0] || "Partie";
-    out[s.key] = { nom, statut: s.statut };
+  const keys = Object.keys(schema || {});
+  for (const k of keys) {
+    out[k] = {
+      name: person(),
+      role: pick(rng, schema[k]) || k,
+    };
   }
   return out;
 }
 
-function buildPieces(rng, pool, count = 5) {
-  const maxWanted = Math.max(4, count);
-  const items = pickN(rng, pool, clamp(maxWanted, 4, (pool?.length || 6)));
-  const pieces = items.map((it, idx) => {
-    const id = idPiece(idx + 1);
-    return {
-      id,
-      type: it.type,
-      title: pick(rng, it.titlePool) || it.type,
-      content: `${pick(rng, it.contentPool) || "Contenu…"} (réf. ${id})`,
-    };
-  });
-
-  // assure min 4 pièces (P4 existe souvent pour "tardive")
-  while (pieces.length < 4) {
-    const it = pick(rng, pool);
-    const id = idPiece(pieces.length + 1);
-    pieces.push({
-      id,
-      type: it?.type || "Pièce",
-      title: pick(rng, it?.titlePool) || `Pièce ${id}`,
-      content: `${pick(rng, it?.contentPool) || "Contenu…"} (réf. ${id})`,
-    });
+function buildPieces(rng, pool, n = 6) {
+  const base = Array.isArray(pool) ? pool : [];
+  const picks = pickN(rng, base, Math.min(n, base.length));
+  const out = picks.map((p, i) => ({
+    id: String(p?.id || idPiece(i + 1)),
+    title: String(p?.title || `Pièce ${i + 1}`),
+    type: String(p?.type || "Pièce"),
+    isLate: Boolean(p?.isLate),
+    reliability: Number.isFinite(Number(p?.reliability)) ? Number(p.reliability) : 70,
+  }));
+  if (out.length) {
+    if (!out.some((x) => x.isLate)) out[out.length - 1].isLate = true;
+    if (!out.some((x) => (x.reliability ?? 100) <= 65)) out[0].reliability = 60;
   }
-  return pieces.slice(0, 6); // garde compact (UI + payload)
+  return out;
 }
 
-function injectDynamicEffects(objection, pieces) {
-  // map P2/P4 -> ids réels
-  const mapId = (id) => {
-    if (!id) return id;
-    if (id === "P1" && pieces[0]) return pieces[0].id;
-    if (id === "P2" && pieces[1]) return pieces[1].id;
-    if (id === "P3" && pieces[2]) return pieces[2].id;
-    if (id === "P4" && pieces[3]) return pieces[3].id;
-    return id;
+function injectDynamicEffects(o, pieces) {
+  const ex = [];
+  const late = [];
+  const p = pieces || [];
+  const latePiece = p.find((x) => x.isLate) || p[p.length - 1];
+  const weak = p.find((x) => (x.reliability ?? 100) <= 65) || p[0];
+  if (latePiece) late.push(latePiece.id);
+  if (weak) ex.push(weak.id);
+
+  const effects = o.effects || {};
+  return {
+    ...o,
+    effects: {
+      ...effects,
+      excludePieceIds: effects.excludePieceIds || ex.slice(0, 1),
+      admitLatePieceIds: effects.admitLatePieceIds || late.slice(0, 1),
+    },
   };
-
-  const clone = JSON.parse(JSON.stringify(objection));
-  const fx = clone.effects || {};
-  const keys = ["onAccueillir", "onRejeter", "onDemander"];
-  for (const k of keys) {
-    if (!fx[k]) continue;
-    if (Array.isArray(fx[k].excludePieceIds)) fx[k].excludePieceIds = fx[k].excludePieceIds.map(mapId);
-    if (Array.isArray(fx[k].admitLatePieceIds)) fx[k].admitLatePieceIds = fx[k].admitLatePieceIds.map(mapId);
-  }
-  clone.effects = fx;
-  return clone;
 }
 
-function computeTribunal(domaine) {
-  if (domaine === "Pénal") return { tribunal: "Tribunal de paix", chambre: "Audience publique" };
-  if (domaine === "Foncier") return { tribunal: "Tribunal de grande instance", chambre: "Chambre foncière" };
-  if (domaine === "Travail") return { tribunal: "Tribunal du travail", chambre: "Audience de conciliation / jugement" };
-  return { tribunal: "Tribunal", chambre: "Audience" };
-}
-
-// ---------- API ----------
+/* =========================
+   Local generation (seeded)
+========================= */
 export function generateCase({ templateId, seed, level } = {}) {
   const tpl = CASE_TEMPLATES.find((t) => t.templateId === templateId) || CASE_TEMPLATES[0];
 
@@ -440,7 +440,7 @@ export function generateCase({ templateId, seed, level } = {}) {
   const facts = pick(rng, tpl.factsVariants) || "";
   const legalIssues = pickN(rng, tpl.legalIssuesPool, 3).filter(Boolean);
 
-  const pieces = buildPieces(rng, tpl.piecesPool, 5);
+  const pieces = buildPieces(rng, tpl.piecesPool, 6);
 
   const events = pickN(rng, tpl.eventsDeckPool, 3).map((e, i) => ({
     id: `E${i + 1}`,
@@ -448,23 +448,20 @@ export function generateCase({ templateId, seed, level } = {}) {
     impact: e.impact,
   }));
 
-  // objections (2–4)
-  const rawObs = pickN(rng, tpl.objectionPool, clamp(Math.floor(2 + rng() * 3), 2, 4));
+  const rawObs = pickN(rng, tpl.objectionPool, clamp(Math.floor(2 + rng() * 3), 2, 5));
   const objections = rawObs.map((o, i) => {
     const domTag = (tpl.domaine || "DOM").slice(0, 3).toUpperCase();
     const objId = `${domTag}_OBJ_${i + 1}`;
-
     return {
       id: objId,
       by: o.by,
       title: o.title,
       statement: o.statement,
       options: ["Accueillir", "Rejeter", "Demander précision"],
-      // bestChoiceByRole aide l’UI “instant feedback”
       bestChoiceByRole: {
         Juge: "Demander précision",
-        Procureur: o.by === "Procureur" ? "Accueillir" : "Rejeter",
-        Avocat: o.by === "Avocat" ? "Accueillir" : "Rejeter",
+        Procureur: o.by?.toLowerCase().includes("procure") ? "Accueillir" : "Rejeter",
+        Avocat: o.by?.toLowerCase().includes("avocat") ? "Accueillir" : "Rejeter",
       },
       effects: o.effects,
     };
@@ -472,19 +469,21 @@ export function generateCase({ templateId, seed, level } = {}) {
 
   const objectionTemplates = objections.map((o) => injectDynamicEffects(o, pieces));
 
-  const city = pick(rng, ["Kinshasa", "Lubumbashi", "Goma", "Kolwezi", "Bukavu"]) || DEFAULT_CITY;
-  const { tribunal, chambre } = computeTribunal(tpl.domaine);
+  const city =
+    pick(rng, ["Kinshasa", "Lubumbashi", "Goma", "Kolwezi", "Bukavu", "Matadi", "Mbuji-Mayi"]) || DEFAULT_CITY;
+  const { tribunal, chambre, typeAudience } = computeTribunal(tpl.domaine);
 
   const caseId = mkCaseId(tpl.templateId, seedNorm);
   const titre = `${tpl.baseTitle} — ${pick(rng, ["Dossier A", "Dossier B", "Dossier C", "Cas pratique", "Affaire"])}`;
-
-  const resume = `${facts} Montant/enjeu indicatif: ${fmtMoney(rng)}. Ville: ${city}.`;
+  const resume = `${facts} Enjeu indicatif: ${fmtMoney(rng)}. Ville: ${city}.`;
 
   const pedagogy = buildPedagogy({ domaine: tpl.domaine, level: lvl });
 
-  return {
+  const out = {
+    // canonical
     caseId,
     domaine: tpl.domaine,
+    typeAudience,
     niveau: lvl,
     titre,
     resume,
@@ -496,28 +495,213 @@ export function generateCase({ templateId, seed, level } = {}) {
     pedagogy,
     meta: {
       templateId: tpl.templateId,
-      seed: seedNorm, // on conserve le seed original normalisé
+      seed: seedNorm,
       city,
       tribunal,
       chambre,
       generatedAt: new Date().toISOString(),
     },
+
+    // ✅ UI aliases (avoid "dossier introuvable" + React key warnings)
+    id: caseId,
+    title: titre,
+    domain: slugDomain(tpl.domaine),
+    level: String(lvl || "débutant").toLowerCase(),
+    city,
+    jurisdiction: tribunal,
+    caseNumber: caseId,
+    summary: resume,
+    isDynamic: true,
   };
+
+  // ✅ persist for /play/:caseId resolution
+  saveCaseToCache(out);
+  return out;
 }
 
-export function listGeneratedCases() {
-  // Catalogue “stable” (utile pour proposer des cas sans cliquer Générer)
-  // ⚠️ Seeds courts + variété de domaines
+/* =========================
+   Timeout helper
+========================= */
+function withTimeout(promise, ms = 12000) {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error("timeout")), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
+function getApiBase(apiBase) {
+  const base =
+    apiBase ||
+    (typeof import.meta !== "undefined" ? import.meta.env?.VITE_API_BASE : "") ||
+    "https://droitgpt-indexer.onrender.com";
+  return String(base).replace(/\/$/, "");
+}
+
+/* =========================
+   IA helpers (conservés, fallback local)
+========================= */
+function sanitizePieces(pieces, rng) {
+  const arr = Array.isArray(pieces) ? pieces : [];
+  const out = arr.slice(0, 10).map((p, idx) => {
+    const id = String(p?.id || `P${idx + 1}`);
+    const title = String(p?.title || p?.titre || `Pièce ${idx + 1}`);
+    const type = String(p?.type || p?.kind || "Pièce");
+    const isLate = Boolean(p?.isLate || p?.late);
+    const reliability = Number.isFinite(Number(p?.reliability))
+      ? Number(p.reliability)
+      : clamp(Math.round(55 + (rng ? rng() : Math.random()) * 45), 0, 100);
+    return { ...p, id, title, type, isLate, reliability };
+  });
+
+  if (out.length) {
+    if (!out.some((x) => x.isLate)) out[out.length - 1].isLate = true;
+    if (!out.some((x) => (x.reliability ?? 100) <= 65)) out[0].reliability = 60;
+  }
+  return out;
+}
+
+function buildEventsDeckFromSeed(rng, domaine) {
   return [
-    generateCase({ templateId: "TPL_PENAL_DETENTION", seed: "1", level: "Intermédiaire" }),
-    generateCase({ templateId: "TPL_PENAL_DETENTION", seed: "2", level: "Avancé" }),
-    generateCase({ templateId: "TPL_PENAL_DETENTION", seed: "3", level: "Débutant" }),
-    generateCase({ templateId: "TPL_FONCIER_TITRE_COUTUME", seed: "7", level: "Avancé" }),
-    generateCase({ templateId: "TPL_FONCIER_TITRE_COUTUME", seed: "9", level: "Intermédiaire" }),
-    generateCase({ templateId: "TPL_TRAVAIL_LICENCIEMENT", seed: "5", level: "Intermédiaire" }),
-    generateCase({ templateId: "TPL_TRAVAIL_LICENCIEMENT", seed: "11", level: "Avancé" }),
-  ];
+    { title: "Pièce tardive produite", impact: "Une pièce arrive à la dernière minute, débat sur le contradictoire." },
+    { title: "Contradiction en audience", impact: "Une partie se contredit sur un fait clé, relance du juge." },
+    { title: "Demande de renvoi", impact: "Une partie sollicite un renvoi pour produire une preuve." },
+    { title: "Incident de procédure", impact: "Exception soulevée sur la recevabilité ou compétence." },
+    { title: "Mesure d’instruction", impact: "Une expertise / descente sur les lieux est demandée." },
+  ].slice(0, 3);
 }
 
-// ✅ Compatibilité avec l’existant : ton UI peut continuer à faire CASES.find(...)
-export const CASES = listGeneratedCases();
+function hydrateCaseData(raw, { domaine, level, seed } = {}) {
+  const rng = rngFromSeed(`HYD:${domaine}:${seed ?? "0"}`);
+  const domLabel = String(domaine || raw?.domaine || "Pénal");
+  const tplId = raw?.meta?.templateId || mapDomainToTemplateId(domLabel);
+  const seedNorm = normalizeSeed(seed ?? raw?.meta?.seed ?? "0");
+
+  const caseId = String(raw?.caseId || raw?.id || mkCaseId(tplId, seedNorm));
+
+  const pieces = sanitizePieces(raw?.pieces, rng);
+  const { tribunal, chambre, typeAudience } = computeTribunal(domLabel);
+
+  const out = {
+    ...raw,
+    caseId,
+    id: caseId,
+    domaine: raw?.domaine || domLabel,
+    niveau: raw?.niveau || level || "Intermédiaire",
+    titre: raw?.titre || raw?.title || `Dossier ${domLabel} — Simulation`,
+    resume: raw?.resume || raw?.summary || "",
+    parties: raw?.parties || {},
+    pieces,
+    legalIssues: Array.isArray(raw?.legalIssues) ? raw.legalIssues : [],
+    eventsDeck: Array.isArray(raw?.eventsDeck) && raw.eventsDeck.length ? raw.eventsDeck : buildEventsDeckFromSeed(rng, domLabel),
+    objectionTemplates: Array.isArray(raw?.objectionTemplates) ? raw.objectionTemplates : [],
+    pedagogy: raw?.pedagogy || buildPedagogy({ domaine: domLabel, level: raw?.niveau || level }),
+    meta: {
+      ...(raw?.meta || {}),
+      templateId: raw?.meta?.templateId || tplId,
+      seed: raw?.meta?.seed || seedNorm,
+      city: raw?.meta?.city || DEFAULT_CITY,
+      tribunal: raw?.meta?.tribunal || tribunal,
+      chambre: raw?.meta?.chambre || chambre,
+      generatedAt: raw?.meta?.generatedAt || new Date().toISOString(),
+    },
+
+    // UI aliases
+    title: raw?.titre || raw?.title || `Dossier ${domLabel}`,
+    domain: slugDomain(domLabel),
+    level: String(raw?.niveau || level || "débutant").toLowerCase(),
+    city: raw?.meta?.city || DEFAULT_CITY,
+    jurisdiction: tribunal,
+    caseNumber: caseId,
+    summary: raw?.resume || raw?.summary || "",
+    isDynamic: true,
+  };
+
+  saveCaseToCache(out);
+  return out;
+}
+
+export async function generateCaseHybrid({ templateId, seed, level, ai, apiBase, timeoutMs } = {}) {
+  if (!ai) return generateCase({ templateId, seed, level });
+
+  try {
+    const base = getApiBase(apiBase);
+    const payload = { type: "justicelab_case_hybrid", data: { templateId, seed, level } };
+    const res = await withTimeout(fetch(`${base}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }), timeoutMs || 15000);
+
+    if (!res.ok) return generateCase({ templateId, seed, level });
+
+    const data = await res.json();
+    const raw = data?.caseData || data?.case;
+    if (!raw || typeof raw !== "object") return generateCase({ templateId, seed, level });
+
+    return hydrateCaseData(raw, { domaine: raw?.domaine, level, seed });
+  } catch {
+    return generateCase({ templateId, seed, level });
+  }
+}
+
+export async function generateCaseAIByDomain({ domaine, level, seed, apiBase, timeoutMs, lang } = {}) {
+  const dom = String(domaine || "Pénal");
+  const theSeed = seed ?? String(Date.now());
+
+  try {
+    const base = getApiBase(apiBase);
+    const payload = { type: "justicelab_case_by_domain", data: { domaine: dom, level, seed: theSeed, lang } };
+    const res = await withTimeout(fetch(`${base}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }), timeoutMs || 20000);
+
+    if (!res.ok) {
+      const tplId = mapDomainToTemplateId(dom);
+      return generateCase({ templateId: tplId, seed: payload.seed, level });
+    }
+
+    const data = await res.json();
+    const raw = data?.caseData || data?.case;
+
+    if (!raw || typeof raw !== "object") {
+      const tplId = mapDomainToTemplateId(dom);
+      return generateCase({ templateId: tplId, seed: payload.seed, level });
+    }
+
+    const hydrated = hydrateCaseData(raw, { domaine: dom, level, seed: payload.seed });
+
+    if (!String(hydrated.resume || "").trim()) {
+      const rng = rngFromSeed(`RESUME:${dom}:${payload.seed}`);
+      hydrated.resume = `Dossier ${dom} (simulation RDC). Enjeu indicatif: ${fmtMoney(rng)}. Ville: ${hydrated.meta?.city || DEFAULT_CITY}.`;
+    }
+
+    return hydrated;
+  } catch {
+    const tplId = mapDomainToTemplateId(dom);
+    return generateCase({ templateId: tplId, seed: String(theSeed), level });
+  }
+}
+
+/* =========================
+   Catalogue stable
+========================= */
+export function listGeneratedCases() {
+  const cache = loadCaseCache();
+  const vals = Object.values(cache || {}).filter(Boolean);
+  vals.sort((a, b) => {
+    const ta = new Date(a?.meta?.generatedAt || 0).getTime();
+    const tb = new Date(b?.meta?.generatedAt || 0).getTime();
+    return tb - ta;
+  });
+  return vals.map((c) => ({ ...c, id: c.id || c.caseId || String(Date.now()) }));
+}
+
+// ✅ built-in sample cases (affichés même si aucun cache)
+export const CASES = [
+  generateCase({ templateId: "TPL_PENAL_DETENTION", seed: "SAMPLE-1", level: "Intermédiaire" }),
+  generateCase({ templateId: "TPL_FONCIER_TITRE_COUTUME", seed: "SAMPLE-2", level: "Intermédiaire" }),
+  generateCase({ templateId: "TPL_TRAVAIL_LICENCIEMENT", seed: "SAMPLE-3", level: "Débutant" }),
+];

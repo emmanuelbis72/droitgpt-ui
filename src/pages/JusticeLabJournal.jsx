@@ -7,6 +7,8 @@ import { getPiecesStatusSummary } from "../justiceLab/engine.js";
 const API_BASE =
   (import.meta?.env?.VITE_API_URL || "https://droitgpt-indexer.onrender.com").replace(/\/$/, "");
 
+const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
+
 function getAuthToken() {
   const candidates = ["token", "authToken", "accessToken", "droitgpt_token"];
   for (const k of candidates) {
@@ -55,6 +57,57 @@ function fmtDate(iso) {
   }
 }
 
+function cls(...a) {
+  return a.filter(Boolean).join(" ");
+}
+
+function loadCaseFromCache(caseId) {
+  try {
+    const raw = localStorage.getItem(CASE_CACHE_KEY_V2);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return null;
+    return obj[caseId] || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveCaseDataFromRun(run) {
+  if (!run) return null;
+
+  // 1) si tu as stocké caseData complet dans run.caseMeta.caseData
+  const metaCase = run.caseMeta?.caseData;
+  if (metaCase && typeof metaCase === "object") return metaCase;
+
+  const cid = run.caseId || run.caseMeta?.caseId || run.caseMeta?.id;
+  if (!cid) return null;
+
+  // 2) cas statiques (CASES)
+  const fromStatic = CASES.find((c) => c.caseId === cid || c.id === cid);
+  if (fromStatic) return fromStatic;
+
+  // 3) cache localStorage (dossiers IA générés)
+  const fromCache = loadCaseFromCache(cid);
+  if (fromCache) return fromCache;
+
+  // 4) fallback minimal depuis meta
+  if (run.caseMeta?.titre || run.caseMeta?.domaine || run.caseMeta?.niveau) {
+    return {
+      caseId: cid,
+      titre: run.caseMeta?.titre || "Dossier",
+      domaine: run.caseMeta?.domaine || "Autre",
+      niveau: run.caseMeta?.niveau || "Intermédiaire",
+      pieces: run.caseMeta?.pieces || [],
+      legalIssues: run.caseMeta?.legalIssues || [],
+      resume: run.caseMeta?.resume || "",
+      parties: run.caseMeta?.parties || {},
+    };
+  }
+
+  return null;
+}
+
 export default function JusticeLabJournal() {
   const { runId } = useParams();
   const navigate = useNavigate();
@@ -65,11 +118,7 @@ export default function JusticeLabJournal() {
     return all.find((r) => r.runId === id) || null;
   }, [id]);
 
-  const caseData = useMemo(() => {
-    if (!run) return null;
-    const cid = run.caseId || run.caseMeta?.caseId || run.caseMeta?.id;
-    return CASES.find((c) => c.caseId === cid) || null;
-  }, [run]);
+  const caseData = useMemo(() => resolveCaseDataFromRun(run), [run]);
 
   const [appeal, setAppeal] = useState(run?.appeal || null);
   const [appealLoading, setAppealLoading] = useState(false);
@@ -150,9 +199,9 @@ export default function JusticeLabJournal() {
         <div className="px-6 md:px-8 py-6 border-b border-white/10 bg-slate-950/70 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="text-[11px] uppercase tracking-[0.28em] text-slate-400">JUSTICE LAB • JOURNAL</div>
-            <h1 className="mt-2 text-2xl font-semibold text-amber-200">{run.caseMeta?.titre}</h1>
+            <h1 className="mt-2 text-2xl font-semibold text-amber-200">{run.caseMeta?.titre || caseData?.titre}</h1>
             <p className="mt-1 text-xs text-slate-400">
-              {run.caseMeta?.domaine} • {run.caseMeta?.niveau} • Rôle :{" "}
+              {(run.caseMeta?.domaine || caseData?.domaine) ?? "—"} • {(run.caseMeta?.niveau || caseData?.niveau) ?? "—"} • Rôle :{" "}
               <span className="text-slate-100 font-semibold">{run.answers?.role || "—"}</span>
             </p>
           </div>

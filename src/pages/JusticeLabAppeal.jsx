@@ -10,13 +10,15 @@ import {
 const API_BASE =
   (import.meta?.env?.VITE_API_URL || "https://droitgpt-indexer.onrender.com").replace(/\/$/, "");
 
+const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
+
 function getAuthToken() {
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("accessToken") ||
-    ""
-  );
+  const candidates = ["token", "authToken", "accessToken", "droitgpt_token"];
+  for (const k of candidates) {
+    const v = localStorage.getItem(k);
+    if (v && v.trim().length > 10) return v.trim();
+  }
+  return "";
 }
 
 function safeStr(v, max = 1200) {
@@ -25,6 +27,70 @@ function safeStr(v, max = 1200) {
 
 function cls(...arr) {
   return arr.filter(Boolean).join(" ");
+}
+
+function loadCaseFromCache(caseId) {
+  try {
+    const raw = localStorage.getItem(CASE_CACHE_KEY_V2);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return null;
+    return obj[caseId] || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildBestCaseData({ navCase, run, caseMeta }) {
+  // 1) le top: caseData complet passé via navigation
+  if (navCase && typeof navCase === "object") return navCase;
+
+  // 2) si tu stockes un caseData complet dans run.caseMeta.caseData (optionnel)
+  const metaCase = run?.caseMeta?.caseData;
+  if (metaCase && typeof metaCase === "object") return metaCase;
+
+  const cid = caseMeta?.caseId || run?.caseId || run?.caseMeta?.caseId || run?.caseMeta?.id;
+  if (!cid) return null;
+
+  // 3) cache localStorage (dossiers IA générés)
+  const cached = loadCaseFromCache(cid);
+  if (cached) return cached;
+
+  // 4) fallback minimal (au moins ne pas planter)
+  return {
+    caseId: cid,
+    domaine: caseMeta?.domaine || run?.caseMeta?.domaine || "Autre",
+    niveau: caseMeta?.niveau || run?.caseMeta?.niveau || "Intermédiaire",
+    titre: caseMeta?.titre || run?.caseMeta?.titre || "Dossier",
+    resume: run?.caseMeta?.resume || "",
+    parties: run?.caseMeta?.parties || {},
+    pieces: Array.isArray(run?.caseMeta?.pieces) ? run.caseMeta.pieces : [],
+  };
+}
+
+async function postJSON(url, body) {
+  const token = getAuthToken();
+  if (!token) throw new Error("AUTH_TOKEN_MISSING");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      throw new Error(`HTTP_${resp.status}:${txt.slice(0, 500)}`);
+    }
+    return await resp.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export default function JusticeLabAppeal() {
@@ -36,11 +102,15 @@ export default function JusticeLabAppeal() {
   const [apiError, setApiError] = useState("");
   const [appealDecision, setAppealDecision] = useState(null);
 
+  const [navCaseData, setNavCaseData] = useState(null);
+
   useEffect(() => {
     const nav = location?.state || {};
     const navRun = nav.runData || nav.run || null;
     const navCase = nav.caseData || null;
     const navScored = nav.scored || null;
+
+    setNavCaseData(navCase || null);
 
     if (navRun?.runId) {
       if (navCase && !navRun.caseMeta) {
@@ -78,39 +148,30 @@ export default function JusticeLabAppeal() {
     setAppealDecision(null);
 
     try {
-      const token = getAuthToken();
-
-      const caseData = {
-        caseId: caseMeta.caseId,
-        domaine: caseMeta.domaine,
-        niveau: caseMeta.niveau,
-        titre: caseMeta.titre,
-      };
-
+      const caseData = buildBestCaseData({ navCase: navCaseData, run, caseMeta });
       const runData = run;
 
-      const resp = await fetch(`${API_BASE}/justice-lab/appeal`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ caseData, runData, scored }),
+      const data = await postJSON(`${API_BASE}/justice-lab/appeal`, {
+        caseData,
+        runData,
+        scored, // garde tel quel (backend peut recalculer si besoin)
       });
 
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(txt || `HTTP ${resp.status}`);
-      }
-
-      const data = await resp.json();
       setAppealDecision(data);
 
       const updated = patchActiveRun({ appeal: data });
       if (updated) setRun(updated);
     } catch (e) {
       console.warn(e);
-      setApiError("Impossible de générer la décision d’appel. Vérifie Render + token + /justice-lab/appeal.");
+
+      if (String(e?.message || "").includes("AUTH_TOKEN_MISSING")) {
+        setApiError("Token manquant : reconnecte-toi puis relance la Cour d’appel.");
+      } else {
+        // Affiche l’erreur réelle (utile pour debug Render)
+        setApiError(
+          `Impossible de générer la décision d’appel. Détail: ${safeStr(e?.message || "Erreur inconnue", 280)}`
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -119,7 +180,7 @@ export default function JusticeLabAppeal() {
   useEffect(() => {
     if (!run) return;
 
-    // use persisted appeal immediately if exists
+    // utiliser la décision persistée si déjà présente
     if (run?.appeal?.decision || run?.appeal?.dispositif) {
       setAppealDecision(run.appeal);
       return;

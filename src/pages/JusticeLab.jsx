@@ -1,515 +1,300 @@
+// ./pages/JusticeLab.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { CASES, CASE_TEMPLATES, generateCase, listGeneratedCases } from "../justiceLab/cases";
+import { readRuns } from "../justiceLab/storage";
 
-// ✅ Dossiers dynamiques
-import { listGeneratedCases, generateCase, CASE_TEMPLATES } from "../justiceLab/cases.js";
-import { readRuns } from "../justiceLab/storage.js";
+const MAX_DYNAMIC_VISIBLE = 24;
 
-// ✅ même clé que JusticeLabPlay.jsx
-const CASE_CACHE_KEY = "justicelab_caseCache_v1";
-const MAX_DYNAMIC_VISIBLE = 18; // affichage (UI)
-const MAX_CACHE_ITEMS = 80; // cache persistant (prod)
-
-function uniq(arr) {
-  return Array.from(new Set((arr || []).filter(Boolean)));
-}
-function safe(v) {
-  return String(v ?? "");
-}
-function randomSeed() {
-  return `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-}
-
-function lsAvailable() {
-  try {
-    if (typeof window === "undefined" || !window.localStorage) return false;
-    const k = "__t";
-    window.localStorage.setItem(k, "1");
-    window.localStorage.removeItem(k);
-    return true;
-  } catch {
-    return false;
-  }
+function formatDomainLabel(d) {
+  const map = {
+    penal: "Pénal",
+    foncier: "Foncier",
+    travail: "Travail",
+    famille: "Famille",
+    constitutionnel: "Constitutionnel",
+    militaire: "Pénal militaire",
+    administratif: "Administratif",
+    commercial: "Commercial / OHADA",
+  };
+  return map[d] || d || "—";
 }
 
-function loadCaseCache() {
-  if (!lsAvailable()) return {};
-  try {
-    const raw = localStorage.getItem(CASE_CACHE_KEY);
-    if (!raw) return {};
-    const obj = JSON.parse(raw);
-    return obj && typeof obj === "object" ? obj : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistCaseToCache(caseData) {
-  if (!lsAvailable()) return;
-  if (!caseData?.caseId) return;
-
-  try {
-    const cache = loadCaseCache();
-    cache[caseData.caseId] = caseData;
-
-    // ✅ limite cache (garde les plus récents selon generatedAt si dispo)
-    const entries = Object.entries(cache);
-    if (entries.length > MAX_CACHE_ITEMS) {
-      entries.sort((a, b) => {
-        const da = a[1]?.meta?.generatedAt || "";
-        const db = b[1]?.meta?.generatedAt || "";
-        // desc
-        return db.localeCompare(da);
-      });
-      const trimmed = entries.slice(0, MAX_CACHE_ITEMS);
-      const nextCache = Object.fromEntries(trimmed);
-      localStorage.setItem(CASE_CACHE_KEY, JSON.stringify(nextCache));
-      return;
-    }
-
-    localStorage.setItem(CASE_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    // ignore
-  }
-}
-
-function clearCaseCache() {
-  if (!lsAvailable()) return;
-  try {
-    localStorage.removeItem(CASE_CACHE_KEY);
-  } catch {
-    // ignore
-  }
-}
-
-function badgeClassByDomain(domain) {
-  const d = (domain || "").toLowerCase();
-  if (d.includes("pénal") || d.includes("penal")) return "border-rose-500/30 bg-rose-500/10 text-rose-200";
-  if (d.includes("foncier")) return "border-amber-500/30 bg-amber-500/10 text-amber-200";
-  if (d.includes("travail")) return "border-sky-500/30 bg-sky-500/10 text-sky-200";
-  if (d.includes("famille")) return "border-violet-500/30 bg-violet-500/10 text-violet-200";
-  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
-}
-
-function normalizeTemplateOptions() {
-  // CASE_TEMPLATES peut exister ou pas selon ta version; on assure un fallback
-  const arr =
-    Array.isArray(CASE_TEMPLATES) && CASE_TEMPLATES.length
-      ? CASE_TEMPLATES
-      : [
-          {
-            templateId: "TPL_PENAL_DETENTION",
-            domaine: "Pénal",
-            baseTitle: "Détention préventive & droits de la défense",
-            levels: ["Débutant", "Intermédiaire", "Avancé"],
-          },
-          {
-            templateId: "TPL_FONCIER_TITRE_COUTUME",
-            domaine: "Foncier",
-            baseTitle: "Conflit titre foncier vs droit coutumier",
-            levels: ["Intermédiaire", "Avancé"],
-          },
-        ];
-
-  return arr.map((t) => ({
-    templateId: t.templateId,
-    label: `${t.domaine} — ${t.baseTitle}`,
-    domaine: t.domaine,
-    levels: t.levels || t.levelChoices || ["Intermédiaire"],
-  }));
+function badgeForLevel(level) {
+  if (level === "avancé") return "bg-rose-500/15 text-rose-200 border-rose-500/40";
+  if (level === "intermédiaire") return "bg-amber-500/15 text-amber-200 border-amber-500/40";
+  return "bg-emerald-500/15 text-emerald-200 border-emerald-500/40";
 }
 
 export default function JusticeLab() {
   const navigate = useNavigate();
 
-  // Dernier run (résultats)
-  const lastRun = useMemo(() => {
-    try {
-      const runs = readRuns();
-      return runs?.[0] || null;
-    } catch {
-      return null;
-    }
-  }, []);
+  const baseCases = Array.isArray(CASES) ? CASES : [];
+  const templates = Array.isArray(CASE_TEMPLATES) ? CASE_TEMPLATES : [];
 
-  // Catalogue stable
-  const baseCases = useMemo(() => listGeneratedCases(), []);
+  const [selectedDomain, setSelectedDomain] = useState("penal");
+  const [selectedLevel, setSelectedLevel] = useState("débutant");
+  const [seed, setSeed] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
 
-  // Templates disponibles
-  const templateOptions = useMemo(() => normalizeTemplateOptions(), []);
-  const [selectedTemplate, setSelectedTemplate] = useState(
-    templateOptions?.[0]?.templateId || "TPL_PENAL_DETENTION"
-  );
-  const selectedTemplateObj = useMemo(
-    () => templateOptions.find((t) => t.templateId === selectedTemplate) || templateOptions[0],
-    [templateOptions, selectedTemplate]
-  );
-
-  // Dossiers “dynamiques” visibles (UI)
   const [dynamicCases, setDynamicCases] = useState([]);
 
-  // UI state
   const [q, setQ] = useState("");
-  const [domain, setDomain] = useState("Tous");
-  const [level, setLevel] = useState("Tous");
-  const [showPedagogy, setShowPedagogy] = useState(true);
+  const [filterDomain, setFilterDomain] = useState("all");
+  const [filterLevel, setFilterLevel] = useState("all");
 
-  // ✅ Charger cache persistant en prod (au mount)
+  const [runs, setRuns] = useState([]);
+
   useEffect(() => {
-    const cache = loadCaseCache();
-    const values = Object.values(cache || {});
-    // plus récents d’abord si generatedAt
-    values.sort((a, b) => (b?.meta?.generatedAt || "").localeCompare(a?.meta?.generatedAt || ""));
-    setDynamicCases(values.slice(0, MAX_DYNAMIC_VISIBLE));
+    const gen = listGeneratedCases?.() || [];
+    setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
+
+    const r = readRuns?.() || [];
+    setRuns(Array.isArray(r) ? r : []);
   }, []);
 
-  // Fusion catalogue + dynamiques
   const allCases = useMemo(() => {
-    const m = new Map();
-    [...dynamicCases, ...baseCases].forEach((c) => {
-      if (!c?.caseId) return;
-      if (!m.has(c.caseId)) m.set(c.caseId, c);
-    });
-    return Array.from(m.values());
+    const dyn = Array.isArray(dynamicCases) ? dynamicCases : [];
+    const base = Array.isArray(baseCases) ? baseCases : [];
+    return [...dyn, ...base];
   }, [dynamicCases, baseCases]);
 
-  const domains = useMemo(() => uniq(allCases.map((c) => c.domaine)).sort(), [allCases]);
-  const levels = useMemo(() => uniq(allCases.map((c) => c.niveau)).sort(), [allCases]);
-
-  const filtered = useMemo(() => {
+  const filteredCases = useMemo(() => {
     const query = q.trim().toLowerCase();
+
     return allCases
       .filter((c) => {
-        if (domain !== "Tous" && c.domaine !== domain) return false;
-        if (level !== "Tous" && c.niveau !== level) return false;
+        const domOk = filterDomain === "all" ? true : c?.domain === filterDomain;
+        const lvlOk = filterLevel === "all" ? true : (c?.level || "débutant") === filterLevel;
 
-        if (!query) return true;
-
-        const hay = [
-          c.caseId,
-          c.titre,
-          c.resume,
-          c.domaine,
-          c.niveau,
-          c.meta?.templateId,
-          c.meta?.city,
+        const text = [
+          c?.title,
+          c?.domain,
+          c?.city,
+          c?.jurisdiction,
+          c?.parties?.demandeur?.name,
+          c?.parties?.defendeur?.name,
+          c?.caseNumber,
+          c?.summary,
         ]
-          .map((x) => safe(x).toLowerCase())
-          .join(" | ");
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
 
-        return hay.includes(query);
+        const qOk = !query ? true : text.includes(query);
+        return domOk && lvlOk && qOk;
       })
       .slice(0, 60);
-  }, [allCases, q, domain, level]);
+  }, [allCases, q, filterDomain, filterLevel]);
 
-  const createNewDynamicCase = (forcedLevel = null) => {
-    const seed = randomSeed();
-    const templateId = selectedTemplate || "TPL_PENAL_DETENTION";
+  const lastRun = useMemo(() => {
+    if (!runs?.length) return null;
+    const sorted = [...runs].sort((a, b) => {
+      const ta = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
+      const tb = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
+      return tb - ta;
+    });
+    return sorted[0] || null;
+  }, [runs]);
 
-    const lvlChoices = selectedTemplateObj?.levels?.length
-      ? selectedTemplateObj.levels
-      : ["Débutant", "Intermédiaire", "Avancé"];
-
-    const chosenLevel =
-      forcedLevel || lvlChoices[Math.floor(Math.random() * lvlChoices.length)] || "Intermédiaire";
-
-    const c = generateCase({ templateId, seed, level: chosenLevel });
-
-    // ✅ persist cache (prod) + UI
-    persistCaseToCache(c);
-    setDynamicCases((arr) => [c, ...(arr || [])].slice(0, MAX_DYNAMIC_VISIBLE));
-  };
-
-  const clearDynamicHistory = () => {
-    clearCaseCache();
-    setDynamicCases([]);
-  };
-
-  const openCase = (caseId) => {
-    // Play lit le cache si dossier dynamique (prod ok)
+  function handleOpenCase(caseId) {
+    // ✅ route alignée avec JusticeLabPlay.jsx
     navigate(`/justice-lab/play/${encodeURIComponent(caseId)}`);
-  };
+  }
+
+  async function handleGenerate() {
+    setCreateError("");
+    setCreating(true);
+
+    try {
+      const preferredTemplate = templates[0];
+      const normalizedSeed = seed.trim() || String(Date.now());
+
+      const newCase = await Promise.resolve(
+        generateCase({
+          templateId: preferredTemplate?.templateId,
+          seed: normalizedSeed,
+          level: selectedLevel,
+          domain: selectedDomain,
+        })
+      );
+
+      if (!newCase?.id) throw new Error("Le générateur a renvoyé un dossier invalide (id manquant).");
+
+      const gen = listGeneratedCases?.() || [];
+      setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
+
+      handleOpenCase(newCase.id);
+    } catch (e) {
+      setCreateError(e?.message || "Erreur lors de la génération du dossier.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  const domains = useMemo(() => {
+    const set = new Set();
+    templates.forEach((t) => t?.domaine && set.add(String(t.domaine).toLowerCase()));
+    baseCases.forEach((c) => c?.domain && set.add(c.domain));
+    if (!set.size) ["penal", "foncier", "travail", "famille", "constitutionnel", "militaire"].forEach((d) => set.add(d));
+    return Array.from(set);
+  }, [templates, baseCases]);
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
-      <div className="w-full max-w-6xl rounded-3xl border border-white/10 bg-slate-900/70 backdrop-blur-2xl shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="px-6 md:px-8 py-6 border-b border-white/10 bg-slate-950/70 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-100">
+      <div className="border-b border-slate-800/70 bg-slate-950/70 backdrop-blur sticky top-0 z-20">
+        <div className="max-w-6xl mx-auto px-5 md:px-8 py-4 flex items-center justify-between gap-3">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.28em] text-slate-400">
-              DROITGPT • JUSTICE LAB
-            </div>
-            <h1 className="mt-2 text-2xl md:text-3xl font-semibold text-emerald-300">
-              Jeu de cas pratiques congolais (IA + scoring)
-            </h1>
-            <p className="mt-1 text-xs md:text-sm text-slate-300 max-w-3xl">
-              Pas de cours. Vous traitez des <strong>dossiers</strong>, faites des choix, tenez l’audience,
-              rédigez une décision, puis recevez une évaluation continue + une{" "}
-              <strong>Cour d’appel IA</strong>.
-            </p>
+            <div className="text-[11px] tracking-[0.25em] uppercase text-slate-400">DROITGPT • JUSTICE LAB</div>
+            <div className="text-lg font-semibold">Simulateur judiciaire intelligent</div>
+            <div className="text-xs text-slate-400 mt-1">Génération de dossiers + audience + scoring</div>
           </div>
 
-          <div className="flex flex-wrap gap-2 text-xs md:text-sm">
-            <Link
-              to="/justice-lab/dashboard"
-              className="px-4 py-2 rounded-full border border-violet-500/70 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20 transition"
-            >
-              📊 Tableau de bord
-            </Link>
-
-            {lastRun && (
-              <>
-                <Link
-                  to={`/justice-lab/results/${encodeURIComponent(lastRun.runId)}`}
-                  className="px-4 py-2 rounded-full border border-emerald-500/70 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 transition"
-                >
-                  ✅ Dernier résultat
-                </Link>
-                <Link
-                  to={`/justice-lab/journal/${encodeURIComponent(lastRun.runId)}`}
-                  className="px-4 py-2 rounded-full border border-amber-500/70 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20 transition"
-                >
-                  🧾 Journal
-                </Link>
-              </>
-            )}
-
-            <Link
-              to="/chat"
-              className="px-4 py-2 rounded-full border border-emerald-500/70 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 transition"
-            >
-              💬 Chat DroitGPT
-            </Link>
-
-            <Link
-              to="/"
-              className="px-4 py-2 rounded-full border border-slate-600/70 bg-slate-900/80 text-slate-200 hover:bg-slate-800 transition"
-            >
-              ⬅️ Accueil
-            </Link>
+          <div className="flex items-center gap-2">
+            <Link className="text-xs text-slate-300 hover:text-white" to="/">Accueil</Link>
+            <Link className="text-xs text-slate-300 hover:text-white" to="/chat">Chat juridique</Link>
           </div>
         </div>
+      </div>
 
-        {/* Content */}
-        <div className="px-6 md:px-8 py-6 space-y-6">
-          {/* Value props */}
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-emerald-300/80">Mode pratique</p>
-              <p className="mt-1 text-sm text-emerald-50">
-                Dossier → Qualification → Procédure → Audience → Décision → Score → Appel
-              </p>
-            </div>
-            <div className="rounded-2xl border border-sky-500/30 bg-sky-500/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-sky-300/80">Dossiers dynamiques</p>
-              <p className="mt-1 text-sm text-sky-50">
-                Même template, infinies variantes (seed). Rejouable, partageable, plus réaliste.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-violet-300/80">Didacticiel</p>
-              <p className="mt-1 text-sm text-violet-50">
-                Objectifs pédagogiques + checklist audience + erreurs fréquentes intégrées.
-              </p>
-            </div>
-          </div>
-
-          {/* Generator (prod) */}
-          <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-slate-100">✨ Générer un nouveau dossier</div>
-                <div className="text-xs text-slate-400 mt-1">
-                  Le dossier est enregistré dans le cache (production) pour être retrouvable après refresh.
-                </div>
+      <div className="max-w-6xl mx-auto px-5 md:px-8 py-6">
+        <div className="grid lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-1 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="text-sm font-semibold">✨ Générateur</div>
+            <div className="mt-3 grid gap-2">
+              <div>
+                <div className="text-xs text-slate-400 mb-1">Domaine</div>
+                <select
+                  value={selectedDomain}
+                  onChange={(e) => setSelectedDomain(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                >
+                  {domains.map((d) => (
+                    <option key={d} value={d}>{formatDomainLabel(d)}</option>
+                  ))}
+                </select>
               </div>
 
-              <div className="flex flex-wrap gap-2 items-center">
-                <div>
-                  <label className="text-xs text-slate-400">Template</label>
-                  <select
-                    value={selectedTemplate}
-                    onChange={(e) => setSelectedTemplate(e.target.value)}
-                    className="mt-1 rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50 min-w-[320px]"
-                  >
-                    {templateOptions.map((t) => (
-                      <option key={t.templateId} value={t.templateId}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => createNewDynamicCase(null)}
-                  className="px-4 py-3 rounded-2xl border border-emerald-500/70 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 transition"
-                  title="Génère un nouveau dossier (seed) — rejouable"
+              <div>
+                <div className="text-xs text-slate-400 mb-1">Niveau</div>
+                <select
+                  value={selectedLevel}
+                  onChange={(e) => setSelectedLevel(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
                 >
-                  Générer
-                </button>
-
-                <button
-                  type="button"
-                  onClick={clearDynamicHistory}
-                  className="px-4 py-3 rounded-2xl border border-slate-600/70 bg-slate-900/80 text-slate-200 hover:bg-slate-800 transition"
-                  title="Efface l’historique des dossiers générés (cache local)"
-                >
-                  Effacer historique
-                </button>
+                  <option value="débutant">Débutant</option>
+                  <option value="intermédiaire">Intermédiaire</option>
+                  <option value="avancé">Avancé</option>
+                </select>
               </div>
-            </div>
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(selectedTemplateObj?.levels || ["Débutant", "Intermédiaire", "Avancé"]).map((lvl) => (
-                <button
-                  key={lvl}
-                  type="button"
-                  onClick={() => createNewDynamicCase(lvl)}
-                  className="text-xs px-3 py-2 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition"
-                >
-                  + {lvl}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Filters */}
-          <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-              <div className="flex-1">
-                <label className="text-xs text-slate-400">Recherche</label>
+              <div>
+                <div className="text-xs text-slate-400 mb-1">Seed (optionnel)</div>
                 <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Chercher: pénal, foncier, titre, détention, seed, ville…"
-                  className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value)}
+                  placeholder="ex: 2026-01"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
                 />
               </div>
 
-              <div className="flex gap-3 flex-wrap">
-                <div>
-                  <label className="text-xs text-slate-400">Domaine</label>
-                  <select
-                    value={domain}
-                    onChange={(e) => setDomain(e.target.value)}
-                    className="mt-1 rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
-                  >
-                    <option value="Tous">Tous</option>
-                    {domains.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-400">Niveau</label>
-                  <select
-                    value={level}
-                    onChange={(e) => setLevel(e.target.value)}
-                    className="mt-1 rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
-                  >
-                    <option value="Tous">Tous</option>
-                    {levels.map((l) => (
-                      <option key={l} value={l}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-2 mt-6 md:mt-0">
-                  <input
-                    id="pedago"
-                    type="checkbox"
-                    checked={showPedagogy}
-                    onChange={() => setShowPedagogy((v) => !v)}
-                    className="accent-emerald-500"
-                  />
-                  <label htmlFor="pedago" className="text-xs text-slate-300 select-none">
-                    Afficher mode didacticiel
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-100">Choisissez un dossier</div>
-              <span className="text-xs text-slate-400">
-                {filtered.length} affichés • {allCases.length} disponibles
-              </span>
-            </div>
-
-            {dynamicCases.length ? (
-              <div className="mt-3 text-[11px] text-slate-400">
-                Dossiers générés (cache) : <span className="text-slate-200 font-semibold">{dynamicCases.length}</span>{" "}
-                • Persistant en production (refresh OK).
-              </div>
-            ) : (
-              <div className="mt-3 text-[11px] text-slate-500">Aucun dossier généré récemment. Clique “Générer”.</div>
-            )}
-          </div>
-
-          {/* Cases grid */}
-          <div className="grid gap-4 md:grid-cols-3">
-            {filtered.map((c) => (
-              <div
-                key={c.caseId}
-                className="rounded-2xl border border-white/10 bg-slate-950/60 hover:bg-slate-950/80 hover:border-emerald-400/60 transition p-5 flex flex-col"
+              <button
+                onClick={handleGenerate}
+                disabled={creating}
+                className={`px-4 py-2.5 rounded-2xl text-sm font-semibold transition ${
+                  creating
+                    ? "bg-slate-700 text-slate-400 cursor-not-allowed"
+                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
+                }`}
               >
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span
-                    className={`px-2 py-1 rounded-full border ${badgeClassByDomain(c.domaine)}`}
-                    title={c.meta?.templateId ? `Template: ${c.meta.templateId}` : "Template"}
-                  >
-                    {c.domaine}
-                  </span>
-                  <span className="text-slate-500">{c.niveau}</span>
+                {creating ? "Génération en cours…" : "✨ Générer un dossier IA"}
+              </button>
+
+              {createError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+                  {createError}
                 </div>
+              )}
 
-                <h3 className="mt-3 text-base font-semibold text-emerald-300">{c.titre}</h3>
-
-                <p className="mt-2 text-sm text-slate-300 leading-relaxed line-clamp-4">{c.resume}</p>
-
-                {showPedagogy && c.pedagogy && (
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Didacticiel</div>
-                    <ul className="mt-2 space-y-1 text-xs text-slate-200">
-                      {(c.pedagogy.objectifs || []).slice(0, 3).map((x, i) => (
-                        <li key={i}>• {x}</li>
-                      ))}
-                    </ul>
-                    <div className="mt-2 text-[11px] text-slate-400">
-                      Checklist audience + erreurs fréquentes incluses.
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-4 flex items-center justify-between text-xs">
-                  <button
-                    type="button"
-                    onClick={() => openCase(c.caseId)}
-                    className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition"
-                  >
-                    ▶️ Ouvrir le dossier
-                  </button>
-
-                  <div className="text-right">
-                    <div className="text-slate-500">{c.caseId}</div>
-                    {c.meta?.seed ? (
-                      <div className="text-[11px] text-slate-500">seed: {String(c.meta.seed).slice(0, 18)}</div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ))}
+              {lastRun?.runId && (
+                <button
+                  onClick={() => navigate(`/justice-lab/play/${encodeURIComponent(lastRun.runId)}?mode=run`)}
+                  className="px-4 py-2 rounded-2xl text-xs font-semibold border border-white/10 bg-white/5 hover:bg-white/10"
+                >
+                  ▶️ Reprendre la dernière audience
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-700/70 bg-slate-950/70 p-4 text-xs text-slate-400">
-            Conseil : clique “Générer” pour créer une variante. Le seed permet de rejouer exactement le même cas (et Play le
-            retrouve via cache).
+          <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Dossiers disponibles</h2>
+                <p className="text-xs text-slate-400 mt-1">Clique un dossier pour lancer la simulation.</p>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-3">
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Rechercher (ville, N° dossier, mots-clés)…"
+                  className="w-full md:w-72 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                />
+
+                <select
+                  value={filterDomain}
+                  onChange={(e) => setFilterDomain(e.target.value)}
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                >
+                  <option value="all">Tous domaines</option>
+                  {domains.map((d) => (
+                    <option key={d} value={d}>{formatDomainLabel(d)}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={filterLevel}
+                  onChange={(e) => setFilterLevel(e.target.value)}
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                >
+                  <option value="all">Tous niveaux</option>
+                  <option value="débutant">Débutant</option>
+                  <option value="intermédiaire">Intermédiaire</option>
+                  <option value="avancé">Avancé</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 grid md:grid-cols-2 gap-3">
+              {filteredCases.map((c, idx) => (
+                <button
+                  key={c?.id || c?.caseId || `case-${idx}`}
+                  onClick={() => handleOpenCase(c?.id || c?.caseId)}
+                  className="text-left rounded-2xl border border-white/10 bg-slate-950/40 hover:bg-white/5 transition p-4"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs text-slate-400">
+                        {formatDomainLabel(c?.domain)} • {c?.city || "—"} • {c?.jurisdiction || "—"}
+                      </div>
+                      <div className="mt-1 font-semibold">{c?.title || "Dossier"}</div>
+                      <div className="mt-2 text-xs text-slate-300 line-clamp-2">{c?.summary || ""}</div>
+                    </div>
+
+                    <span className={`shrink-0 text-[11px] px-2 py-1 rounded-full border ${badgeForLevel(c?.level || "débutant")}`}>
+                      {(c?.level || "débutant").toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 text-[11px] text-slate-400">
+                    N° {c?.caseNumber || c?.id}
+                    {c?.isDynamic ? <span className="ml-2 text-emerald-300">• IA</span> : null}
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
