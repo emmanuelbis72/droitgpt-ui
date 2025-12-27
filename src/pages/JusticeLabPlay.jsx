@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -85,7 +85,14 @@ function saveCaseToCache(caseData) {
 }
 
 function getAuthToken() {
-  const candidates = ["token", "authToken", "accessToken", "droitgpt_token"];
+  // ✅ IMPORTANT : compat ton token réel
+  const candidates = [
+    "droitgpt_access_token",
+    "token",
+    "authToken",
+    "accessToken",
+    "droitgpt_token",
+  ];
   for (const k of candidates) {
     const v = localStorage.getItem(k);
     if (v && v.trim().length > 10) return v.trim();
@@ -171,13 +178,7 @@ function bestChoiceForRole(obj, role) {
   const t = `${obj?.title || ""} ${obj?.statement || ""}`.toLowerCase();
   if (role === "Juge") return "Demander précision";
   if (role === "Procureur") {
-    if (
-      t.includes("null") ||
-      t.includes("irr") ||
-      t.includes("vice") ||
-      t.includes("tardiv") ||
-      t.includes("recev")
-    )
+    if (t.includes("null") || t.includes("irr") || t.includes("vice") || t.includes("tardiv") || t.includes("recev"))
       return "Rejeter";
     return "Rejeter";
   }
@@ -205,15 +206,46 @@ function resolveCaseData(decodedCaseId) {
 
 function normalizePartyValue(v) {
   if (!v) return { title: "-", sub: "" };
-  // string simple (nouveau cases.js)
   if (typeof v === "string") return { title: v, sub: "" };
-  // objet (ancien format)
   if (typeof v === "object") {
     const title = v.nom || v.name || v.label || "-";
     const sub = v.statut || v.role || v.desc || "";
     return { title, sub };
   }
   return { title: String(v), sub: "" };
+}
+
+/** ========== ✅ Audit helper compatible engine ========== */
+function pushAuditLocal(runObj, evt) {
+  const next = { ...(runObj || {}) };
+  next.state = next.state || {};
+  next.state.auditLog = Array.isArray(next.state.auditLog) ? next.state.auditLog : [];
+  next.state.auditLog.unshift({
+    id: `log_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    ts: nowIso(),
+    ...evt,
+  });
+  next.state.auditLog = next.state.auditLog.slice(0, 250);
+  return next;
+}
+
+/** ========== ✅ Chrono helpers ========== */
+function msToClock(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function computeChronoElapsedMs(ch) {
+  if (!ch) return 0;
+  const elapsedBase = Number(ch.elapsedMs || 0);
+  if (!ch.running) return elapsedBase;
+
+  const startedAt = ch.startedAt ? new Date(ch.startedAt).getTime() : Date.now();
+  const lastStartAt = ch.lastStartAt ? new Date(ch.lastStartAt).getTime() : startedAt;
+  const delta = Date.now() - lastStartAt;
+  return elapsedBase + Math.max(0, delta);
 }
 
 function PedagogyPanel({ caseData, compact = false }) {
@@ -287,14 +319,13 @@ export default function JusticeLabPlay() {
     return null;
   }, [caseData]);
 
-  // ✅ init run: reprend active run si correspond au caseId, sinon nouvelle
+  // ✅ init run
   const [run, setRun] = useState(() => {
     if (!caseData) return null;
     const active = ensureActiveRunValid();
     const activeCaseId = active?.caseId || active?.caseMeta?.caseId;
     if (active && activeCaseId === caseData.caseId) return active;
 
-    // ⚠️ IMPORTANT: on injecte caseData dans caseMeta pour que /results, /appeal etc gardent tout
     const r = createNewRun(caseData);
     return { ...r, caseMeta: { ...(r.caseMeta || {}), caseId: caseData.caseId, caseData } };
   });
@@ -323,6 +354,16 @@ export default function JusticeLabPlay() {
   const [showAudit, setShowAudit] = useState(true);
   const [showPiecesImpact, setShowPiecesImpact] = useState(true);
 
+  // ✅ Greffier (nom)
+  const [greffierName, setGreffierName] = useState(() => {
+    if (!lsAvailable()) return "Le Greffier";
+    return localStorage.getItem("justicelab_greffier_name") || "Le Greffier";
+  });
+
+  // ✅ Chrono UI refresh
+  const [chronoUiTick, setChronoUiTick] = useState(0);
+  const chronoIntervalRef = useRef(null);
+
   // ✅ persister run en storage comme active
   useEffect(() => {
     if (!run?.runId) return;
@@ -340,6 +381,79 @@ export default function JusticeLabPlay() {
     if (sc && sc !== audienceScene) setAudienceScene(sc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run?.answers?.audience?.scene]);
+
+  // ✅ start chrono auto quand on arrive en AUDIENCE
+  useEffect(() => {
+    if (!run?.runId) return;
+
+    if (step !== "AUDIENCE") {
+      // stop UI tick
+      if (chronoIntervalRef.current) {
+        clearInterval(chronoIntervalRef.current);
+        chronoIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // tick UI
+    if (!chronoIntervalRef.current) {
+      chronoIntervalRef.current = setInterval(() => setChronoUiTick((t) => t + 1), 1000);
+    }
+
+    // auto start if not started
+    const ch = run?.state?.chrono || null;
+    if (!ch?.startedAt) {
+      const next = pushAuditLocal(
+        {
+          ...run,
+          state: {
+            ...(run.state || {}),
+            chrono: {
+              startedAt: nowIso(),
+              lastStartAt: nowIso(),
+              elapsedMs: 0,
+              running: true,
+            },
+          },
+        },
+        {
+          type: "CHRONO",
+          title: "Chronomètre — démarrage",
+          detail: "Début du temps d’audience (auto).",
+          meta: { step: "AUDIENCE" },
+        }
+      );
+      saveRunState(next);
+    } else if (ch?.startedAt && !ch?.running) {
+      // keep paused if user paused
+    } else if (ch?.startedAt && ch?.running && !ch?.lastStartAt) {
+      const next = {
+        ...run,
+        state: {
+          ...(run.state || {}),
+          chrono: { ...(ch || {}), lastStartAt: nowIso(), running: true },
+        },
+      };
+      saveRunState(next);
+    }
+
+    return () => {
+      if (chronoIntervalRef.current) {
+        clearInterval(chronoIntervalRef.current);
+        chronoIntervalRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, run?.runId]);
+
+  // ✅ persist greffierName
+  useEffect(() => {
+    try {
+      if (lsAvailable()) localStorage.setItem("justicelab_greffier_name", greffierName || "Le Greffier");
+    } catch {
+      // ignore
+    }
+  }, [greffierName]);
 
   if (!caseData || !run) {
     return (
@@ -385,6 +499,17 @@ export default function JusticeLabPlay() {
   const admittedLateCount = admittedLateIds.length || 0;
   const tasksCount = tasks.length || 0;
 
+  const saveRunState = (nextRunOrPatch) => {
+    const next = nextRunOrPatch && nextRunOrPatch.runId ? nextRunOrPatch : patchActiveRun(nextRunOrPatch);
+
+    if (next?.runId) {
+      upsertAndSetActive(next);
+      setActiveRunId(next.runId);
+      setRun(next);
+    }
+    return next;
+  };
+
   const goNext = async () => {
     if (isScoring || isLoadingAudience) return;
 
@@ -406,18 +531,6 @@ export default function JusticeLabPlay() {
     if (step === "PROCEDURE") return setStep("QUALIFICATION");
     if (step === "AUDIENCE") return setStep("PROCEDURE");
     if (step === "DECISION") return setStep("AUDIENCE");
-  };
-
-  const saveRunState = (nextRunOrPatch) => {
-    const next =
-      nextRunOrPatch && nextRunOrPatch.runId ? nextRunOrPatch : patchActiveRun(nextRunOrPatch);
-
-    if (next?.runId) {
-      upsertAndSetActive(next);
-      setActiveRunId(next.runId);
-      setRun(next);
-    }
-    return next;
   };
 
   const loadAudience = async () => {
@@ -576,6 +689,121 @@ export default function JusticeLabPlay() {
     });
   };
 
+  /** ✅ Incidents procéduraux (écrit dans auditLog + crée tâche) */
+  const addProceduralIncident = (kind) => {
+    const k = String(kind || "").toUpperCase();
+
+    const labels = {
+      NULLITE: "Incident procédural — Nullité soulevée",
+      RENVOI: "Incident procédural — Demande de renvoi",
+      JONCTION: "Incident procédural — Jonction sollicitée",
+      DISJONCTION: "Incident procédural — Disjonction sollicitée",
+      COMMUNICATION_PIECES: "Incident procédural — Communication de pièces",
+    };
+
+    const details = {
+      NULLITE: "Une partie invoque un vice de procédure. Le juge doit entendre le contradictoire puis motiver la décision.",
+      RENVOI: "Renvoi demandé (préparation, témoin, pièces). Décision motivée + fixation éventuelle d’une date.",
+      JONCTION: "Demande de jonction de procédures/dossiers connexes. Vérifier connexité, bonne administration de la justice.",
+      DISJONCTION: "Demande de disjonction pour juger séparément. Vérifier intérêt, délais, droits de la défense.",
+      COMMUNICATION_PIECES: "Demande de communication de pièces. Garantir contradictoire + délai raisonnable.",
+    };
+
+    const title = labels[k] || `Incident procédural — ${k}`;
+    const detail = details[k] || "Incident ajouté au dossier.";
+
+    const task = {
+      type: "INCIDENT",
+      label: title,
+      detail: "À consigner au PV + décision motivée (2–6 phrases).",
+    };
+
+    const next0 = pushAuditLocal(
+      {
+        ...run,
+        state: {
+          ...(run.state || {}),
+          pendingTasks: Array.isArray(run.state?.pendingTasks)
+            ? [...run.state.pendingTasks, task].slice(0, 60)
+            : [task],
+        },
+      },
+      {
+        type: "INCIDENT",
+        title,
+        detail,
+        meta: { kind: k, step: "AUDIENCE" },
+      }
+    );
+
+    saveRunState(next0);
+  };
+
+  /** ✅ Chrono actions */
+  const chrono = run?.state?.chrono || null;
+  const elapsedMs = useMemo(() => computeChronoElapsedMs(chrono), [chrono, chronoUiTick]);
+  const chronoText = msToClock(elapsedMs);
+
+  const chronoStart = () => {
+    const ch = run?.state?.chrono || {};
+    const next = pushAuditLocal(
+      {
+        ...run,
+        state: {
+          ...(run.state || {}),
+          chrono: {
+            startedAt: ch.startedAt || nowIso(),
+            lastStartAt: nowIso(),
+            elapsedMs: Number(ch.elapsedMs || 0),
+            running: true,
+          },
+        },
+      },
+      { type: "CHRONO", title: "Chronomètre — reprise", detail: "Reprise du temps d’audience.", meta: { step: "AUDIENCE" } }
+    );
+    saveRunState(next);
+  };
+
+  const chronoPause = () => {
+    const ch = run?.state?.chrono || {};
+    const current = computeChronoElapsedMs(ch);
+    const next = pushAuditLocal(
+      {
+        ...run,
+        state: {
+          ...(run.state || {}),
+          chrono: {
+            startedAt: ch.startedAt || nowIso(),
+            lastStartAt: ch.lastStartAt || nowIso(),
+            elapsedMs: current,
+            running: false,
+          },
+        },
+      },
+      { type: "CHRONO", title: "Chronomètre — pause", detail: `Pause à ${msToClock(current)}.`, meta: { step: "AUDIENCE" } }
+    );
+    saveRunState(next);
+  };
+
+  const chronoReset = () => {
+    const next = pushAuditLocal(
+      {
+        ...run,
+        state: {
+          ...(run.state || {}),
+          chrono: {
+            startedAt: nowIso(),
+            lastStartAt: nowIso(),
+            elapsedMs: 0,
+            running: false,
+          },
+        },
+      },
+      { type: "CHRONO", title: "Chronomètre — reset", detail: "Remise à zéro.", meta: { step: "AUDIENCE" } }
+    );
+    saveRunState(next);
+  };
+
   const finalize = async () => {
     setScoreError(null);
     setAppealError(null);
@@ -591,7 +819,6 @@ export default function JusticeLabPlay() {
         aiScore = await postJSON(`${API_BASE}/justice-lab/score`, {
           caseData,
           runData: run,
-          // compat ancien backend
           caseId: run.caseId || run.caseMeta?.caseId,
           role: run.answers?.role || "Juge",
           facts: caseData?.resume || "",
@@ -602,6 +829,8 @@ export default function JusticeLabPlay() {
           decisionMotivation: run.answers?.decisionMotivation || "",
           decisionDispositif: run.answers?.decisionDispositif || "",
           language: "fr",
+          greffierName,
+          chrono: run?.state?.chrono || null,
         });
         setProgress(55);
       } catch (e) {
@@ -614,7 +843,6 @@ export default function JusticeLabPlay() {
           caseData,
           runData: run,
           scored: aiScore || local,
-          // compat ancien backend
           caseId: run.caseId || run.caseMeta?.caseId,
           role: run.answers?.role || "Juge",
           facts: caseData?.resume || "",
@@ -622,6 +850,8 @@ export default function JusticeLabPlay() {
           decisionDispositif: run.answers?.decisionDispositif || "",
           audience: run.answers?.audience || {},
           language: "fr",
+          greffierName,
+          chrono: run?.state?.chrono || null,
         });
         setProgress(80);
       } catch (e) {
@@ -738,12 +968,37 @@ export default function JusticeLabPlay() {
               </Link>{" "}
               <span className="opacity-60">/</span>{" "}
               <span className="text-slate-200 font-semibold">{caseData.caseId}</span>
-              {caseData?.seed ? (
-                <span className="ml-2 text-[11px] text-slate-500">seed: {String(caseData.seed).slice(0, 22)}</span>
+              {caseData?.meta?.seed ? (
+                <span className="ml-2 text-[11px] text-slate-500">seed: {String(caseData.meta.seed).slice(0, 22)}</span>
               ) : null}
             </div>
             <h1 className="text-2xl font-bold mt-2">{caseData.titre}</h1>
             <p className="text-sm text-slate-300 mt-1">{caseData.resume}</p>
+
+            {/* ✅ Greffier inline */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="text-[11px] text-slate-400">Greffier :</div>
+              <input
+                value={greffierName}
+                onChange={(e) => setGreffierName(e.target.value)}
+                className="h-9 w-[220px] rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
+                placeholder="Nom du greffier"
+              />
+              <button
+                type="button"
+                className="h-9 px-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                onClick={() => navigate("/justice-lab/journal")}
+              >
+                📓 Journal (PV greffier)
+              </button>
+              <button
+                type="button"
+                className="h-9 px-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                onClick={() => navigate("/justice-lab/results")}
+              >
+                🧪 Mode Examen (résultats)
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -757,7 +1012,7 @@ export default function JusticeLabPlay() {
           </div>
         </div>
 
-        {/* Didacticiel top (si présent) */}
+        {/* Didacticiel top */}
         <div className="mt-6">
           <PedagogyPanel caseData={caseData} compact />
         </div>
@@ -770,9 +1025,14 @@ export default function JusticeLabPlay() {
             </span>
 
             {step === "AUDIENCE" ? (
-              <span className="text-xs px-3 py-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-200">
-                Gestion d’audience: {run?.scores?.audience ?? 0}/100
-              </span>
+              <>
+                <span className="text-xs px-3 py-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-200">
+                  Gestion d’audience: {run?.scores?.audience ?? 0}/100
+                </span>
+                <span className="text-xs px-3 py-1 rounded-full border border-indigo-500/20 bg-indigo-500/10 text-indigo-200">
+                  ⏱️ {chronoText} {chrono?.running ? "• en cours" : "• pause"}
+                </span>
+              </>
             ) : null}
 
             {excludedCount ? (
@@ -1000,6 +1260,86 @@ export default function JusticeLabPlay() {
                   </div>
                 </div>
 
+                {/* ✅ Chrono + Incidents */}
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-indigo-500/25 bg-indigo-500/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-indigo-200/80">⏱️ Chronomètre audience</div>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="text-2xl font-bold text-slate-100">{chronoText}</div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                          onClick={chronoStart}
+                        >
+                          Start
+                        </button>
+                        <button
+                          type="button"
+                          className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                          onClick={chronoPause}
+                        >
+                          Pause
+                        </button>
+                        <button
+                          type="button"
+                          className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                          onClick={chronoReset}
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-[11px] text-slate-300">
+                      Le chrono est automatiquement enregistré dans le journal (PV) pour la notation “magistrature”.
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-200/80">⚖️ Incidents procéduraux</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                        onClick={() => addProceduralIncident("NULLITE")}
+                      >
+                        Nullité
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                        onClick={() => addProceduralIncident("RENVOI")}
+                      >
+                        Renvoi
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                        onClick={() => addProceduralIncident("JONCTION")}
+                      >
+                        Jonction
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                        onClick={() => addProceduralIncident("DISJONCTION")}
+                      >
+                        Disjonction
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                        onClick={() => addProceduralIncident("COMMUNICATION_PIECES")}
+                      >
+                        Communication pièces
+                      </button>
+                    </div>
+                    <div className="mt-2 text-[11px] text-slate-300">
+                      Chaque clic est inscrit au journal d’audience + ajoute une tâche “à motiver”.
+                    </div>
+                  </div>
+                </div>
+
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                     <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Dialogue (extraits)</div>
@@ -1049,7 +1389,7 @@ export default function JusticeLabPlay() {
                           <div className="text-xs text-slate-300 font-semibold">✅ Actions / tâches</div>
                           {tasks.length ? (
                             <ul className="mt-2 text-xs text-slate-200 space-y-1">
-                              {tasks.slice(0, 6).map((t, i) => (
+                              {tasks.slice(0, 8).map((t, i) => (
                                 <li key={i}>• {t.label || t.type}</li>
                               ))}
                             </ul>
@@ -1061,57 +1401,6 @@ export default function JusticeLabPlay() {
                     </div>
                   )}
                 </div>
-
-                {liveFeedback.length > 0 && (
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Feedback instant (offline)</div>
-                    <div className="mt-2 grid gap-2 md:grid-cols-2">
-                      {liveFeedback.map((fb) => (
-                        <div
-                          key={fb.id}
-                          className={`rounded-2xl border p-3 ${
-                            fb.verdict === "BON"
-                              ? "border-emerald-500/30 bg-emerald-500/10"
-                              : "border-amber-500/30 bg-amber-500/10"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="text-xs text-slate-200">
-                              <span className="text-slate-400">{formatTime(fb.at)}</span> •{" "}
-                              <span className="text-slate-100 font-semibold">{fb.title}</span>{" "}
-                              <span className="text-slate-400">({fb.decision})</span>
-                            </div>
-                            <div
-                              className={`text-[11px] px-2 py-1 rounded-full border ${
-                                fb.verdict === "BON"
-                                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                                  : "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                              }`}
-                            >
-                              {fb.verdict}
-                            </div>
-                          </div>
-
-                          <div className="mt-2 text-sm text-slate-100">{fb.headline}</div>
-                          <div className="mt-1 text-xs text-slate-300">{fb.suggestion}</div>
-
-                          <div className="mt-2 text-xs text-slate-200">
-                            <div className="text-slate-400">Impact :</div>
-                            <ul className="mt-1 space-y-1">
-                              {fb.impact.map((x, i) => (
-                                <li key={i} className="text-slate-200">
-                                  • {x}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-
-                          {fb.audit ? <div className="mt-2 text-[11px] text-slate-400">Journal: {fb.audit}</div> : null}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {showAudit && (
                   <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
@@ -1151,14 +1440,9 @@ export default function JusticeLabPlay() {
                   <div className="space-y-3">
                     {(audienceScene?.objections || []).map((obj) => {
                       const d = getDecisionForObj(obj.id);
-                      const current = {
-                        decision: d?.decision || "",
-                        reasoning: d?.reasoning || "",
-                      };
+                      const current = { decision: d?.decision || "", reasoning: d?.reasoning || "" };
 
-                      const offlineFb = obj?.id ? feedbackByObjection[obj.id] : null;
                       const isEditing = !!editReasoningById[obj.id];
-
                       const role = (run.answers?.role || "").trim() || "Juge";
                       const best = bestChoiceForRole(obj, role);
 
@@ -1200,7 +1484,6 @@ export default function JusticeLabPlay() {
                             })}
                           </div>
 
-                          {/* Motivation verrouillée */}
                           <div className="mt-3">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-[11px] text-slate-400">
@@ -1270,19 +1553,6 @@ export default function JusticeLabPlay() {
                               placeholder="Justification courte : contradictoire, pertinence, régularité, droits de défense…"
                             />
                           </div>
-
-                          {offlineFb && offlineFb.objId === obj.id ? (
-                            <div
-                              className={`mt-3 rounded-xl border p-3 text-xs ${
-                                offlineFb.verdict === "BON"
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-50"
-                                  : "border-amber-500/30 bg-amber-500/10 text-amber-50"
-                              }`}
-                            >
-                              <div className="font-semibold">{offlineFb.headline}</div>
-                              <div className="mt-1 opacity-90">{offlineFb.suggestion}</div>
-                            </div>
-                          ) : null}
                         </div>
                       );
                     })}

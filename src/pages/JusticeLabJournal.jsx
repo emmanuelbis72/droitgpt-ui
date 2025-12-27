@@ -1,16 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { readRuns, setActiveRunId, upsertAndSetActive } from "../justiceLab/storage.js";
-import { CASES } from "../justiceLab/cases.js";
+import { CASES, buildGreffierPV, gradeMagistratureExam } from "../justiceLab/cases.js";
 import { getPiecesStatusSummary } from "../justiceLab/engine.js";
 
 const API_BASE =
-  (import.meta?.env?.VITE_API_URL || "https://droitgpt-indexer.onrender.com").replace(/\/$/, "");
+  (import.meta?.env?.VITE_API_URL || import.meta?.env?.VITE_API_BASE || "https://droitgpt-indexer.onrender.com").replace(
+    /\/$/,
+    ""
+  );
 
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
 
 function getAuthToken() {
-  const candidates = ["token", "authToken", "accessToken", "droitgpt_token"];
+  // ✅ FIX: inclure la clé réelle observée chez toi
+  const candidates = ["token", "authToken", "accessToken", "droitgpt_token", "droitgpt_access_token"];
   for (const k of candidates) {
     const v = localStorage.getItem(k);
     if (v && v.trim().length > 10) return v.trim();
@@ -108,6 +112,22 @@ function resolveCaseDataFromRun(run) {
   return null;
 }
 
+function downloadTextFile(filename, text) {
+  try {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    // ignore
+  }
+}
+
 export default function JusticeLabJournal() {
   const { runId } = useParams();
   const navigate = useNavigate();
@@ -123,6 +143,15 @@ export default function JusticeLabJournal() {
   const [appeal, setAppeal] = useState(run?.appeal || null);
   const [appealLoading, setAppealLoading] = useState(false);
   const [appealError, setAppealError] = useState(null);
+
+  // ✅ Greffier PV
+  const [pvOpen, setPvOpen] = useState(false);
+  const [pvText, setPvText] = useState("");
+  const [greffierName, setGreffierName] = useState("Le Greffier");
+
+  // ✅ Examen
+  const [examOpen, setExamOpen] = useState(false);
+  const [examResult, setExamResult] = useState(null);
 
   useEffect(() => {
     if (!run?.runId) return;
@@ -193,6 +222,29 @@ export default function JusticeLabJournal() {
     }
   };
 
+  const buildPV = () => {
+    const res = buildGreffierPV({
+      caseData,
+      runData: run,
+      journalEntries: log,
+      greffierName: greffierName || "Le Greffier",
+    });
+    setPvText(res?.pvText || "");
+    setPvOpen(true);
+  };
+
+  const gradeExam = () => {
+    const decisionText = `${run?.answers?.decisionMotivation || ""}\n\n${run?.answers?.decisionDispositif || ""}`.trim();
+    const result = gradeMagistratureExam({
+      caseData,
+      runData: run,
+      journalEntries: log,
+      decisionText,
+    });
+    setExamResult(result);
+    setExamOpen(true);
+  };
+
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 px-4 py-6">
       <div className="w-full max-w-6xl mx-auto rounded-3xl border border-white/10 bg-slate-900/70 backdrop-blur-2xl shadow-2xl overflow-hidden">
@@ -236,10 +288,124 @@ export default function JusticeLabJournal() {
             >
               ⚖️ Appel
             </button>
+
+            <button
+              type="button"
+              onClick={buildPV}
+              className="px-4 py-2 rounded-full border border-sky-500/70 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20 transition"
+            >
+              🖋️ PV certifié
+            </button>
+
+            <button
+              type="button"
+              onClick={gradeExam}
+              className="px-4 py-2 rounded-full border border-violet-500/70 bg-violet-500/10 text-violet-100 hover:bg-violet-500/20 transition"
+            >
+              🎓 Mode Examen
+            </button>
           </div>
         </div>
 
         <div className="px-6 md:px-8 py-6 space-y-6">
+          {/* PV modal */}
+          {pvOpen && (
+            <section className="rounded-2xl border border-sky-500/30 bg-sky-500/5 p-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h2 className="text-sm font-semibold text-sky-200">🖋️ PV d’audience certifié (Mode Greffier)</h2>
+                  <p className="mt-1 text-xs text-slate-300">Généré depuis le journal + pièces + mentions.</p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <input
+                    value={greffierName}
+                    onChange={(e) => setGreffierName(e.target.value)}
+                    className="px-3 py-2 rounded-full border border-white/10 bg-slate-950/60 text-xs outline-none"
+                    placeholder="Nom du greffier"
+                  />
+                  <button
+                    onClick={() => {
+                      const res = buildGreffierPV({ caseData, runData: run, journalEntries: log, greffierName });
+                      setPvText(res?.pvText || "");
+                    }}
+                    className="px-4 py-2 rounded-full border border-sky-500/60 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20 text-xs"
+                  >
+                    🔄 Regénérer
+                  </button>
+                  <button
+                    onClick={() => downloadTextFile(`PV_${caseData.caseId || "dossier"}.txt`, pvText || "")}
+                    className="px-4 py-2 rounded-full border border-emerald-500/60 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20 text-xs"
+                  >
+                    ⬇️ Télécharger
+                  </button>
+                  <button
+                    onClick={() => setPvOpen(false)}
+                    className="px-4 py-2 rounded-full border border-slate-600/70 bg-slate-900 hover:bg-slate-800 text-xs"
+                  >
+                    ✖ Fermer
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <textarea
+                  value={pvText}
+                  onChange={(e) => setPvText(e.target.value)}
+                  className="w-full min-h-[240px] rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-xs outline-none whitespace-pre-wrap"
+                />
+              </div>
+            </section>
+          )}
+
+          {/* Exam modal */}
+          {examOpen && examResult && (
+            <section className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h2 className="text-sm font-semibold text-violet-200">🎓 Notation (Mode Examen)</h2>
+                  <p className="mt-1 text-xs text-slate-300">Grille magistrature — score /100 + rubriques.</p>
+                </div>
+                <button
+                  onClick={() => setExamOpen(false)}
+                  className="px-4 py-2 rounded-full border border-slate-600/70 bg-slate-900 hover:bg-slate-800 text-xs"
+                >
+                  ✖ Fermer
+                </button>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-sm text-slate-100">
+                    Score : <span className="font-bold">{examResult.score}</span>/100
+                  </div>
+                  <div className="text-xs text-slate-300">{examResult.appreciation}</div>
+                </div>
+
+                <div className="mt-3 grid md:grid-cols-2 gap-3 text-xs">
+                  {Object.entries(examResult.rubric || {}).map(([k, v]) => (
+                    <div key={k} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-slate-200 font-semibold">{k}</div>
+                      <div className="mt-1 text-slate-300">
+                        {v.score}/{v.max}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {Array.isArray(examResult.recommandations) && examResult.recommandations.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Recommandations</div>
+                    <ul className="mt-2 text-xs text-slate-300 space-y-1 list-disc list-inside">
+                      {examResult.recommandations.slice(0, 10).map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
           {/* Cour d’appel IA */}
           <section className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -264,18 +430,22 @@ export default function JusticeLabJournal() {
               </button>
             </div>
 
-            {appealError && <div className="mt-3 text-xs text-amber-200">⚠️ {appealError}</div>}
+            {appealError && (
+              <div className="mt-3 text-xs text-amber-200">
+                ⚠️{" "}
+                {appealError === "AUTH_TOKEN_MISSING"
+                  ? "Token manquant : reconnecte-toi puis relance la Cour d’appel."
+                  : appealError}
+              </div>
+            )}
 
             {!appeal ? (
-              <p className="mt-3 text-sm text-slate-300">
-                Aucune décision d’appel enregistrée. Clique sur “Rafraîchir”.
-              </p>
+              <p className="mt-3 text-sm text-slate-300">Aucune décision d’appel enregistrée. Clique sur “Rafraîchir”.</p>
             ) : (
               <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-sm text-slate-200">
-                    Décision :{" "}
-                    <span className="font-semibold">{String(appeal.decision || "RENVOI").toUpperCase()}</span>
+                    Décision : <span className="font-semibold">{String(appeal.decision || "RENVOI").toUpperCase()}</span>
                   </p>
                   <span className={`px-3 py-1.5 rounded-full border text-xs font-semibold ${DecisionBadgeClass(appeal.decision)}`}>
                     {String(appeal.decision || "RENVOI").toUpperCase()}
@@ -363,18 +533,14 @@ export default function JusticeLabJournal() {
             {excluded.length > 0 && (
               <div className="mb-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3">
                 <div className="text-xs font-semibold text-rose-100">Pièces écartées</div>
-                <div className="mt-2 text-xs text-rose-50/90">
-                  {excluded.map((p) => `${p.id} — ${p.title}`).join(" • ")}
-                </div>
+                <div className="mt-2 text-xs text-rose-50/90">{excluded.map((p) => `${p.id} — ${p.title}`).join(" • ")}</div>
               </div>
             )}
 
             {late.length > 0 && (
               <div className="mb-3 rounded-xl border border-sky-500/40 bg-sky-500/10 p-3">
                 <div className="text-xs font-semibold text-sky-100">Pièces admises tardivement</div>
-                <div className="mt-2 text-xs text-sky-50/90">
-                  {late.map((p) => `${p.id} — ${p.title}`).join(" • ")}
-                </div>
+                <div className="mt-2 text-xs text-sky-50/90">{late.map((p) => `${p.id} — ${p.title}`).join(" • ")}</div>
               </div>
             )}
 
@@ -408,9 +574,7 @@ export default function JusticeLabJournal() {
                       ) : null}
                     </div>
                   </div>
-                  <div className={cls("mt-2 text-xs", p.status === "EXCLUDEE" ? "line-through" : "opacity-90")}>
-                    {p.content}
-                  </div>
+                  <div className={cls("mt-2 text-xs", p.status === "EXCLUDEE" ? "line-through" : "opacity-90")}>{p.content}</div>
                 </div>
               ))}
             </div>

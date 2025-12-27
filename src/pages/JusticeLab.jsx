@@ -1,21 +1,31 @@
-// ./pages/JusticeLab.jsx
-import React, { useEffect, useMemo, useState } from "react";
+// src/pages/JusticeLab.jsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { CASES, CASE_TEMPLATES, generateCase, listGeneratedCases } from "../justiceLab/cases";
-import { readRuns } from "../justiceLab/storage";
+import { CASES, generateCase, listGeneratedCases } from "../justiceLab/cases";
 
 const MAX_DYNAMIC_VISIBLE = 24;
 
 function formatDomainLabel(d) {
   const map = {
+    "": "Auto (selon le contenu)",
     penal: "Pénal",
     foncier: "Foncier",
     travail: "Travail",
-    famille: "Famille",
+    ohada: "OHADA (Commercial / Sociétés)",
     constitutionnel: "Constitutionnel",
-    militaire: "Pénal militaire",
     administratif: "Administratif",
-    commercial: "Commercial / OHADA",
+    civil: "Civil",
+    famille: "Famille",
+    fiscal: "Fiscal",
+    douanier: "Douanier",
+    minier: "Minier",
+    militaire: "Pénal militaire",
+    environnement: "Environnement",
+    routier: "Routier / Circulation",
+    immobilier: "Immobilier",
+    bancaire: "Bancaire / Finance",
+    "droit-des-affaires": "Droit des affaires",
+    "propriete-intellectuelle": "Propriété intellectuelle",
   };
   return map[d] || d || "—";
 }
@@ -26,39 +36,99 @@ function badgeForLevel(level) {
   return "bg-emerald-500/15 text-emerald-200 border-emerald-500/40";
 }
 
+function safeUpper(v) {
+  return String(v || "").toUpperCase();
+}
+
+function getApiBase() {
+  const base =
+    (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) ||
+    "https://droitgpt-indexer.onrender.com";
+  return String(base).replace(/\/$/, "");
+}
+
 export default function JusticeLab() {
   const navigate = useNavigate();
+  const fileRef = useRef(null);
 
   const baseCases = Array.isArray(CASES) ? CASES : [];
-  const templates = Array.isArray(CASE_TEMPLATES) ? CASE_TEMPLATES : [];
 
-  const [selectedDomain, setSelectedDomain] = useState("penal");
-  const [selectedLevel, setSelectedLevel] = useState("débutant");
-  const [seed, setSeed] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
+  // Générateur
+  const [selectedDomain, setSelectedDomain] = useState(""); // "" = auto
+  const [selectedLevel, setSelectedLevel] = useState("débutant");
+  const [casePrompt, setCasePrompt] = useState("");
+
+  // Import PDF
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
+
+  // Mode Examen
+  const [examMode, setExamMode] = useState(() => {
+    try {
+      return localStorage.getItem("justicelab_exam_mode") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  // Dossiers IA (cache)
   const [dynamicCases, setDynamicCases] = useState([]);
 
+  // Recherche / filtres
   const [q, setQ] = useState("");
   const [filterDomain, setFilterDomain] = useState("all");
   const [filterLevel, setFilterLevel] = useState("all");
 
-  const [runs, setRuns] = useState([]);
-
   useEffect(() => {
-    const gen = listGeneratedCases?.() || [];
+    const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
     setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
-
-    const r = readRuns?.() || [];
-    setRuns(Array.isArray(r) ? r : []);
   }, []);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem("justicelab_exam_mode", examMode ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [examMode]);
+
+  const counts = useMemo(() => {
+    const localCount = baseCases.length || 0; // attendu: 24
+    const aiCount = (dynamicCases || []).length || 0;
+    return { localCount, aiCount };
+  }, [baseCases, dynamicCases]);
+
   const allCases = useMemo(() => {
-    const dyn = Array.isArray(dynamicCases) ? dynamicCases : [];
-    const base = Array.isArray(baseCases) ? baseCases : [];
-    return [...dyn, ...base];
+    // IA d’abord (plus récent), puis locaux
+    return [...(dynamicCases || []), ...(baseCases || [])];
   }, [dynamicCases, baseCases]);
+
+  const domains = useMemo(() => {
+    return [
+      "",
+      "penal",
+      "foncier",
+      "travail",
+      "ohada",
+      "constitutionnel",
+      "administratif",
+      "civil",
+      "famille",
+      "fiscal",
+      "douanier",
+      "minier",
+      "militaire",
+      "environnement",
+      "routier",
+      "immobilier",
+      "bancaire",
+      "droit-des-affaires",
+      "propriete-intellectuelle",
+    ];
+  }, []);
 
   const filteredCases = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -70,13 +140,13 @@ export default function JusticeLab() {
 
         const text = [
           c?.title,
+          c?.summary,
           c?.domain,
           c?.city,
           c?.jurisdiction,
-          c?.parties?.demandeur?.name,
-          c?.parties?.defendeur?.name,
           c?.caseNumber,
-          c?.summary,
+          c?.id,
+          c?.caseId,
         ]
           .filter(Boolean)
           .join(" ")
@@ -88,19 +158,10 @@ export default function JusticeLab() {
       .slice(0, 60);
   }, [allCases, q, filterDomain, filterLevel]);
 
-  const lastRun = useMemo(() => {
-    if (!runs?.length) return null;
-    const sorted = [...runs].sort((a, b) => {
-      const ta = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
-      const tb = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
-      return tb - ta;
-    });
-    return sorted[0] || null;
-  }, [runs]);
-
-  function handleOpenCase(caseId) {
-    // ✅ route alignée avec JusticeLabPlay.jsx
-    navigate(`/justice-lab/play/${encodeURIComponent(caseId)}`);
+  function openCase(caseId) {
+    const id = encodeURIComponent(caseId);
+    const qs = examMode ? "?mode=exam" : "";
+    navigate(`/justice-lab/play/${id}${qs}`);
   }
 
   async function handleGenerate() {
@@ -108,24 +169,24 @@ export default function JusticeLab() {
     setCreating(true);
 
     try {
-      const preferredTemplate = templates[0];
-      const normalizedSeed = seed.trim() || String(Date.now());
+      const prompt = casePrompt.trim();
+      const domain = selectedDomain || ""; // "" = auto
 
       const newCase = await Promise.resolve(
         generateCase({
-          templateId: preferredTemplate?.templateId,
-          seed: normalizedSeed,
           level: selectedLevel,
-          domain: selectedDomain,
+          domain,
+          prompt,
+          source: "generated",
         })
       );
 
       if (!newCase?.id) throw new Error("Le générateur a renvoyé un dossier invalide (id manquant).");
 
-      const gen = listGeneratedCases?.() || [];
+      const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
       setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
 
-      handleOpenCase(newCase.id);
+      openCase(newCase.id);
     } catch (e) {
       setCreateError(e?.message || "Erreur lors de la génération du dossier.");
     } finally {
@@ -133,131 +194,253 @@ export default function JusticeLab() {
     }
   }
 
-  const domains = useMemo(() => {
-    const set = new Set();
-    templates.forEach((t) => t?.domaine && set.add(String(t.domaine).toLowerCase()));
-    baseCases.forEach((c) => c?.domain && set.add(c.domain));
-    if (!set.size) ["penal", "foncier", "travail", "famille", "constitutionnel", "militaire"].forEach((d) => set.add(d));
-    return Array.from(set);
-  }, [templates, baseCases]);
+  // ✅ Import PDF (version stable sans dépendances lourdes)
+  // - On crée un “dossier importé” (source: import) + prompt basé sur le nom du fichier
+  // - Optionnel: si tu ajoutes plus tard un endpoint backend d’extraction PDF, on pourra l’utiliser
+  async function handleImportPdf(file) {
+    setImportError("");
+    if (!file) return;
+
+    setImporting(true);
+    try {
+      // 1) Création d’un dossier “import” local (stable)
+      const prompt = `Dossier importé (PDF): ${file.name}. Résume, identifie les parties, les faits, les pièces et prépare une audience réaliste.`;
+      const imported = await Promise.resolve(
+        generateCase({
+          level: selectedLevel,
+          domain: selectedDomain || "",
+          prompt,
+          source: "import",
+        })
+      );
+
+      // 2) (Optionnel futur) upload vers backend — désactivé par défaut pour éviter erreurs
+      // const base = getApiBase();
+      // const url = `${base}/justice-lab/import-pdf`;
+      // const fd = new FormData();
+      // fd.append("file", file);
+      // fd.append("caseId", imported.id);
+      // await fetch(url, { method: "POST", body: fd });
+
+      const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
+      setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
+
+      openCase(imported.id);
+    } catch (e) {
+      setImportError(e?.message || "Impossible d’importer le PDF.");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-100">
+      {/* Header */}
       <div className="border-b border-slate-800/70 bg-slate-950/70 backdrop-blur sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-5 md:px-8 py-4 flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] tracking-[0.25em] uppercase text-slate-400">DROITGPT • JUSTICE LAB</div>
-            <div className="text-lg font-semibold">Simulateur judiciaire intelligent</div>
-            <div className="text-xs text-slate-400 mt-1">Génération de dossiers + audience + scoring</div>
+            <div className="text-lg md:text-xl font-semibold">Simulateur judiciaire intelligent</div>
+            <div className="text-xs text-slate-400 mt-1">Gameplay • Réalisme • Pédagogie • Évaluation</div>
+
+            {/* ✅ Badges Local vs IA */}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] px-2 py-1 rounded-full border border-slate-700 bg-slate-900/40 text-slate-200">
+                🔹 Dossiers locaux ({counts.localCount})
+              </span>
+              <span className="text-[11px] px-2 py-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-200">
+                🤖 Dossiers IA ({counts.aiCount})
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <Link className="text-xs text-slate-300 hover:text-white" to="/">Accueil</Link>
-            <Link className="text-xs text-slate-300 hover:text-white" to="/chat">Chat juridique</Link>
+            <Link className="text-xs text-slate-300 hover:text-white" to="/">
+              Accueil
+            </Link>
+            <Link className="text-xs text-slate-300 hover:text-white" to="/chat">
+              Chat juridique
+            </Link>
           </div>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-5 md:px-8 py-6">
         <div className="grid lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-1 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-            <div className="text-sm font-semibold">✨ Générateur</div>
-            <div className="mt-3 grid gap-2">
-              <div>
-                <div className="text-xs text-slate-400 mb-1">Domaine</div>
-                <select
-                  value={selectedDomain}
-                  onChange={(e) => setSelectedDomain(e.target.value)}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
-                >
-                  {domains.map((d) => (
-                    <option key={d} value={d}>{formatDomainLabel(d)}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <div className="text-xs text-slate-400 mb-1">Niveau</div>
-                <select
-                  value={selectedLevel}
-                  onChange={(e) => setSelectedLevel(e.target.value)}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
-                >
-                  <option value="débutant">Débutant</option>
-                  <option value="intermédiaire">Intermédiaire</option>
-                  <option value="avancé">Avancé</option>
-                </select>
-              </div>
-
-              <div>
-                <div className="text-xs text-slate-400 mb-1">Seed (optionnel)</div>
-                <input
-                  value={seed}
-                  onChange={(e) => setSeed(e.target.value)}
-                  placeholder="ex: 2026-01"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
-                />
-              </div>
-
-              <button
-                onClick={handleGenerate}
-                disabled={creating}
-                className={`px-4 py-2.5 rounded-2xl text-sm font-semibold transition ${
-                  creating
-                    ? "bg-slate-700 text-slate-400 cursor-not-allowed"
-                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20"
-                }`}
-              >
-                {creating ? "Génération en cours…" : "✨ Générer un dossier IA"}
-              </button>
-
-              {createError && (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
-                  {createError}
+          {/* Left: Générateur + Import + Examen */}
+          <div className="lg:col-span-1 space-y-4">
+            {/* Générateur */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">✨ Générateur de dossier</div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Domaine optionnel. Si “Auto”, le contenu guide le type de dossier.
+                  </div>
                 </div>
-              )}
+                <span className="text-[11px] px-2 py-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-200">
+                  IA / Hybrid
+                </span>
+              </div>
 
-              {lastRun?.runId && (
+              <div className="mt-4 grid gap-3">
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Domaine (optionnel)</div>
+                  <select
+                    value={selectedDomain}
+                    onChange={(e) => setSelectedDomain(e.target.value)}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                  >
+                    {domains.map((d) => (
+                      <option key={d || "auto"} value={d}>
+                        {formatDomainLabel(d)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Niveau</div>
+                  <select
+                    value={selectedLevel}
+                    onChange={(e) => setSelectedLevel(e.target.value)}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                  >
+                    <option value="débutant">Débutant</option>
+                    <option value="intermédiaire">Intermédiaire</option>
+                    <option value="avancé">Avancé</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Contenu du dossier (texte libre)</div>
+                  <textarea
+                    value={casePrompt}
+                    onChange={(e) => setCasePrompt(e.target.value)}
+                    placeholder="Décris les faits, parties, pièces, lieu, dates, enjeux…"
+                    rows={6}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none resize-none"
+                  />
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Astuce : plus tu donnes de détails, plus le dossier sera réaliste.
+                  </div>
+                </div>
+
+                {createError ? (
+                  <div className="text-xs text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">
+                    {createError}
+                  </div>
+                ) : null}
+
                 <button
-                  onClick={() => navigate(`/justice-lab/play/${encodeURIComponent(lastRun.runId)}?mode=run`)}
-                  className="px-4 py-2 rounded-2xl text-xs font-semibold border border-white/10 bg-white/5 hover:bg-white/10"
+                  onClick={handleGenerate}
+                  disabled={creating}
+                  className="w-full rounded-xl bg-emerald-500 text-white py-2 text-sm font-semibold hover:bg-emerald-600 disabled:opacity-60"
                 >
-                  ▶️ Reprendre la dernière audience
+                  {creating ? "Génération..." : "Générer un dossier"}
                 </button>
-              )}
+              </div>
+            </div>
+
+            {/* ✅ Import PDF */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="text-sm font-semibold">📎 Importer un dossier réel (PDF)</div>
+              <div className="text-xs text-slate-400 mt-1">
+                Ajoute un PDF : on crée un dossier “import” et on le lance en simulation.
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={(e) => handleImportPdf(e.target.files?.[0])}
+                />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={importing}
+                  className="rounded-xl border border-slate-700 bg-slate-900/40 hover:bg-white/5 px-3 py-2 text-xs"
+                >
+                  {importing ? "Import..." : "Choisir un PDF"}
+                </button>
+
+                <span className="text-[11px] text-slate-500">
+                  (Extraction avancée backend = option future)
+                </span>
+              </div>
+
+              {importError ? (
+                <div className="mt-3 text-xs text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">
+                  {importError}
+                </div>
+              ) : null}
+            </div>
+
+            {/* ✅ Mode Examen */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">🎓 Mode Examen ENM / Magistrature</div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Notation “officielle” (plus stricte). Ouvre les audiences avec <code className="text-slate-200">?mode=exam</code>.
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setExamMode((v) => !v)}
+                  className={`shrink-0 px-3 py-2 rounded-xl text-xs border ${
+                    examMode
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {examMode ? "ACTIVÉ" : "DÉSACTIVÉ"}
+                </button>
+              </div>
+
+              <div className="mt-3 text-[11px] text-slate-500">
+                (Le scoring détaillé sera lu dans ton engine / results. Ici on active le mode côté navigation.)
+              </div>
             </div>
           </div>
 
+          {/* Right: Liste des dossiers */}
           <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold text-slate-100">Dossiers disponibles</h2>
-                <p className="text-xs text-slate-400 mt-1">Clique un dossier pour lancer la simulation.</p>
+                <div className="text-sm font-semibold">📚 Dossiers disponibles</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  Clique sur un dossier pour lancer la simulation (audience / incidents / notation).
+                </div>
               </div>
 
-              <div className="grid gap-2 md:grid-cols-3">
+              <div className="flex flex-wrap gap-2">
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Rechercher (ville, N° dossier, mots-clés)…"
-                  className="w-full md:w-72 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                  placeholder="Rechercher..."
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none"
                 />
 
                 <select
                   value={filterDomain}
                   onChange={(e) => setFilterDomain(e.target.value)}
-                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none"
                 >
                   <option value="all">Tous domaines</option>
                   {domains.map((d) => (
-                    <option key={d} value={d}>{formatDomainLabel(d)}</option>
+                    <option key={`fd-${d || "auto"}`} value={d}>
+                      {formatDomainLabel(d)}
+                    </option>
                   ))}
                 </select>
 
                 <select
                   value={filterLevel}
                   onChange={(e) => setFilterLevel(e.target.value)}
-                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none"
                 >
                   <option value="all">Tous niveaux</option>
                   <option value="débutant">Débutant</option>
@@ -268,33 +451,50 @@ export default function JusticeLab() {
             </div>
 
             <div className="mt-4 grid md:grid-cols-2 gap-3">
-              {filteredCases.map((c, idx) => (
-                <button
-                  key={c?.id || c?.caseId || `case-${idx}`}
-                  onClick={() => handleOpenCase(c?.id || c?.caseId)}
-                  className="text-left rounded-2xl border border-white/10 bg-slate-950/40 hover:bg-white/5 transition p-4"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-xs text-slate-400">
-                        {formatDomainLabel(c?.domain)} • {c?.city || "—"} • {c?.jurisdiction || "—"}
+              {filteredCases.map((c, idx) => {
+                const id = c?.id || c?.caseId || `case-${idx}`;
+                const isAI = Boolean(c?.isDynamic);
+                return (
+                  <button
+                    key={id}
+                    onClick={() => openCase(id)}
+                    className="text-left rounded-2xl border border-white/10 bg-slate-950/40 hover:bg-white/5 transition p-4"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-xs text-slate-400">
+                          {formatDomainLabel(c?.domain)} • {c?.city || "—"} • {c?.jurisdiction || "—"}
+                        </div>
+                        <div className="mt-1 font-semibold">{c?.title || "Dossier"}</div>
+                        <div className="mt-2 text-xs text-slate-300 line-clamp-2">{c?.summary || ""}</div>
                       </div>
-                      <div className="mt-1 font-semibold">{c?.title || "Dossier"}</div>
-                      <div className="mt-2 text-xs text-slate-300 line-clamp-2">{c?.summary || ""}</div>
+
+                      <div className="flex flex-col items-end gap-2">
+                        <span className={`text-[11px] px-2 py-1 rounded-full border ${badgeForLevel(c?.level || "débutant")}`}>
+                          {safeUpper(c?.level || "débutant")}
+                        </span>
+
+                        <span
+                          className={`text-[11px] px-2 py-1 rounded-full border ${
+                            isAI
+                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                              : "border-slate-700 bg-slate-900/40 text-slate-200"
+                          }`}
+                        >
+                          {isAI ? "IA" : "LOCAL"}
+                        </span>
+                      </div>
                     </div>
 
-                    <span className={`shrink-0 text-[11px] px-2 py-1 rounded-full border ${badgeForLevel(c?.level || "débutant")}`}>
-                      {(c?.level || "débutant").toUpperCase()}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 text-[11px] text-slate-400">
-                    N° {c?.caseNumber || c?.id}
-                    {c?.isDynamic ? <span className="ml-2 text-emerald-300">• IA</span> : null}
-                  </div>
-                </button>
-              ))}
+                    <div className="mt-3 text-[11px] text-slate-400">N° {c?.caseNumber || id}</div>
+                  </button>
+                );
+              })}
             </div>
+
+            {!filteredCases.length ? (
+              <div className="mt-6 text-sm text-slate-400">Aucun dossier ne correspond aux filtres.</div>
+            ) : null}
           </div>
         </div>
       </div>

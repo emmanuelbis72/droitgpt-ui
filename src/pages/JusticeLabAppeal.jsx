@@ -13,11 +13,42 @@ const API_BASE =
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
 
 function getAuthToken() {
-  const candidates = ["token", "authToken", "accessToken", "droitgpt_token"];
-  for (const k of candidates) {
-    const v = localStorage.getItem(k);
-    if (v && v.trim().length > 10) return v.trim();
+  // ✅ Ajout de la clé réelle trouvée: droitgpt_access_token
+  const candidates = [
+    "droitgpt_access_token",
+    "droitgpt_token",
+    "accessToken",
+    "authToken",
+    "token",
+    "jwt",
+    "jwtToken",
+    "idToken",
+  ];
+
+  // 1) Chercher dans localStorage + sessionStorage
+  for (const store of [localStorage, sessionStorage]) {
+    for (const k of candidates) {
+      const v = store.getItem(k);
+      if (v && v.trim().length > 10) return v.trim();
+    }
   }
+
+  // 2) fallback: token parfois stocké dans un objet JSON
+  const objKeys = ["user", "auth", "profile"];
+  for (const store of [localStorage, sessionStorage]) {
+    for (const k of objKeys) {
+      const raw = store.getItem(k);
+      if (!raw) continue;
+      try {
+        const obj = JSON.parse(raw);
+        const v = obj?.token || obj?.accessToken || obj?.jwt || obj?.idToken;
+        if (v && String(v).trim().length > 10) return String(v).trim();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   return "";
 }
 
@@ -154,7 +185,7 @@ export default function JusticeLabAppeal() {
       const data = await postJSON(`${API_BASE}/justice-lab/appeal`, {
         caseData,
         runData,
-        scored, // garde tel quel (backend peut recalculer si besoin)
+        scored,
       });
 
       setAppealDecision(data);
@@ -167,7 +198,6 @@ export default function JusticeLabAppeal() {
       if (String(e?.message || "").includes("AUTH_TOKEN_MISSING")) {
         setApiError("Token manquant : reconnecte-toi puis relance la Cour d’appel.");
       } else {
-        // Affiche l’erreur réelle (utile pour debug Render)
         setApiError(
           `Impossible de générer la décision d’appel. Détail: ${safeStr(e?.message || "Erreur inconnue", 280)}`
         );
@@ -180,7 +210,6 @@ export default function JusticeLabAppeal() {
   useEffect(() => {
     if (!run) return;
 
-    // utiliser la décision persistée si déjà présente
     if (run?.appeal?.decision || run?.appeal?.dispositif) {
       setAppealDecision(run.appeal);
       return;

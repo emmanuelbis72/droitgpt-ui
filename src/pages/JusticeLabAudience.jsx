@@ -31,13 +31,19 @@ const formatTime = (iso) => {
 };
 
 function getAuthToken() {
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("accessToken") ||
-    localStorage.getItem("droitgpt_token") ||
-    ""
-  );
+  // ✅ IMPORTANT: tu as un token sous 'droitgpt_access_token'
+  const candidates = [
+    "token",
+    "authToken",
+    "accessToken",
+    "droitgpt_token",
+    "droitgpt_access_token",
+  ];
+  for (const k of candidates) {
+    const v = localStorage.getItem(k);
+    if (v && v.trim().length > 10) return v.trim();
+  }
+  return "";
 }
 
 function getActiveRunLocal() {
@@ -218,6 +224,15 @@ export default function JusticeLabAudience() {
 
   const selectedObj = objections.find((o) => o.id === selectedId) || null;
 
+  // ✅ si déjà décidé, verrouiller automatiquement
+  useEffect(() => {
+    if (!run || !selectedObj) return;
+    const exists = (run?.answers?.audience?.decisions || []).some((d) => d.objectionId === selectedObj.id);
+    setLocked(Boolean(exists));
+    if (exists) setFeedback({ ok: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.runId, selectedId]);
+
   async function loadAudience() {
     if (!run || !caseData) return;
     setLoading(true);
@@ -244,7 +259,9 @@ export default function JusticeLabAudience() {
       const next = setAudienceSceneOnRun(run, merged);
 
       commitRun(next);
-      setTurns(merged.transcript || []);
+
+      // ✅ FIX: mergeAudienceWithTemplates renvoie "turns" (pas "transcript")
+      setTurns(merged.turns || []);
       setObjections(merged.objections || []);
       setSelectedId(merged.objections?.[0]?.id || null);
     } catch (e) {
@@ -261,12 +278,16 @@ export default function JusticeLabAudience() {
 
   async function saveDecision() {
     if (!run || !selectedObj) return;
+
+    // ✅ IMPORTANT: transmettre les "effects" de l’objection, sinon les pièces ne changent pas
     const next = applyAudienceDecision(run, {
       objectionId: selectedObj.id,
       decision: choice,
       reasoning,
       role,
+      effects: selectedObj.effects || null,
     });
+
     commitRun(next);
     setLocked(true);
     setFeedback({ ok: true });
@@ -312,7 +333,9 @@ export default function JusticeLabAudience() {
 
         {error && (
           <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-            {error}
+            {error === "AUTH_TOKEN_MISSING"
+              ? "Token manquant : reconnecte-toi puis relance l’audience."
+              : error}
           </div>
         )}
 
@@ -376,7 +399,7 @@ export default function JusticeLabAudience() {
                 <div>
                   <h2 className="text-sm font-semibold">📝 Mode Greffier</h2>
                   <div className="mt-1 text-xs text-slate-400">
-                    Chrono + incidents procéduraux → journal + notation micro.
+                    Chrono + incidents procéduraux → journal.
                   </div>
                 </div>
 
@@ -440,7 +463,7 @@ export default function JusticeLabAudience() {
                   type="button"
                   onClick={() => {
                     const labelMap = {
-                      nullite: "Incident: nullité soulevée",
+                      nullite: "Incident: nullité",
                       renvoi: "Incident: renvoi",
                       jonction: "Incident: jonction",
                       disjonction: "Incident: disjonction",
@@ -448,9 +471,9 @@ export default function JusticeLabAudience() {
                     };
                     const next = recordIncident(run, {
                       type: incidentType,
-                      title: labelMap[incidentType] || "Incident procédural",
                       detail: incidentDetail || "(sans détail)",
-                      actor: role || "Greffier",
+                      by: role || "Greffier",
+                      title: labelMap[incidentType] || "Incident procédural",
                     });
                     commitRun(next);
                     setIncidentDetail("");
@@ -478,7 +501,9 @@ export default function JusticeLabAudience() {
                     }}
                     className={cls(
                       "w-full text-left rounded-xl border p-3",
-                      selectedId === o.id ? "border-emerald-500/30 bg-emerald-500/10" : "border-white/10 bg-slate-950/40"
+                      selectedId === o.id
+                        ? "border-emerald-500/30 bg-emerald-500/10"
+                        : "border-white/10 bg-slate-950/40"
                     )}
                   >
                     <div className="text-xs text-slate-400">{o.by}</div>
@@ -499,7 +524,9 @@ export default function JusticeLabAudience() {
                       onClick={() => setChoice(opt)}
                       className={cls(
                         "px-3 py-2 rounded-xl border text-xs",
-                        choice === opt ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-white/5"
+                        choice === opt
+                          ? "border-emerald-500/40 bg-emerald-500/10"
+                          : "border-white/10 bg-white/5"
                       )}
                     >
                       {opt}
@@ -521,7 +548,9 @@ export default function JusticeLabAudience() {
                     disabled={locked}
                     className={cls(
                       "px-4 py-2 rounded-xl text-xs font-semibold",
-                      locked ? "bg-slate-700 text-slate-400 cursor-not-allowed" : "bg-emerald-500 hover:bg-emerald-600 text-white"
+                      locked
+                        ? "bg-slate-700 text-slate-400 cursor-not-allowed"
+                        : "bg-emerald-500 hover:bg-emerald-600 text-white"
                     )}
                   >
                     Enregistrer

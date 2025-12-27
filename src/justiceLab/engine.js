@@ -2,9 +2,17 @@
 // V6 ULTRA PRO — Justice Lab Engine (offline/hybride)
 // Patch: support effects.risk {dueProcessBonus, appealRiskPenalty}
 // + fallback meta robuste + pieces status amélioré
-// + MODE GREFFIER: chrono + incidents + micro-scoring + audit
 
-export const STEPS = ["BRIEFING", "QUALIFICATION", "PROCEDURE", "AUDIENCE", "DECISION", "SCORE", "APPEAL", "RESULT"];
+export const STEPS = [
+  "BRIEFING",
+  "QUALIFICATION",
+  "PROCEDURE",
+  "AUDIENCE",
+  "DECISION",
+  "SCORE",
+  "APPEAL",
+  "RESULT",
+];
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const safeStr = (v, max = 2000) => String(v ?? "").slice(0, max);
@@ -31,6 +39,10 @@ function safeNum(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function uniq(arr) {
+  return Array.from(new Set((arr || []).map(String)));
+}
+
 function structuredCloneSafe(obj) {
   try {
     return structuredClone(obj);
@@ -54,8 +66,6 @@ export function createNewRun(caseData) {
       titre: caseData?.titre || "",
       domaine: caseData?.domaine || "",
       niveau: caseData?.niveau || "",
-      // (optionnel) caseData complet si tu veux le mettre côté UI
-      // caseData: caseData || null,
     },
 
     startedAt: nowISO(),
@@ -65,34 +75,40 @@ export function createNewRun(caseData) {
     eventCard,
 
     answers: {
-      role: "Juge", // "Juge" | "Procureur" | "Avocat" | "Greffier"
+      role: "Juge", // "Juge" | "Procureur" | "Avocat"
       qualification: "",
       procedureChoice: null,
       procedureJustification: "",
       audience: {
         scene: null,
-        decisions: [], // [{objectionId, decision, reasoning, ts, role, microScore}]
+        decisions: [], // [{objectionId, decision, reasoning, ts, role, microScore, effects}]
       },
       decisionMotivation: "",
       decisionDispositif: "",
     },
 
+    // état runtime
     state: {
       excludedPieceIds: [],
       admittedLatePieceIds: [],
       pendingTasks: [],
       auditLog: [],
-      riskModifiers: { appealRiskPenalty: 0, dueProcessBonus: 0 },
-      _audienceMicro: 0,
-
-      // ✅ Chronomètre
+      riskModifiers: {
+        appealRiskPenalty: 0,
+        dueProcessBonus: 0,
+      },
+      _audienceMicro: 0, // cumul pour scoring
       chrono: { running: false, startedAt: null, elapsedMs: 0 },
-
-      // ✅ Incidents procéduraux
-      incidents: [],
     },
 
-    scores: { qualification: 0, procedure: 0, audience: 0, droits: 0, motivation: 0 },
+    // scoring local (fallback si IA backend absente)
+    scores: {
+      qualification: 0,
+      procedure: 0,
+      audience: 0,
+      droits: 0,
+      motivation: 0,
+    },
 
     flags: [],
     debrief: [],
@@ -104,131 +120,306 @@ export function createNewRun(caseData) {
 }
 
 /* =========================================================
-   AUDIENCE TEMPLATE HELPERS
+   PIECES — statut (OK / EXCLUDEE / TARDIVE_ADMISE)
 ========================================================= */
-export function mergeAudienceWithTemplates(caseData, scene) {
-  const base = structuredCloneSafe(scene || {});
-  const objections = Array.isArray(caseData?.objectionTemplates) ? caseData.objectionTemplates : [];
+export function getEffectivePieces(run, caseData) {
+  const pieces = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
+  const excluded = new Set(run?.state?.excludedPieceIds || []);
+  const admittedLate = new Set(run?.state?.admittedLatePieceIds || []);
 
-  base.transcript = Array.isArray(base.transcript) ? base.transcript : [];
-  base.objections = Array.isArray(base.objections) ? base.objections : [];
+  return pieces.map((p, idx) => {
+    const id = p.id || `P${idx + 1}`;
+    return {
+      ...p,
+      id,
+      status: excluded.has(id) ? "EXCLUDEE" : admittedLate.has(id) ? "TARDIVE_ADMISE" : "OK",
+      reliability: Number.isFinite(Number(p?.reliability)) ? Number(p.reliability) : undefined,
+      isLate: Boolean(p?.isLate || p?.late),
+    };
+  });
+}
 
-  if (!base.transcript.length) {
-    base.transcript = [
+export function getPiecesStatusSummary(run, caseData) {
+  const eff = getEffectivePieces(run, caseData);
+  const admittedLate = eff.filter((p) => p.status === "TARDIVE_ADMISE");
+  const excluded = eff.filter((p) => p.status === "EXCLUDEE");
+  const ok = eff.filter((p) => p.status === "OK");
+  return {
+    ok,
+    admittedLate,
+    excluded,
+    counts: { ok: ok.length, admittedLate: admittedLate.length, excluded: excluded.length, total: eff.length },
+  };
+}
+
+/* =========================================================
+   AUDIENCE — Templates + Merge IA
+========================================================= */
+export function mergeAudienceWithTemplates(caseData, apiData) {
+  const templates = Array.isArray(caseData?.objectionTemplates) ? caseData.objectionTemplates : [];
+
+  const tribunal = safeStr(caseData?.meta?.tribunal || caseData?.tribunal || "Tribunal", 60);
+  const chambre = safeStr(caseData?.meta?.chambre || caseData?.chambre || "Audience", 80);
+  const ville = safeStr(caseData?.meta?.city || caseData?.meta?.ville || caseData?.city || "RDC", 40);
+
+  const sceneMeta = {
+    tribunal,
+    chambre,
+    ville,
+    date: nowISO().slice(0, 10),
+    dossier: safeStr(caseData?.caseId || "DOSSIER", 40),
+    audienceType: safeStr(caseData?.typeAudience || "Audience simulée", 60),
+    phases: [
+      { id: "ouverture", title: "Ouverture et vérifications" },
+      { id: "incidents", title: "Incidents / Exceptions / Objections" },
+      { id: "debats", title: "Débats au fond" },
+      { id: "cloture", title: "Clôture et mise en délibéré" },
+    ],
+  };
+
+  const turns =
+    (Array.isArray(apiData?.turns) && apiData.turns) ||
+    [
       { speaker: "Greffier", text: "Affaire appelée, parties présentes." },
-      { speaker: "Juge", text: "Nous allons entendre les parties. Quelles sont vos observations ?" },
+      { speaker: "Juge", text: "L'audience est ouverte." },
+      { speaker: "Procureur", text: "Le ministère public présente ses réquisitions." },
+      { speaker: "Avocat", text: "La défense soulève des incidents et répond au fond." },
     ];
+
+  const apiObs = Array.isArray(apiData?.objections) ? apiData.objections : [];
+  const merged = [];
+
+  // 1) objections IA
+  for (let i = 0; i < apiObs.length; i++) {
+    const o = apiObs[i] || {};
+    merged.push({
+      id: safeStr(o.id || `OBJ${i + 1}`, 32),
+      by: safeStr(o.by || "Avocat", 20),
+      title: safeStr(o.title || "Objection", 80),
+      statement: safeStr(o.statement || "", 600),
+      options: ["Accueillir", "Rejeter", "Demander précision"],
+      effects: o.effects || o.effect || null,
+      bestChoiceByRole: o.bestChoiceByRole || null,
+    });
   }
 
-  if (!base.objections.length) {
-    base.objections = objections.map((o) => ({
-      id: o.id,
-      by: o.by,
-      title: o.title,
-      statement: o.statement,
-      options: o.options || ["Accueillir", "Rejeter", "Demander précision"],
-      bestChoiceByRole: o.bestChoiceByRole || {},
-      effects: o.effects || {},
-    }));
+  // 2) compléter avec templates si IA insuffisant
+  for (let j = 0; j < templates.length && merged.length < 4; j++) {
+    const t = templates[j] || {};
+    merged.push({
+      id: safeStr(t.id || `OBJ_TPL_${j + 1}`, 32),
+      by: safeStr(t.by || "Avocat", 20),
+      title: safeStr(t.title || "Objection", 80),
+      statement: safeStr(t.statement || "", 600),
+      options: ["Accueillir", "Rejeter", "Demander précision"],
+      effects: t.effects || t.effect || null,
+      bestChoiceByRole: t.bestChoiceByRole || null,
+    });
   }
 
-  return base;
+  return {
+    sceneMeta,
+    turns: turns.slice(0, 12).map((t) => ({
+      speaker: safeStr(t?.speaker || "Juge", 20),
+      text: safeStr(t?.text || "", 900),
+      ts: nowISO(),
+    })),
+    objections: merged.slice(0, 10),
+  };
 }
 
 export function setAudienceScene(run, scene) {
   const next = structuredCloneSafe(run);
   next.answers = next.answers || {};
-  next.answers.audience = next.answers.audience || { scene: null, decisions: [] };
-  next.answers.audience.scene = structuredCloneSafe(scene);
-  pushAudit(next, { action: "AUDIENCE_SCENE_SET", title: "Audience initialisée" });
-  return next;
-}
-
-export function applyAudienceDecision(run, { objectionId, decision, reasoning, role }) {
-  const next = structuredCloneSafe(run);
-  next.answers = next.answers || {};
-  next.answers.audience = next.answers.audience || { scene: null, decisions: [] };
-
-  const scene = next.answers.audience.scene || {};
-  const objections = Array.isArray(scene?.objections) ? scene.objections : [];
-  const obj = objections.find((o) => o?.id === objectionId) || null;
-
-  // micro-score simple
-  let micro = 1;
-  if (obj?.bestChoiceByRole?.[role] && String(obj.bestChoiceByRole[role]) === String(decision)) micro = 6;
-  else if (decision === "Demander précision") micro = 3;
-
-  next.state._audienceMicro = safeNum(next.state._audienceMicro) + micro;
-
-  // effects sur pièces
-  const effects = obj?.effects || {};
-  const excludeIds = Array.isArray(effects.excludePieceIds) ? effects.excludePieceIds : [];
-  const admitLateIds = Array.isArray(effects.admitLatePieceIds) ? effects.admitLatePieceIds : [];
-
-  next.state.excludedPieceIds = Array.from(new Set([...(next.state.excludedPieceIds || []), ...excludeIds]));
-  next.state.admittedLatePieceIds = Array.from(new Set([...(next.state.admittedLatePieceIds || []), ...admitLateIds]));
-
-  // risk modifiers
-  const risk = effects.risk || {};
-  next.state.riskModifiers = next.state.riskModifiers || { appealRiskPenalty: 0, dueProcessBonus: 0 };
-  next.state.riskModifiers.appealRiskPenalty =
-    safeNum(next.state.riskModifiers.appealRiskPenalty) + safeNum(risk.appealRiskPenalty);
-  next.state.riskModifiers.dueProcessBonus =
-    safeNum(next.state.riskModifiers.dueProcessBonus) + safeNum(risk.dueProcessBonus);
-
-  const entry = {
-    objectionId,
-    decision,
-    reasoning: safeStr(reasoning, 1200),
-    ts: nowISO(),
-    role: role || next.answers.role || "Juge",
-    microScore: micro,
-    effects,
-  };
-
-  next.answers.audience.decisions = [entry, ...(next.answers.audience.decisions || [])].slice(0, 60);
+  next.answers.audience = next.answers.audience || { decisions: [], scene: null };
+  next.answers.audience.scene = scene || null;
 
   pushAudit(next, {
-    action: "OBJECTION_DECISION",
-    title: `Décision sur objection`,
-    detail: `${entry.role}: ${entry.decision} (+${micro})`,
+    type: "AUDIENCE_SCENE_SET",
+    title: "Scène d’audience initialisée",
+    detail: scene?.sceneMeta?.tribunal ? `${scene.sceneMeta.tribunal} — ${scene.sceneMeta.chambre}` : "Audience",
   });
 
   return next;
 }
 
 /* =========================================================
-   SCORING
+   AUDIENCE — Decision + effets + audit
+========================================================= */
+export function applyAudienceDecision(run, payload) {
+  const next = structuredCloneSafe(run);
+
+  const objectionId = safeStr(payload?.objectionId || "", 64);
+  const decision = safeStr(payload?.decision || "", 32);
+  const reasoning = safeStr(payload?.reasoning || "", 1400);
+  const role = safeStr(payload?.role || next?.answers?.role || "Juge", 24);
+
+  if (!objectionId || !decision) return next;
+
+  next.answers = next.answers || {};
+  next.answers.audience = next.answers.audience || { decisions: [], scene: null };
+  const decisions = Array.isArray(next.answers.audience.decisions) ? next.answers.audience.decisions : [];
+
+  const idx = decisions.findIndex((d) => d.objectionId === objectionId);
+  const microScore = computeMicroScore(decision, reasoning);
+
+  // ✅ conserver les effets dans la décision (pièces/renvoi/etc)
+  const effects = payload?.effects || payload?.effect || null;
+  const row = { objectionId, decision, reasoning, role, microScore, ts: nowISO(), effects: effects || null };
+
+  if (idx >= 0) decisions[idx] = row;
+  else decisions.push(row);
+
+  next.answers.audience.decisions = decisions;
+
+  next.state = next.state || {};
+  next.state._audienceMicro = safeNum(next.state._audienceMicro) + microScore;
+
+  if (effects && typeof effects === "object") {
+    applyEffectsByDecision(next, effects, decision);
+  }
+
+  pushAudit(next, {
+    type: "AUDIENCE_DECISION",
+    title: `Objection ${objectionId} — ${decision}`,
+    detail: reasoning ? reasoning.slice(0, 260) : "(sans motif)",
+    meta: {
+      role,
+      microScore,
+      excludedPieceIds: next?.state?.excludedPieceIds || [],
+      admittedLatePieceIds: next?.state?.admittedLatePieceIds || [],
+      dueProcessBonus: next?.state?.riskModifiers?.dueProcessBonus || 0,
+      appealRiskPenalty: next?.state?.riskModifiers?.appealRiskPenalty || 0,
+    },
+  });
+
+  next.scores = next.scores || {};
+  next.scores.audience = computeAudienceScore(next);
+
+  return next;
+}
+
+function computeMicroScore(decision, reasoning) {
+  const d = String(decision || "").toLowerCase();
+  const base = d.includes("demander") ? 9 : d.includes("accue") || d.includes("rej") ? 10 : 6;
+  const text = String(reasoning || "").trim();
+  const bonusLen = clamp(Math.floor(text.length / 160), 0, 6);
+  const bonusStruct = /fait|droit|motif|attendu|considérant|considérant que/i.test(text) ? 2 : 0;
+  return clamp(base + bonusLen + bonusStruct, 0, 18);
+}
+
+function applyEffectsByDecision(run, effects, decision) {
+  const d = String(decision || "").toLowerCase();
+
+  let branch = null;
+  if (d.includes("accue")) branch = effects.onAccueillir || null;
+  else if (d.includes("rej")) branch = effects.onRejeter || null;
+  else if (d.includes("demander") || d.includes("préc") || d.includes("prec")) branch = effects.onDemander || null;
+
+  const eff = branch || effects;
+
+  run.state = run.state || {};
+  run.state.excludedPieceIds = Array.isArray(run.state.excludedPieceIds) ? run.state.excludedPieceIds : [];
+  run.state.admittedLatePieceIds = Array.isArray(run.state.admittedLatePieceIds) ? run.state.admittedLatePieceIds : [];
+  run.state.pendingTasks = Array.isArray(run.state.pendingTasks) ? run.state.pendingTasks : [];
+  run.state.riskModifiers = run.state.riskModifiers || { appealRiskPenalty: 0, dueProcessBonus: 0 };
+
+  if (Array.isArray(eff.excludePieceIds)) {
+    for (const id of eff.excludePieceIds) if (id) run.state.excludedPieceIds.push(String(id));
+  }
+  if (Array.isArray(eff.admitLatePieceIds)) {
+    for (const id of eff.admitLatePieceIds) if (id) run.state.admittedLatePieceIds.push(String(id));
+  }
+
+  if (Number.isFinite(Number(eff.dueProcessBonus))) {
+    run.state.riskModifiers.dueProcessBonus += Number(eff.dueProcessBonus);
+  }
+  if (eff.risk && typeof eff.risk === "object") {
+    if (Number.isFinite(Number(eff.risk.dueProcessBonus))) {
+      run.state.riskModifiers.dueProcessBonus += Number(eff.risk.dueProcessBonus);
+    }
+    if (Number.isFinite(Number(eff.risk.appealRiskPenalty))) {
+      run.state.riskModifiers.appealRiskPenalty += Number(eff.risk.appealRiskPenalty);
+    }
+  } else if (d.includes("demander")) {
+    run.state.riskModifiers.dueProcessBonus += 1;
+  }
+
+  if (eff.addTask && typeof eff.addTask === "object") {
+    run.state.pendingTasks.push({ id: uid("task"), ts: nowISO(), ...eff.addTask });
+  }
+  if (eff.clarification && typeof eff.clarification === "object") {
+    run.state.pendingTasks.push({ id: uid("task"), ts: nowISO(), ...eff.clarification });
+  }
+
+  run.state.excludedPieceIds = uniq(run.state.excludedPieceIds);
+  run.state.admittedLatePieceIds = uniq(run.state.admittedLatePieceIds);
+  run.state.pendingTasks = run.state.pendingTasks.slice(0, 60);
+}
+
+function computeAudienceScore(run) {
+  const decisions = run?.answers?.audience?.decisions || [];
+  const n = Array.isArray(decisions) ? decisions.length : 0;
+
+  const micro = safeNum(run?.state?._audienceMicro);
+  const base = n === 0 ? 0 : clamp(Math.round((micro / (n * 18)) * 100), 0, 100);
+
+  const due = safeNum(run?.state?.riskModifiers?.dueProcessBonus);
+  const bonus = clamp(due * 2, 0, 12);
+
+  const appealPen = safeNum(run?.state?.riskModifiers?.appealRiskPenalty);
+  const pen = clamp(appealPen * 2, 0, 12);
+
+  return clamp(base + bonus - pen, 0, 100);
+}
+
+/* =========================================================
+   SCORING LOCAL (fallback)
 ========================================================= */
 export function scoreRun(run) {
   const next = structuredCloneSafe(run);
 
-  const q = clamp(safeNum(next.scores?.qualification), 0, 100);
-  const p = clamp(safeNum(next.scores?.procedure), 0, 100);
+  const qual = clamp(Math.min(100, Math.floor((safeStr(next?.answers?.qualification).length / 18) * 10)), 0, 100);
+  const proc = next?.answers?.procedureChoice ? 60 : 30;
+  const mot = clamp(Math.min(100, Math.floor((safeStr(next?.answers?.decisionMotivation).length / 28) * 10)), 0, 100);
 
-  const micro = clamp(safeNum(next.state?._audienceMicro), 0, 120);
-  const due = clamp(safeNum(next.state?.riskModifiers?.dueProcessBonus), 0, 20);
-  const appealPenalty = clamp(safeNum(next.state?.riskModifiers?.appealRiskPenalty), 0, 20);
-
-  const audience = clamp(50 + micro / 2 + due - appealPenalty, 0, 100);
+  const aud = typeof next?.scores?.audience === "number" ? next.scores.audience : computeAudienceScore(next);
+  const droits = clamp(40 + safeNum(next?.state?.riskModifiers?.dueProcessBonus) * 3, 0, 100);
 
   next.scores = next.scores || {};
-  next.scores.audience = Math.round(audience);
+  next.scores.qualification = qual;
+  next.scores.procedure = clamp(proc, 0, 100);
+  next.scores.audience = clamp(aud, 0, 100);
+  next.scores.motivation = clamp(mot, 0, 100);
+  next.scores.droits = clamp(droits, 0, 100);
 
-  const global = clamp(Math.round((q + p + next.scores.audience) / 3), 0, 100);
-  next.scoreGlobal = global;
+  const scoreGlobal = Math.round(
+    next.scores.qualification * 0.22 +
+      next.scores.procedure * 0.18 +
+      next.scores.audience * 0.24 +
+      next.scores.droits * 0.16 +
+      next.scores.motivation * 0.20
+  );
+
+  next.scoreGlobal = clamp(scoreGlobal, 0, 100);
 
   next.flags = [];
-  if (appealPenalty >= 10) {
-    next.flags.push({ level: "warn", label: "Risque d’appel élevé", detail: "Incidents/contradictoire perfectibles" });
-  }
+  if (next.scores.audience < 35) next.flags.push("Audience faible: manque de gestion des débats/objections");
+  if (next.scores.motivation < 35) next.flags.push("Motivation insuffisante");
+  if (next.scores.droits < 35) next.flags.push("Garanties procédurales à renforcer");
 
   next.debrief = [
-    `Audience: ${next.scores.audience}/100 — Qualification: ${q}/100`,
-    `Procédure: ${p}/100 — Bonus contradictoire: ${due} — Risque appel: ${appealPenalty}`,
+    `Score global (fallback): ${next.scoreGlobal}/100`,
+    `Audience: ${next.scores.audience}/100 — Qualification: ${next.scores.qualification}/100`,
+    `Procédure: ${next.scores.procedure}/100 — Droits: ${next.scores.droits}/100 — Motivation: ${next.scores.motivation}/100`,
   ];
 
-  return { scoreGlobal: next.scoreGlobal, scores: next.scores, flags: next.flags, debrief: next.debrief };
+  return {
+    scoreGlobal: next.scoreGlobal,
+    scores: next.scores,
+    flags: next.flags,
+    debrief: next.debrief,
+  };
 }
 
 /* =========================================================
@@ -237,29 +428,39 @@ export function scoreRun(run) {
 function pushAudit(run, evt) {
   run.state = run.state || {};
   run.state.auditLog = Array.isArray(run.state.auditLog) ? run.state.auditLog : [];
-  run.state.auditLog.unshift({ id: uid("log"), ts: nowISO(), ...evt });
+  run.state.auditLog.unshift({
+    id: uid("log"),
+    ts: nowISO(),
+    ...evt,
+  });
   run.state.auditLog = run.state.auditLog.slice(0, 250);
 }
 
 /* =========================================================
-   CHRONO + INCIDENTS (mode Greffier)
+   CHRONO + INCIDENTS (Mode Greffier)
 ========================================================= */
 export function startChrono(run) {
   const next = structuredCloneSafe(run);
   next.state = next.state || {};
-  next.state.chrono = next.state.chrono || { running: false, startedAt: null, elapsedMs: 0 };
-  if (!next.state.chrono.startedAt) next.state.chrono.startedAt = nowISO();
-  next.state.chrono.running = true;
-  pushAudit(next, { action: "CHRONO_START", title: "Chronomètre démarré" });
+  next.state.chrono = {
+    running: true,
+    startedAt: nowISO(),
+    elapsedMs: safeNum(next.state?.chrono?.elapsedMs),
+  };
+  pushAudit(next, { type: "CHRONO_START", title: "Chronomètre démarré", detail: "Audience en cours." });
   return next;
 }
 
 export function stopChrono(run) {
   const next = structuredCloneSafe(run);
   next.state = next.state || {};
-  next.state.chrono = next.state.chrono || { running: false, startedAt: null, elapsedMs: 0 };
-  next.state.chrono.running = false;
-  pushAudit(next, { action: "CHRONO_STOP", title: "Chronomètre arrêté" });
+  const prev = next.state.chrono || {};
+  next.state.chrono = {
+    running: false,
+    startedAt: prev.startedAt || null,
+    elapsedMs: safeNum(prev.elapsedMs),
+  };
+  pushAudit(next, { type: "CHRONO_STOP", title: "Chronomètre arrêté", detail: "Audience suspendue/terminée." });
   return next;
 }
 
@@ -267,83 +468,28 @@ export function setChronoElapsed(run, elapsedMs) {
   const next = structuredCloneSafe(run);
   next.state = next.state || {};
   next.state.chrono = next.state.chrono || { running: false, startedAt: null, elapsedMs: 0 };
-  next.state.chrono.elapsedMs = Math.max(0, safeNum(elapsedMs));
+  next.state.chrono.elapsedMs = safeNum(elapsedMs);
   return next;
 }
 
-function incidentPoints(type) {
-  const t = String(type || "").toLowerCase();
-  if (t === "nullite") return 6;
-  if (t === "communication") return 4;
-  if (t === "renvoi") return 3;
-  if (t === "jonction" || t === "disjonction") return 2;
-  return 1;
-}
-
-export function recordIncident(run, { type, title, detail, actor }) {
+export function recordIncident(run, payload) {
   const next = structuredCloneSafe(run);
+  const type = safeStr(payload?.type || payload?.incidentType || "incident", 32);
+  const detail = safeStr(payload?.detail || payload?.text || "", 1200);
+  const by = safeStr(payload?.by || payload?.role || next?.answers?.role || "Greffier", 24);
+
   next.state = next.state || {};
-  next.state.incidents = Array.isArray(next.state.incidents) ? next.state.incidents : [];
-
-  const pts = incidentPoints(type);
-  next.state._audienceMicro = safeNum(next.state._audienceMicro) + pts;
-
   next.state.riskModifiers = next.state.riskModifiers || { appealRiskPenalty: 0, dueProcessBonus: 0 };
-  next.state.riskModifiers.dueProcessBonus = safeNum(next.state.riskModifiers.dueProcessBonus) + Math.min(2, pts);
 
-  const inc = {
-    id: uid("inc"),
-    ts: nowISO(),
-    type: String(type || "incident"),
-    title: title || "Incident procédural",
-    detail: safeStr(detail, 1200),
-    actor: actor || next.answers?.role || "Greffier",
-    points: pts,
-  };
-
-  next.state.incidents.unshift(inc);
-  next.state.incidents = next.state.incidents.slice(0, 80);
+  if (type === "renvoi") next.state.riskModifiers.appealRiskPenalty += 1;
+  if (type === "nullite") next.state.riskModifiers.appealRiskPenalty += 2;
+  if (type === "communication") next.state.riskModifiers.dueProcessBonus += 1;
 
   pushAudit(next, {
-    action: `INCIDENT_${String(type || "").toUpperCase()}`,
-    title: inc.title,
-    detail: `${inc.detail}${inc.detail ? " " : ""}(+${pts})`,
+    type: "INCIDENT_PROCEDURAL",
+    title: `Incident: ${type}`,
+    detail: detail || "(sans détail)",
+    meta: { by },
   });
-
   return next;
-}
-
-/* =========================================================
-   ✅ PIECES STATUS (export manquant pour JusticeLabJournal.jsx)
-========================================================= */
-export function getEffectivePieces(run, caseData) {
-  const pieces = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
-  const excluded = new Set(run?.state?.excludedPieceIds || []);
-  const admittedLate = new Set(run?.state?.admittedLatePieceIds || []);
-
-  return pieces.map((p, idx) => {
-    const id = p?.id || `P${idx + 1}`;
-    const status = excluded.has(id) ? "EXCLUDEE" : admittedLate.has(id) ? "TARDIVE_ADMISE" : "OK";
-    return { ...p, id, status };
-  });
-}
-
-export function getPiecesStatusSummary(run, caseData) {
-  const effective = getEffectivePieces(run, caseData);
-
-  const ok = effective.filter((p) => p.status === "OK");
-  const excluded = effective.filter((p) => p.status === "EXCLUDEE");
-  const admittedLate = effective.filter((p) => p.status === "TARDIVE_ADMISE");
-
-  return {
-    ok,
-    excluded,
-    admittedLate,
-    counts: {
-      total: effective.length,
-      ok: ok.length,
-      excluded: excluded.length,
-      admittedLate: admittedLate.length,
-    },
-  };
 }
