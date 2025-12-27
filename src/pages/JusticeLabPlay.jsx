@@ -215,6 +215,69 @@ function normalizePartyValue(v) {
   return { title: String(v), sub: "" };
 }
 
+/** ✅ Faits & parties : garantir un texte d'au moins 5 phrases (style professionnel/judiciaire) */
+function ensureMinFiveSentencesFacts(caseData) {
+  const raw =
+    (caseData?.dossierLong && String(caseData.dossierLong).trim()) ||
+    (caseData?.resume && String(caseData.resume).trim()) ||
+    "";
+
+  // On extrait uniquement la partie "Faits & parties" si dossierLong est structuré.
+  let base = raw;
+  const marker = "📌 Faits & parties";
+  if (base.includes(marker)) {
+    base = base.split(marker).slice(1).join(marker);
+    base = base.replace(/^\s*[:\n\r-]+/g, "").trim();
+  }
+
+  // Normalise
+  base = base.replace(/\s+/g, " ").trim();
+
+  // Split phrases (simple mais robuste)
+  const parts = base
+    .split(/(?<=[\.!\?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const city = caseData?.meta?.city || caseData?.ville || caseData?.city || "RDC";
+  const jurisdiction = caseData?.juridiction || caseData?.jurisdiction || "la juridiction compétente";
+  const parties = caseData?.parties || {};
+  const demandeur = parties?.Demandeur || parties?.Plaignant || parties?.Requerant || parties?.Requérant || null;
+  const defendeur = parties?.Défendeur || parties?.Defendeur || parties?.Prévenu || parties?.Prévenue || null;
+
+  const p1 = normalizePartyValue(demandeur);
+  const p2 = normalizePartyValue(defendeur);
+
+  const hasDemand = p1?.title && p1.title !== "-";
+  const hasDef = p2?.title && p2.title !== "-";
+
+  // Ajouts "neutres" et réalistes, sans inventer des lois précises.
+  const fillers = [
+    `Le litige se déroule à ${city} et est soumis à l'examen de ${jurisdiction}.`,
+    hasDemand
+      ? `Le demandeur, ${p1.title}, soutient que les faits reprochés ont entraîné un préjudice matériel et/ou moral nécessitant une réparation ou une mesure judiciaire.`
+      : `Une partie demanderesse soutient que les faits ont entraîné un préjudice nécessitant une réparation ou une mesure judiciaire.`,
+    hasDef
+      ? `Le défendeur, ${p2.title}, conteste tout ou partie des allégations et fait valoir des éléments de contestation sur la chronologie, la preuve ou la portée juridique des faits.`
+      : `La partie défenderesse conteste tout ou partie des allégations et discute la preuve, la chronologie ou la portée juridique des faits.`,
+    `Les pièces versées au dossier présentent des versions partiellement concordantes mais laissent subsister des zones d'ombre sur certains points déterminants, ce qui rend nécessaire une analyse structurée et contradictoire.`,
+    `Les questions centrales portent notamment sur la recevabilité des prétentions, la crédibilité des preuves produites, et les conséquences pratiques à retenir dans la décision à intervenir.`,
+  ];
+
+  // On complète jusqu'à 5 phrases.
+  const out = [...parts];
+  for (const f of fillers) {
+    if (out.length >= 5) break;
+    out.push(f);
+  }
+
+  // Si base était vide, on garantit quand même 5 phrases.
+  while (out.length < 5) out.push(fillers[Math.min(out.length, fillers.length - 1)]);
+
+  return out.join(" ");
+}
+
+
 /** ========== ✅ Audit helper compatible engine ========== */
 function pushAuditLocal(runObj, evt) {
   const next = { ...(runObj || {}) };
@@ -313,6 +376,8 @@ export default function JusticeLabPlay() {
 
   const decodedCaseId = useMemo(() => decodeURIComponent(caseId || ""), [caseId]);
   const caseData = useMemo(() => resolveCaseData(decodedCaseId), [decodedCaseId]);
+
+  const factsText = useMemo(() => ensureMinFiveSentencesFacts(caseData), [caseData]);
 
   useMemo(() => {
     if (caseData?.caseId) saveCaseToCache(caseData);
@@ -542,8 +607,7 @@ export default function JusticeLabPlay() {
         caseId: run.caseId || run.caseMeta?.caseId,
         role: run.answers?.role || "Juge",
         difficulty: caseData?.niveau || "Intermédiaire",
-        facts: caseData?.resume || "",
-        parties: caseData?.parties || {},
+        facts: factsText || "", parties: caseData?.parties || {},
         pieces: (caseData?.pieces || []).map((p) => ({
           id: p.id,
           title: p.title,
@@ -821,8 +885,7 @@ export default function JusticeLabPlay() {
           runData: run,
           caseId: run.caseId || run.caseMeta?.caseId,
           role: run.answers?.role || "Juge",
-          facts: caseData?.resume || "",
-          qualification: run.answers?.qualification || "",
+          facts: factsText || "", qualification: run.answers?.qualification || "",
           procedureChoice: run.answers?.procedureChoice || null,
           procedureJustification: run.answers?.procedureJustification || "",
           audience: run.answers?.audience || {},
@@ -845,8 +908,7 @@ export default function JusticeLabPlay() {
           scored: aiScore || local,
           caseId: run.caseId || run.caseMeta?.caseId,
           role: run.answers?.role || "Juge",
-          facts: caseData?.resume || "",
-          decisionMotivation: run.answers?.decisionMotivation || "",
+          facts: factsText || "", decisionMotivation: run.answers?.decisionMotivation || "",
           decisionDispositif: run.answers?.decisionDispositif || "",
           audience: run.answers?.audience || {},
           language: "fr",
@@ -973,32 +1035,7 @@ export default function JusticeLabPlay() {
               ) : null}
             </div>
             <h1 className="text-2xl font-bold mt-2">{caseData.titre}</h1>
-            <p className="text-sm text-slate-300 mt-1">{caseData.resume}</p>
-
-            {/* ✅ Greffier inline */}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <div className="text-[11px] text-slate-400">Greffier :</div>
-              <input
-                value={greffierName}
-                onChange={(e) => setGreffierName(e.target.value)}
-                className="h-9 w-[220px] rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
-                placeholder="Nom du greffier"
-              />
-              <button
-                type="button"
-                className="h-9 px-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
-                onClick={() => navigate("/justice-lab/journal")}
-              >
-                📓 Journal (PV greffier)
-              </button>
-              <button
-                type="button"
-                className="h-9 px-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
-                onClick={() => navigate("/justice-lab/results")}
-              >
-                🧪 Mode Examen (résultats)
-              </button>
-            </div>
+            <p className="text-sm text-slate-300 mt-1">{factsText}</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1093,7 +1130,7 @@ export default function JusticeLabPlay() {
             <div className="grid gap-4 md:grid-cols-2">
               <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <h2 className="text-sm font-semibold text-slate-100">📌 Faits & parties</h2>
-                <p className="text-sm text-slate-300 mt-2">{caseData.resume}</p>
+                <p className="text-sm text-slate-300 mt-2">{factsText}</p>
 
                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
                   {Object.entries(caseData.parties || {}).map(([k, v]) => {
