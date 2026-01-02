@@ -1,308 +1,203 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
-import "jspdf-autotable";
-import { useAuth } from "../auth/AuthContext.jsx";
 
-const ANALYSE_API = "https://droitgpt-analysepdf.onrender.com/analyse-document";
-
-/**
- * ✅ Conversion PDF scanné -> images (client-side)
- * Optimisé vitesse: scale par défaut 2.3 (au lieu de 3.0)
- */
-async function pdfToImageFiles(pdfFile, { scale = 2.3, maxPages = 25 } = {}) {
-  const pdfjsLib = await import("pdfjs-dist/build/pdf");
-  const workerModule = await import("pdfjs-dist/build/pdf.worker?url");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = workerModule.default;
-
-  const arrayBuffer = await pdfFile.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-  const totalPages = pdf.numPages;
-  const pagesToRender = Math.min(totalPages, maxPages);
-
-  const imageFiles = [];
-
-  for (let pageNum = 1; pageNum <= pagesToRender; pageNum++) {
-    const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale });
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
-
-    await page.render({ canvasContext: ctx, viewport }).promise;
-
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1.0));
-    if (!blob) continue;
-
-    imageFiles.push(new File([blob], `page_${pageNum}.png`, { type: "image/png" }));
-  }
-
-  return { imageFiles, totalPages, renderedPages: pagesToRender };
-}
-
-function isImageFile(f) {
-  const n = String(f?.name || "").toLowerCase();
-  return (
-    n.endsWith(".jpg") ||
-    n.endsWith(".jpeg") ||
-    n.endsWith(".png") ||
-    n.endsWith(".webp") ||
-    n.endsWith(".tif") ||
-    n.endsWith(".tiff") ||
-    n.endsWith(".bmp")
-  );
-}
-function isDocFile(f) {
-  const n = String(f?.name || "").toLowerCase();
-  return n.endsWith(".pdf") || n.endsWith(".docx");
-}
-function isPdfFile(f) {
-  return String(f?.name || "").toLowerCase().endsWith(".pdf");
-}
-
-function safePlainFromHtml(html) {
-  if (!html) return "";
-  return String(html)
-    .replace(/<li>/gi, "• ")
-    .replace(/<\/(p|div|h[1-6]|li|ul|ol|br)>/gi, "\n\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-}
-
-function escapeHtml(str) {
-  return String(str || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-/**
- * ✅ Pool de promesses (2 pages en parallèle)
- */
-async function runPool(items, concurrency, worker) {
-  const results = new Array(items.length);
-  let idx = 0;
-
-  async function next() {
-    const current = idx++;
-    if (current >= items.length) return;
-    results[current] = await worker(items[current], current);
-    return next();
-  }
-
-  const starters = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
-  await Promise.all(starters);
-  return results;
-}
+const ANALYSE_API = "https://droitgpt-analysepdf.onrender.com"; // ton service analyse
+// IMPORTANT: assure-toi que côté server.js tu montes analyseDocument.js sur /analyse
+// et que /analyse/text est accessible.
 
 export default function Analyse() {
-  const [mode, setMode] = useState("doc");
+  const navigate = useNavigate();
+
+  const [mode, setMode] = useState("doc"); // doc | images
   const [file, setFile] = useState(null);
-
   const [imageFiles, setImageFiles] = useState([]);
-  const [pieces, setPieces] = useState([]);
-
-  // ✅ OCR options (silencieuses, non affichées)
-  const useOcr = true;
-  const ocrLang = "fra+eng";
-  const useOcrPreprocess = true;
-  const useOcrCleanup = true;
-
-  const [analysis, setAnalysis] = useState("");
-  const [docContext, setDocContext] = useState(null);
-  const [docTitle, setDocTitle] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [progressTarget, setProgressTarget] = useState(0);
+
   const [error, setError] = useState("");
 
-  const [history, setHistory] = useState(() => {
-    const saved = localStorage.getItem("analyseHistory");
-    return saved ? JSON.parse(saved) : [];
-  });
+  // résultats finaux
+  const [analysis, setAnalysis] = useState(""); // HTML final
+  const [docContext, setDocContext] = useState(""); // texte complet OCR/extrait
+  const [docTitle, setDocTitle] = useState("");
 
-  const navigate = useNavigate();
-  const { accessToken, logout } = useAuth();
-  const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+  // par page/pièce (pour afficher confiance)
+  const [pieces, setPieces] = useState([]);
+
+  // historique simple
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem("analyseHistory");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const canAnalyse = useMemo(() => {
     if (mode === "doc") return !!file;
-    return imageFiles.length > 0;
+    return imageFiles?.length > 0;
   }, [mode, file, imageFiles]);
 
   const resetOutputs = () => {
     setAnalysis("");
-    setDocContext(null);
-    setDocTitle(null);
+    setDocContext("");
+    setDocTitle("");
     setPieces([]);
+    setError("");
   };
 
-  const handleFileChange = (e) => {
-    const f = e.target.files?.[0] || null;
-    setFile(f);
-    resetOutputs();
-  };
-
-  const handleImagesChange = (e) => {
-    const arr = Array.from(e.target.files || []).filter((f) => isImageFile(f));
-    setImageFiles(arr);
-    resetOutputs();
-
-    const mapped = arr.map((f, idx) => ({
-      id: `p_${Date.now()}_${idx}`,
-      name: f.name,
-      status: "en attente",
-      error: "",
-      analysisHtml: "",
-      extractedText: "",
-      ocrUsed: false,
-      confidence: null,
-    }));
-    setPieces(mapped);
-  };
-
-  /**
-   * ✅ Progress bar plus lente + plus “smooth”
-   * - On anime progress vers progressTarget
-   * - On laisse un “temps” plus long (sans sauter trop vite)
-   */
-  const startSmoothProgress = () => {
+  // ---------- Progress “plus lent”
+  const simulateProgress = () => {
     setProgress(0);
-    setProgressTarget(0);
-
-    let current = 0;
+    const start = Date.now();
     const interval = setInterval(() => {
-      // avance doucement vers target, sinon avance très lentement (illusion de traitement)
-      const target = progressTargetRef.current;
-      const gap = target - current;
-
-      if (gap > 0.5) {
-        // rattrape progressivement le target (doucement)
-        current += Math.min(gap * 0.15, 3.0);
-      } else {
-        // avance lente tant que le backend travaille
-        current += 0.25 + Math.random() * 0.55; // ~0.25 à 0.8
-      }
-
-      // cap à 96 tant que pas fini
-      current = Math.min(current, 96);
-      setProgress(Math.round(current));
-    }, 450); // plus lent que 200ms
-
+      const elapsed = Date.now() - start;
+      // courbe lente: 0 -> 92% en ~45s, puis le final à la fin réelle
+      const target = Math.min(92, Math.floor((elapsed / 45000) * 92));
+      setProgress((p) => (p < target ? p + 1 : p));
+    }, 380);
     return interval;
   };
 
-  // petit hack “ref” sans useRef (pour éviter de réécrire ton fichier avec imports)
-  const progressTargetRef = {
-    current: 0,
-  };
-  const setTarget = (v) => {
-    const clamped = Math.max(0, Math.min(100, v));
-    progressTargetRef.current = clamped;
-    setProgressTarget(clamped);
+  // ---------- Helpers HTML / PDF
+  const escapeHtml = (s) =>
+    String(s || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+
+  const safePlainFromHtml = (html) => {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = String(html || "");
+    return (tmp.textContent || tmp.innerText || "").trim();
   };
 
-  const updatePiece = (id, patch) => {
-    setPieces((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-  };
+  // ---------- PDF -> images (si pdf scanné)
+  async function pdfToImageFiles(pdfFile, { scale = 2.2, maxPages = 25 } = {}) {
+    // pdfjs dynamique (frontend)
+    const pdfjsLib = await import("pdfjs-dist/build/pdf");
+    const pdfjsWorker = await import("pdfjs-dist/build/pdf.worker?url");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker.default;
 
-  const postAnalyseSingle = async (oneFile) => {
+    const buf = await pdfFile.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+
+    const totalPages = pdf.numPages;
+    const pagesToRender = Math.min(totalPages, maxPages);
+
+    const imageFilesOut = [];
+
+    for (let p = 1; p <= pagesToRender; p++) {
+      const page = await pdf.getPage(p);
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d", { alpha: false });
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1.0));
+      const f = new File([blob], `page_${p}.png`, { type: "image/png" });
+      imageFilesOut.push(f);
+    }
+
+    return { imageFiles: imageFilesOut, totalPages, renderedPages: pagesToRender };
+  }
+
+  // ---------- API calls
+  async function postAnalyseSingle(uploadFile, { skipAnalysis = false } = {}) {
     const formData = new FormData();
-    formData.append("file", oneFile);
+    formData.append("file", uploadFile);
 
-    // ✅ OCR activé (silencieux)
-    const shouldOcr = useOcr && (isImageFile(oneFile) || isPdfFile(oneFile));
-    formData.append("useOcr", shouldOcr ? "1" : "0");
-    formData.append("ocrLang", ocrLang);
-    formData.append("useOcrPreprocess", useOcrPreprocess ? "1" : "0");
-    formData.append("useOcrCleanup", useOcrCleanup ? "1" : "0");
+    // OCR activé sur images & sur PDF si tu veux détecter scanned
+    formData.append("useOcr", "1");
+    formData.append("ocrLang", "fra+eng");
+    formData.append("useOcrPreprocess", "1");
+    formData.append("useOcrCleanup", "1");
 
-    const res = await fetch(ANALYSE_API, {
+    if (skipAnalysis) formData.append("skipAnalysis", "1");
+
+    const res = await fetch(`${ANALYSE_API}/analyse`, {
       method: "POST",
-      headers: { ...authHeaders },
       body: formData,
     });
 
-    if (res.status === 401) {
-      logout();
-      const next = encodeURIComponent("/analyse");
-      window.location.href = `/login?next=${next}`;
-      return null;
-    }
-
-    const contentType = res.headers.get("content-type") || "";
-    const rawText = await res.text();
+    const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      try {
-        const j = JSON.parse(rawText || "{}");
-        const msg = j?.details || j?.error || `Erreur (${res.status})`;
-        if (res.status === 422 && j?.scannedPdf) {
-          const err = new Error(msg);
-          err.code = "SCANNED_PDF";
-          err.details = j;
-          throw err;
-        }
-        throw new Error(msg);
-      } catch (e) {
-        if (e?.code === "SCANNED_PDF") throw e;
-        throw new Error(rawText?.slice(0, 240) || `Erreur (${res.status})`);
+      // scanned pdf détecté
+      if (res.status === 422 && data?.scannedPdf) {
+        const e = new Error(data?.details || "PDF scanné détecté");
+        e.code = "SCANNED_PDF";
+        throw e;
       }
+      throw new Error(data?.details || data?.error || "Erreur analyse");
     }
 
-    if (!contentType.includes("application/json")) {
-      throw new Error(`Réponse inattendue : ${rawText.slice(0, 120)}`);
+    return data;
+  }
+
+  async function postAnalyseText(fullText) {
+    const res = await fetch(`${ANALYSE_API}/analyse/text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: fullText }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.details || data?.error || "Erreur analyse texte");
+
+    return data;
+  }
+
+  // ---------- Pool (frontend) pour OCR pages
+  async function runPool(items, concurrency, worker, onEachDone) {
+    let idx = 0;
+    const results = new Array(items.length);
+
+    async function next() {
+      const current = idx++;
+      if (current >= items.length) return;
+      const val = await worker(items[current], current);
+      results[current] = val;
+      try {
+        onEachDone?.(val, current);
+      } catch {}
+      return next();
     }
 
-    return JSON.parse(rawText || "{}");
-  };
+    const starters = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
+    await Promise.all(starters);
+    return results;
+  }
 
-  const buildCombinedHtmlFromPieces = (arr) => {
-    const ok = Array.isArray(arr) ? arr : [];
-    const low = ok.filter((p) => Number.isFinite(p.confidence) && p.confidence < 35).length;
-
-    const banner =
-      low > 0
-        ? `<p><strong>⚠️ Qualité faible détectée :</strong> ${low} page(s) ont une confiance OCR < 35%.</p>`
-        : "";
-
-    const blocks = ok
-      .map((p, i) => {
-        const title = `Page ${i + 1}`;
-        const conf = Number.isFinite(p.confidence) ? ` (${p.confidence}%)` : "";
-
-        const extracted = `<h3>${title} — Texte extrait${conf}</h3><p>${escapeHtml(
-          (p.extractedText || "").slice(0, 4000) || "Texte indisponible."
-        )}</p>`;
-
-        const analysisBlock = p.analysisHtml
-          ? `<h3>${title} — Analyse</h3>${p.analysisHtml}`
-          : `<h3>${title} — Analyse</h3><p>Analyse indisponible.</p>`;
-
-        const err = p.error ? `<h3>${title} — Erreur</h3><p>${escapeHtml(p.error)}</p>` : "";
-        return `${err}${extracted}${analysisBlock}`;
-      })
-      .join("");
+  // ---------- Rapport final (ce que tu veux)
+  const buildFinalReportHtml = ({ title, pages, fullText, analysisHtml }) => {
+    const low = pages.filter((p) => Number.isFinite(p.confidence) && p.confidence < 35).length;
 
     return `
-      <h2>Rapport OCR + Analyse</h2>
-      <p>Rapport texte uniquement (OCR + analyse). Confiance (%) par page.</p>
-      ${banner}
-      ${blocks || "<p>Aucune page analysée.</p>"}
+      <h2>${escapeHtml(title || "Rapport OCR + Analyse")}</h2>
+
+      ${low > 0
+        ? `<p><strong>⚠️ Qualité faible détectée :</strong> ${low} page(s) ont une confiance OCR < 35%.</p>`
+        : ""}
+
+      <h2>Texte OCR complet (corrigé)</h2>
+      <p style="white-space:pre-wrap">${escapeHtml(fullText || "")}</p>
+
+      <h2>Analyse juridique globale</h2>
+      ${analysisHtml || "<p>Analyse indisponible.</p>"}
     `.trim();
   };
 
-  const runImagesFlow = async (filesArr, titleForDoc = null) => {
-    if (!filesArr?.length) throw new Error("Aucune image à analyser.");
+  // ---------- Main flow images/PDF scanné
+  async function runImagesFlow(filesArr, titleForDoc) {
+    if (!filesArr?.length) throw new Error("Aucune page à analyser.");
 
     setMode("images");
     setFile(null);
@@ -312,170 +207,205 @@ export default function Analyse() {
       id: `p_${Date.now()}_${idx}`,
       name: f.name,
       status: "en attente",
-      error: "",
-      analysisHtml: "",
-      extractedText: "",
-      ocrUsed: false,
       confidence: null,
+      extractedText: "",
+      error: "",
     }));
     setPieces(init);
 
     const results = [...init];
-    let completed = 0;
 
-    await runPool(filesArr, 2, async (f, i) => {
-      const id = init[i].id;
+    // stratégie auto : 3 si court, 2 si long
+    const concurrency = filesArr.length <= 6 ? 3 : 2;
 
-      updatePiece(id, { status: "en cours", error: "" });
-      results[i] = { ...results[i], status: "en cours", error: "" };
+    let done = 0;
 
-      try {
-        const data = await postAnalyseSingle(f);
-        if (!data) return null;
+    await runPool(
+      filesArr,
+      concurrency,
+      async (f, i) => {
+        const id = init[i].id;
+        results[i] = { ...results[i], status: "en cours", error: "" };
+        setPieces([...results]);
 
-        const patched = {
-          status: "terminé",
-          analysisHtml: data.analysis || "<p>Analyse vide.</p>",
-          extractedText: data.documentText || "",
-          ocrUsed: !!data.ocrUsed,
-          confidence: Number.isFinite(data.ocrConfidence) ? data.ocrConfidence : null,
-        };
+        try {
+          // ✅ OCR ONLY ici (rapide) — l’analyse globale se fera après
+          const data = await postAnalyseSingle(f, { skipAnalysis: true });
 
-        updatePiece(id, patched);
-        results[i] = { ...results[i], ...patched };
-      } catch (e) {
-        const patched = { status: "erreur", error: e?.message || "Erreur analyse" };
-        updatePiece(id, patched);
-        results[i] = { ...results[i], ...patched };
-      } finally {
-        completed++;
-        // ✅ on met une cible de progression (la barre montera doucement vers cette cible)
-        setTarget(Math.round((completed / filesArr.length) * 100));
+          results[i] = {
+            ...results[i],
+            status: "terminé",
+            extractedText: data.documentText || "",
+            confidence: Number.isFinite(data.ocrConfidence) ? data.ocrConfidence : null,
+          };
+        } catch (e) {
+          results[i] = { ...results[i], status: "erreur", error: e?.message || "Erreur OCR" };
+        } finally {
+          done++;
+          // on laisse la progress simulée, mais on pousse un peu quand même
+          setProgress((p) => Math.min(96, Math.max(p, Math.round((done / filesArr.length) * 92))));
+          setPieces([...results]);
+        }
+
+        return results[i];
       }
+    );
 
-      return results[i];
-    });
-
-    setPieces(results);
-
-    const combinedHtml = buildCombinedHtmlFromPieces(results);
-    setAnalysis(combinedHtml);
-
-    const mergedText = results
+    // ✅ Fusion texte complet
+    const fullText = results
       .map((p, idx) => {
         const t = (p.extractedText || "").trim();
         if (!t) return "";
-        return `--- PAGE ${idx + 1} ---\n${t}\n`;
+        return `--- PAGE ${idx + 1}: ${p.name} ---\n${t}\n`;
       })
       .filter(Boolean)
       .join("\n");
 
-    setDocContext(mergedText || null);
+    if (!fullText.trim()) {
+      throw new Error("OCR vide. Essaie un scan plus net (lumière, page à plat, zoom).");
+    }
+
+    // ✅ Analyse globale unique
+    const global = await postAnalyseText(fullText);
+
+    const finalHtml = buildFinalReportHtml({
+      title: titleForDoc || `Dossier OCR (${filesArr.length} pages)`,
+      pages: results,
+      fullText,
+      analysisHtml: global.analysis || "<p>Analyse vide.</p>",
+    });
+
     setDocTitle(titleForDoc || `Dossier OCR (${filesArr.length} pages)`);
+    setDocContext(fullText);
+    setAnalysis(finalHtml);
 
     const record = {
       filename: titleForDoc || `Dossier OCR (${filesArr.length} pages)`,
       timestamp: new Date().toLocaleString(),
-      content: combinedHtml,
+      content: finalHtml,
     };
     const updatedHistory = [record, ...history.slice(0, 9)];
     setHistory(updatedHistory);
     localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
-  };
+  }
 
+  // ---------- Analyse button
   const handleAnalyse = async () => {
     setError("");
     if (!canAnalyse) {
-      setError(mode === "doc" ? "Veuillez sélectionner un fichier PDF ou DOCX." : "Veuillez sélectionner une ou plusieurs images.");
+      setError(mode === "doc" ? "Veuillez sélectionner un fichier PDF/DOCX." : "Veuillez sélectionner des images.");
       return;
     }
 
     setLoading(true);
     resetOutputs();
-
-    // ✅ démarrage barre “plus lente”
-    const interval = startSmoothProgress();
+    const interval = simulateProgress();
 
     try {
       if (mode === "doc") {
-        if (!file || !isDocFile(file)) throw new Error("Format non supporté. Choisissez un PDF ou DOCX.");
+        if (!file) throw new Error("Veuillez sélectionner un fichier.");
 
         try {
-          const data = await postAnalyseSingle(file);
-          if (!data) return;
+          // PDF texte / DOCX : analyse classique (non tronquée)
+          const data = await postAnalyseSingle(file, { skipAnalysis: false });
 
-          const htmlAnalysis = data.analysis || "❌ Analyse vide.";
-          setAnalysis(htmlAnalysis);
-          setDocContext(data.documentText || null);
           setDocTitle(file.name);
+          setDocContext(data.documentText || "");
 
-          const record = { filename: file.name, timestamp: new Date().toLocaleString(), content: htmlAnalysis };
+          // rapport final = texte + analyse (global)
+          const finalHtml = buildFinalReportHtml({
+            title: file.name,
+            pages: [],
+            fullText: data.documentText || "",
+            analysisHtml: data.analysis || "<p>Analyse vide.</p>",
+          });
+
+          setAnalysis(finalHtml);
+
+          const record = {
+            filename: file.name,
+            timestamp: new Date().toLocaleString(),
+            content: finalHtml,
+          };
           const updatedHistory = [record, ...history.slice(0, 9)];
           setHistory(updatedHistory);
           localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
-          setTarget(100);
         } catch (e) {
+          // scanned PDF → conversion images → OCR only → analyse globale
           if (e?.code === "SCANNED_PDF" && file.name.toLowerCase().endsWith(".pdf")) {
-            const scaleAuto = file.size > 6 * 1024 * 1024 ? 2.1 : 2.3;
+            const scaleAuto = file.size > 6 * 1024 * 1024 ? 2.05 : 2.25;
 
             const { imageFiles: imgs, totalPages, renderedPages } = await pdfToImageFiles(file, {
               scale: scaleAuto,
               maxPages: 25,
             });
 
-            if (!imgs.length) throw new Error("Impossible de convertir ce PDF en images. Réessaie avec un PDF moins lourd.");
+            if (!imgs.length) throw new Error("Impossible de convertir ce PDF en images.");
 
             await runImagesFlow(imgs, `PDF scanné (${renderedPages}/${totalPages} pages)`);
-            setTarget(100);
           } else {
             throw e;
           }
         }
-      }
-
-      if (mode === "images") {
-        if (!imageFiles.length) throw new Error("Sélectionnez au moins une image.");
-        await runImagesFlow(imageFiles, `Dossier OCR (${imageFiles.length} images)`);
-        setTarget(100);
+      } else {
+        // mode images
+        await runImagesFlow(imageFiles, `Dossier OCR (${imageFiles.length} pages)`);
       }
     } catch (err) {
-      console.error("❌ Erreur analyse :", err);
-      setError(err.message || "Erreur lors de l'analyse.");
+      console.error(err);
+      setError(err?.message || "Erreur lors de l'analyse.");
     } finally {
-      // ✅ fin plus “progressive”
-      setTimeout(() => {
-        clearInterval(interval);
-        setProgress(100);
-      }, 600);
-
+      clearInterval(interval);
+      setProgress(100);
       setTimeout(() => {
         setLoading(false);
         setProgress(0);
-        setProgressTarget(0);
-        progressTargetRef.current = 0;
-      }, 1800); // plus long qu'avant (500ms)
+      }, 700);
     }
   };
 
+  // ---------- Download PDF (texte complet + analyse)
   const handleDownloadPDF = () => {
     if (!analysis) return;
 
-    const doc = new jsPDF();
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("📄 DroitGPT — Rapport OCR + Analyse", 20, 20);
+    doc.setFontSize(14);
+    doc.text("DroitGPT — Rapport OCR + Analyse", 40, 45);
+
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
+    doc.setFontSize(10);
 
     const plain = safePlainFromHtml(analysis);
-    const lines = doc.splitTextToSize(plain, 170);
-    doc.text(lines, 20, 32);
+    const lines = doc.splitTextToSize(plain, 515);
+    let y = 70;
 
-    doc.save(mode === "images" ? "rapport_ocr_analyse.pdf" : "analyse_juridique.pdf");
+    for (const line of lines) {
+      if (y > 780) {
+        doc.addPage();
+        y = 50;
+      }
+      doc.text(line, 40, y);
+      y += 12;
+    }
+
+    doc.save("rapport_ocr_analyse.pdf");
   };
 
+  // ---------- Chat with document (fix: state + localStorage)
   const handleChatWithDocument = () => {
     if (!docContext) return;
+
+    // ✅ stocke aussi dans localStorage pour être sûr
+    localStorage.setItem(
+      "droitgpt_active_document_context",
+      JSON.stringify({
+        filename: docTitle || "Document analysé",
+        documentText: docContext,
+        ts: Date.now(),
+      })
+    );
+
     navigate("/chat", {
       state: {
         documentText: docContext,
@@ -485,14 +415,30 @@ export default function Analyse() {
     });
   };
 
+  // ---------- UI handlers
+  const onPickDoc = (e) => {
+    const f = e.target.files?.[0] || null;
+    setFile(f);
+    setMode("doc");
+    setImageFiles([]);
+    resetOutputs();
+  };
+
+  const onPickImages = (e) => {
+    const files = Array.from(e.target.files || []);
+    setImageFiles(files);
+    setMode("images");
+    setFile(null);
+    resetOutputs();
+  };
+
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
         <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/70 flex items-center justify-between gap-3">
           <div>
-            <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">DroitGPT • Analyse de documents</span>
-            <h1 className="text-lg md:text-xl font-semibold mt-1">Analyse PDF/DOCX + OCR (scans & manuscrits)</h1>
-            <p className="text-[11px] text-slate-400 mt-1">PDF scanné supporté : conversion auto → OCR → analyse (texte seulement).</p>
+            <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">DroitGPT • Analyse</span>
+            <h1 className="text-lg md:text-xl font-semibold mt-1">Analyse PDF/DOCX + OCR (pages scannées)</h1>
           </div>
 
           <div className="flex flex-col items-end gap-2 text-[11px]">
@@ -501,13 +447,13 @@ export default function Analyse() {
                 to="/chat"
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-emerald-500/80 bg-slate-900/80 text-emerald-200 hover:bg-emerald-500/10 transition"
               >
-                💬 Chat texte
+                💬 Chat
               </Link>
               <Link
                 to="/assistant-vocal"
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-blue-500/80 bg-slate-900/80 text-blue-200 hover:bg-blue-500/10 transition"
               >
-                🎤 Assistant vocal
+                🎤 Vocal
               </Link>
             </div>
             <Link
@@ -520,10 +466,12 @@ export default function Analyse() {
         </div>
 
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6 py-4 bg-slate-950/70">
+          {/* LEFT */}
           <div className="space-y-4">
             <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-3">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Mode d’analyse</div>
-              <div className="mt-2 flex gap-2">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Choisir un fichier</div>
+
+              <div className="mt-3 flex gap-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -538,7 +486,7 @@ export default function Analyse() {
                       : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
                   }`}
                 >
-                  📄 PDF/DOCX
+                  PDF / DOCX
                 </button>
 
                 <button
@@ -546,177 +494,135 @@ export default function Analyse() {
                   onClick={() => {
                     setMode("images");
                     setFile(null);
+                    setPieces([]);
                     resetOutputs();
                   }}
                   className={`px-3 py-2 rounded-xl text-xs border transition ${
                     mode === "images"
-                      ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-100"
+                      ? "border-amber-500/60 bg-amber-500/15 text-amber-100"
                       : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
                   }`}
                 >
-                  🧾 Photos / Scans
+                  Images (pages)
                 </button>
               </div>
-            </div>
 
-            <div className="rounded-2xl border border-dashed border-slate-600 bg-slate-900/60 px-4 py-4 flex flex-col gap-3">
-              {mode === "doc" ? (
-                <>
-                  <p className="text-sm text-slate-200">
-                    📁 <strong>Sélectionnez un PDF/DOCX</strong> (PDF scanné accepté)
-                  </p>
-                  <label className="mt-1 cursor-pointer inline-flex items-center justify-center px-4 py-2 rounded-xl bg-slate-800 border border-slate-600 text-sm text-slate-100 hover:bg-slate-700 transition">
-                    Choisir un fichier
-                    <input type="file" accept=".pdf,.docx" hidden onChange={handleFileChange} />
-                  </label>
-                  {file && (
-                    <p className="text-xs text-emerald-300 mt-1">
-                      ✅ Fichier sélectionné : <strong>{file.name}</strong>
-                    </p>
-                  )}
-                  <p className="text-[11px] text-slate-400">
-                    Si le PDF est scanné, DroitGPT convertit automatiquement les pages en images puis applique l’OCR.
-                  </p>
-                </>
-              ) : (
-                <>
-                  {/* ✅ Texte minimal (sans détails techniques) */}
-                  <p className="text-sm text-slate-200">
-                    🧾 <strong>Uploader des images (scans / manuscrits)</strong>
-                  </p>
-
-                  <label className="mt-1 cursor-pointer inline-flex items-center justify-center px-4 py-2 rounded-xl bg-slate-800 border border-slate-600 text-sm text-slate-100 hover:bg-slate-700 transition">
-                    Choisir les images (multi)
-                    <input
-                      type="file"
-                      multiple
-                      accept=".jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp"
-                      hidden
-                      onChange={handleImagesChange}
-                    />
-                  </label>
-
-                  {imageFiles.length > 0 && (
-                    <p className="text-xs text-emerald-300 mt-1">✅ {imageFiles.length} image(s) sélectionnée(s)</p>
-                  )}
-                </>
-              )}
-            </div>
-
-            <button
-              onClick={handleAnalyse}
-              disabled={loading || !canAnalyse}
-              className={`w-full inline-flex items-center justify-center px-4 py-2.5 rounded-2xl text-sm font-medium transition ${
-                loading || !canAnalyse
-                  ? "bg-slate-700 text-slate-400 cursor-not-allowed"
-                  : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
-              }`}
-            >
-              {loading ? "Analyse en cours…" : "Analyser"}
-            </button>
-
-            {loading && (
-              <div className="w-full bg-slate-800 rounded-full h-2 mt-1 overflow-hidden">
-                <div className="bg-emerald-500 h-2 rounded-full transition-all duration-300 ease-out" style={{ width: `${progress}%` }} />
+              <div className="mt-3">
+                {mode === "doc" ? (
+                  <input
+                    type="file"
+                    accept=".pdf,.docx"
+                    onChange={onPickDoc}
+                    className="block w-full text-xs text-slate-200 file:mr-3 file:rounded-xl file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-slate-50 hover:file:bg-white/20"
+                  />
+                ) : (
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={onPickImages}
+                    className="block w-full text-xs text-slate-200 file:mr-3 file:rounded-xl file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-slate-50 hover:file:bg-white/20"
+                  />
+                )}
               </div>
-            )}
 
-            {error && <p className="text-xs text-red-400 mt-1">❌ {error}</p>}
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={handleAnalyse}
+                  disabled={!canAnalyse || loading}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-500/90 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {loading ? "Analyse en cours…" : "Lancer l’analyse"}
+                </button>
 
-            {analysis && (
-              <div className="flex gap-2">
                 <button
                   onClick={handleDownloadPDF}
-                  className="flex-1 inline-flex items-center justify-center px-4 py-2 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                  disabled={!analysis}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  ⬇️ Télécharger le rapport (PDF)
+                  Télécharger PDF
                 </button>
+
                 <button
-                  onClick={() => {
-                    localStorage.removeItem("analyseHistory");
-                    setHistory([]);
-                  }}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                  onClick={handleChatWithDocument}
+                  disabled={!docContext}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold bg-blue-500/30 hover:bg-blue-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  ♻️ Reset
+                  Chatter avec le document
                 </button>
+              </div>
+
+              {loading && (
+                <div className="mt-3">
+                  <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
+                    <div className="h-2 bg-emerald-400 transition-all" style={{ width: `${progress}%` }} />
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-400">{progress}%</div>
+                </div>
+              )}
+
+              {error && <div className="mt-3 text-sm text-rose-300">❌ {error}</div>}
+            </div>
+
+            {/* Confiance par page (simple, utile) */}
+            {pieces.length > 0 && (
+              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Pages & confiance OCR</div>
+                <div className="mt-3 space-y-2 max-h-[240px] overflow-auto pr-1">
+                  {pieces.map((p, i) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+                    >
+                      <div className="text-xs text-slate-200">
+                        {i + 1}. {p.name}{" "}
+                        <span className="text-slate-400">
+                          • {p.status}
+                          {p.error ? ` • ❌ ${p.error}` : ""}
+                        </span>
+                      </div>
+                      <div className="text-xs font-semibold">
+                        {Number.isFinite(p.confidence) ? `${p.confidence}%` : "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
-            {docContext && (
-              <button
-                onClick={handleChatWithDocument}
-                className="w-full inline-flex items-center justify-center px-4 py-2 rounded-2xl border border-emerald-500/80 bg-emerald-500/10 text-xs font-medium text-emerald-100 hover:bg-emerald-500/20 transition"
-              >
-                💬 Chatter avec ce texte dans DroitGPT
-              </button>
+            {/* Historique */}
+            {history.length > 0 && (
+              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Historique</div>
+                <div className="mt-3 space-y-2 max-h-[220px] overflow-auto pr-1">
+                  {history.map((h, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setAnalysis(h.content || "");
+                        setDocTitle(h.filename || "");
+                      }}
+                      className="w-full text-left rounded-xl border border-white/10 bg-white/5 px-3 py-2 hover:bg-white/10 transition"
+                    >
+                      <div className="text-xs text-slate-200 font-semibold">{h.filename}</div>
+                      <div className="text-[11px] text-slate-400">{h.timestamp}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 md:p-5 min-h-[420px]">
+          {/* RIGHT: Rapport */}
+          <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-3 overflow-auto">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Rapport</div>
             {!analysis ? (
-              <div className="text-sm text-slate-300">
-                {mode === "doc"
-                  ? "Téléverse un PDF/DOCX. Les PDF scannés sont convertis automatiquement puis analysés."
-                  : "Téléverse des images. DroitGPT extrait le texte puis fournit l’analyse."}
+              <div className="mt-3 text-sm text-slate-300">
+                Sélectionne un PDF/DOCX ou des images, puis lance l’analyse.
               </div>
             ) : (
-              <div
-                className="prose prose-invert max-w-none prose-p:text-slate-200 prose-li:text-slate-200 prose-strong:text-white"
-                dangerouslySetInnerHTML={{ __html: analysis }}
-              />
-            )}
-
-            {mode === "images" && pieces.length > 0 && (
-              <div className="mt-6">
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Pages / Pièces</div>
-                <div className="mt-2 space-y-2">
-                  {pieces.map((p, idx) => (
-                    <details key={p.id} className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2">
-                      <summary className="cursor-pointer flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-xs text-slate-200 font-medium truncate">
-                            {idx + 1}. {p.name}
-                          </div>
-                          <div className="text-[11px] text-slate-400 mt-1">
-                            Statut:{" "}
-                            <span
-                              className={
-                                p.status === "terminé"
-                                  ? "text-emerald-300"
-                                  : p.status === "en cours"
-                                  ? "text-amber-300"
-                                  : p.status === "erreur"
-                                  ? "text-red-300"
-                                  : "text-slate-300"
-                              }
-                            >
-                              {p.status}
-                            </span>
-                            {Number.isFinite(p.confidence) ? ` • Confiance: ${p.confidence}%` : ""}
-                          </div>
-                        </div>
-
-                        <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5">Ouvrir</span>
-                      </summary>
-
-                      {p.error && <div className="mt-2 text-xs text-red-300">❌ {p.error}</div>}
-
-                      {p.extractedText && (
-                        <pre className="mt-2 whitespace-pre-wrap text-[11px] text-slate-200 bg-slate-950/60 border border-white/10 rounded-xl p-2 max-h-40 overflow-auto">
-                          {p.extractedText}
-                        </pre>
-                      )}
-
-                      {p.analysisHtml && (
-                        <div
-                          className="mt-2 prose prose-invert max-w-none prose-p:text-slate-200 prose-li:text-slate-200 prose-strong:text-white text-sm bg-slate-950/60 border border-white/10 rounded-xl p-2 max-h-52 overflow-auto"
-                          dangerouslySetInnerHTML={{ __html: p.analysisHtml }}
-                        />
-                      )}
-                    </details>
-                  ))}
-                </div>
+              <div className="mt-3 prose prose-invert max-w-none">
+                <div dangerouslySetInnerHTML={{ __html: analysis }} />
               </div>
             )}
           </div>
