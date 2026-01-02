@@ -1,10 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
 
-const ANALYSE_API = "https://droitgpt-analysepdf.onrender.com"; // ton service analyse
-// IMPORTANT: assure-toi que côté server.js tu montes analyseDocument.js sur /analyse
-// et que /analyse/text est accessible.
+const ANALYSE_API = "https://droitgpt-analysepdf.onrender.com";
+
+// ✅ clé partagée avec ChatInterface.jsx
+const ACTIVE_DOC_KEY = "droitgpt_active_document_context";
+
+// ✅ limite soft pour le chat (on garde TOUT pour le rapport / PDF, mais on évite de casser le chat si énorme)
+const MAX_CHAT_CONTEXT_CHARS = 120000; // ~120k chars (tu peux monter/descendre)
 
 export default function Analyse() {
   const navigate = useNavigate();
@@ -55,7 +59,7 @@ export default function Analyse() {
     const start = Date.now();
     const interval = setInterval(() => {
       const elapsed = Date.now() - start;
-      // courbe lente: 0 -> 92% en ~45s, puis le final à la fin réelle
+      // 0 -> 92% en ~45s (lent), puis 100% à la fin réelle
       const target = Math.min(92, Math.floor((elapsed / 45000) * 92));
       setProgress((p) => (p < target ? p + 1 : p));
     }, 380);
@@ -75,9 +79,18 @@ export default function Analyse() {
     return (tmp.textContent || tmp.innerText || "").trim();
   };
 
+  const cleanTextForChat = (t) => {
+    // Nettoyage léger + limite “soft” pour chat
+    const s = String(t || "").replace(/\uFFFD/g, "").trim();
+    if (s.length <= MAX_CHAT_CONTEXT_CHARS) return s;
+    // on garde début + fin, utile juridiquement (pages de fin contiennent parfois conclusions/signatures)
+    const head = s.slice(0, Math.floor(MAX_CHAT_CONTEXT_CHARS * 0.7));
+    const tail = s.slice(-Math.floor(MAX_CHAT_CONTEXT_CHARS * 0.3));
+    return `${head}\n\n[...TRONQUÉ POUR LE CHAT: document très long...]\n\n${tail}`;
+  };
+
   // ---------- PDF -> images (si pdf scanné)
   async function pdfToImageFiles(pdfFile, { scale = 2.2, maxPages = 25 } = {}) {
-    // pdfjs dynamique (frontend)
     const pdfjsLib = await import("pdfjs-dist/build/pdf");
     const pdfjsWorker = await import("pdfjs-dist/build/pdf.worker?url");
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker.default;
@@ -114,7 +127,7 @@ export default function Analyse() {
     const formData = new FormData();
     formData.append("file", uploadFile);
 
-    // OCR activé sur images & sur PDF si tu veux détecter scanned
+    // OCR activé
     formData.append("useOcr", "1");
     formData.append("ocrLang", "fra+eng");
     formData.append("useOcrPreprocess", "1");
@@ -130,7 +143,6 @@ export default function Analyse() {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      // scanned pdf détecté
       if (res.status === 422 && data?.scannedPdf) {
         const e = new Error(data?.details || "PDF scanné détecté");
         e.code = "SCANNED_PDF";
@@ -176,16 +188,18 @@ export default function Analyse() {
     return results;
   }
 
-  // ---------- Rapport final (ce que tu veux)
+  // ---------- Rapport final
   const buildFinalReportHtml = ({ title, pages, fullText, analysisHtml }) => {
     const low = pages.filter((p) => Number.isFinite(p.confidence) && p.confidence < 35).length;
 
     return `
       <h2>${escapeHtml(title || "Rapport OCR + Analyse")}</h2>
 
-      ${low > 0
-        ? `<p><strong>⚠️ Qualité faible détectée :</strong> ${low} page(s) ont une confiance OCR < 35%.</p>`
-        : ""}
+      ${
+        low > 0
+          ? `<p><strong>⚠️ Qualité faible détectée :</strong> ${low} page(s) ont une confiance OCR < 35%.</p>`
+          : ""
+      }
 
       <h2>Texte OCR complet (corrigé)</h2>
       <p style="white-space:pre-wrap">${escapeHtml(fullText || "")}</p>
@@ -195,7 +209,7 @@ export default function Analyse() {
     `.trim();
   };
 
-  // ---------- Main flow images/PDF scanné
+  // ---------- OCR multi-pages -> analyse globale
   async function runImagesFlow(filesArr, titleForDoc) {
     if (!filesArr?.length) throw new Error("Aucune page à analyser.");
 
@@ -214,22 +228,18 @@ export default function Analyse() {
     setPieces(init);
 
     const results = [...init];
-
-    // stratégie auto : 3 si court, 2 si long
     const concurrency = filesArr.length <= 6 ? 3 : 2;
-
     let done = 0;
 
     await runPool(
       filesArr,
       concurrency,
       async (f, i) => {
-        const id = init[i].id;
         results[i] = { ...results[i], status: "en cours", error: "" };
         setPieces([...results]);
 
         try {
-          // ✅ OCR ONLY ici (rapide) — l’analyse globale se fera après
+          // ✅ OCR ONLY
           const data = await postAnalyseSingle(f, { skipAnalysis: true });
 
           results[i] = {
@@ -242,7 +252,6 @@ export default function Analyse() {
           results[i] = { ...results[i], status: "erreur", error: e?.message || "Erreur OCR" };
         } finally {
           done++;
-          // on laisse la progress simulée, mais on pousse un peu quand même
           setProgress((p) => Math.min(96, Math.max(p, Math.round((done / filesArr.length) * 92))));
           setPieces([...results]);
         }
@@ -306,13 +315,12 @@ export default function Analyse() {
         if (!file) throw new Error("Veuillez sélectionner un fichier.");
 
         try {
-          // PDF texte / DOCX : analyse classique (non tronquée)
+          // PDF texte / DOCX
           const data = await postAnalyseSingle(file, { skipAnalysis: false });
 
           setDocTitle(file.name);
           setDocContext(data.documentText || "");
 
-          // rapport final = texte + analyse (global)
           const finalHtml = buildFinalReportHtml({
             title: file.name,
             pages: [],
@@ -331,7 +339,7 @@ export default function Analyse() {
           setHistory(updatedHistory);
           localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
         } catch (e) {
-          // scanned PDF → conversion images → OCR only → analyse globale
+          // scanned PDF -> pdf->images -> OCR -> analyse globale
           if (e?.code === "SCANNED_PDF" && file.name.toLowerCase().endsWith(".pdf")) {
             const scaleAuto = file.size > 6 * 1024 * 1024 ? 2.05 : 2.25;
 
@@ -348,7 +356,6 @@ export default function Analyse() {
           }
         }
       } else {
-        // mode images
         await runImagesFlow(imageFiles, `Dossier OCR (${imageFiles.length} pages)`);
       }
     } catch (err) {
@@ -364,7 +371,7 @@ export default function Analyse() {
     }
   };
 
-  // ---------- Download PDF (texte complet + analyse)
+  // ---------- Download PDF
   const handleDownloadPDF = () => {
     if (!analysis) return;
 
@@ -392,24 +399,22 @@ export default function Analyse() {
     doc.save("rapport_ocr_analyse.pdf");
   };
 
-  // ---------- Chat with document (fix: state + localStorage)
+  // ---------- Chat with document (fix)
   const handleChatWithDocument = () => {
     if (!docContext) return;
 
-    // ✅ stocke aussi dans localStorage pour être sûr
-    localStorage.setItem(
-      "droitgpt_active_document_context",
-      JSON.stringify({
-        filename: docTitle || "Document analysé",
-        documentText: docContext,
-        ts: Date.now(),
-      })
-    );
+    const payload = {
+      filename: docTitle || "Document analysé",
+      documentText: cleanTextForChat(docContext), // ✅ limite soft pour chat
+      ts: Date.now(),
+    };
+
+    localStorage.setItem(ACTIVE_DOC_KEY, JSON.stringify(payload));
 
     navigate("/chat", {
       state: {
-        documentText: docContext,
-        filename: docTitle || "Document analysé",
+        documentText: payload.documentText,
+        filename: payload.filename,
         fromAnalyse: true,
       },
     });
@@ -564,7 +569,7 @@ export default function Analyse() {
               {error && <div className="mt-3 text-sm text-rose-300">❌ {error}</div>}
             </div>
 
-            {/* Confiance par page (simple, utile) */}
+            {/* Confiance par page */}
             {pieces.length > 0 && (
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-3">
                 <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Pages & confiance OCR</div>
