@@ -6,6 +6,44 @@ import { useAuth } from "../auth/AuthContext.jsx";
 
 const ANALYSE_API = "https://droitgpt-analysepdf.onrender.com/analyse-document";
 
+/**
+ * ✅ Conversion PDF scanné -> images (client-side)
+ * Optimisé vitesse: scale par défaut 2.3 (au lieu de 3.0)
+ */
+async function pdfToImageFiles(pdfFile, { scale = 2.3, maxPages = 25 } = {}) {
+  const pdfjsLib = await import("pdfjs-dist/build/pdf");
+  const workerModule = await import("pdfjs-dist/build/pdf.worker?url");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerModule.default;
+
+  const arrayBuffer = await pdfFile.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  const totalPages = pdf.numPages;
+  const pagesToRender = Math.min(totalPages, maxPages);
+
+  const imageFiles = [];
+
+  for (let pageNum = 1; pageNum <= pagesToRender; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1.0));
+    if (!blob) continue;
+
+    imageFiles.push(new File([blob], `page_${pageNum}.png`, { type: "image/png" }));
+  }
+
+  return { imageFiles, totalPages, renderedPages: pagesToRender };
+}
+
 function isImageFile(f) {
   const n = String(f?.name || "").toLowerCase();
   return (
@@ -22,6 +60,9 @@ function isDocFile(f) {
   const n = String(f?.name || "").toLowerCase();
   return n.endsWith(".pdf") || n.endsWith(".docx");
 }
+function isPdfFile(f) {
+  return String(f?.name || "").toLowerCase().endsWith(".pdf");
+}
 
 function safePlainFromHtml(html) {
   if (!html) return "";
@@ -34,7 +75,6 @@ function safePlainFromHtml(html) {
     .trim();
 }
 
-// Evite d'injecter du texte brut dans du HTML combiné
 function escapeHtml(str) {
   return String(str || "")
     .replace(/&/g, "&amp;")
@@ -44,22 +84,41 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
-export default function Analyse() {
-  // ✅ Upload mode: "doc" (PDF/DOCX) or "images"
-  const [mode, setMode] = useState("doc");
+/**
+ * ✅ Pool de promesses pour paralléliser (2 pages à la fois)
+ */
+async function runPool(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let idx = 0;
+  let done = 0;
 
-  // DOC (single)
+  async function next() {
+    const current = idx++;
+    if (current >= items.length) return;
+    results[current] = await worker(items[current], current);
+    done++;
+    return next();
+  }
+
+  const starters = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
+  await Promise.all(starters);
+
+  return results;
+}
+
+export default function Analyse() {
+  const [mode, setMode] = useState("doc");
   const [file, setFile] = useState(null);
 
-  // IMAGES (multi)
-  const [imageFiles, setImageFiles] = useState([]); // File[]
-  const [pieces, setPieces] = useState([]); // { id, name, status, error, analysisHtml, extractedText, ocrUsed }
+  const [imageFiles, setImageFiles] = useState([]);
+  const [pieces, setPieces] = useState([]);
 
   // OCR options
   const [useOcr, setUseOcr] = useState(true);
   const [ocrLang, setOcrLang] = useState("fra+eng");
+  const [useOcrPreprocess, setUseOcrPreprocess] = useState(true);
+  const [useOcrCleanup, setUseOcrCleanup] = useState(true);
 
-  // Output (global/combined)
   const [analysis, setAnalysis] = useState("");
   const [docContext, setDocContext] = useState(null);
   const [docTitle, setDocTitle] = useState(null);
@@ -75,7 +134,6 @@ export default function Analyse() {
 
   const navigate = useNavigate();
 
-  // ✅ Auth
   const { accessToken, logout } = useAuth();
   const authHeaders = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
@@ -110,11 +168,11 @@ export default function Analyse() {
       analysisHtml: "",
       extractedText: "",
       ocrUsed: false,
+      confidence: null,
     }));
     setPieces(mapped);
   };
 
-  // Progress UI (simulé)
   const simulateProgress = () => {
     setProgress(0);
     let value = 0;
@@ -134,10 +192,13 @@ export default function Analyse() {
     const formData = new FormData();
     formData.append("file", oneFile);
 
-    // OCR: seulement si image (sinon inutile)
-    const shouldOcr = useOcr && isImageFile(oneFile);
+    // ✅ OCR activé aussi pour PDF (scannedPdf detection)
+    const shouldOcr = useOcr && (isImageFile(oneFile) || isPdfFile(oneFile));
     formData.append("useOcr", shouldOcr ? "1" : "0");
+
     formData.append("ocrLang", ocrLang);
+    formData.append("useOcrPreprocess", useOcrPreprocess ? "1" : "0");
+    formData.append("useOcrCleanup", useOcrCleanup ? "1" : "0");
 
     const res = await fetch(ANALYSE_API, {
       method: "POST",
@@ -145,7 +206,6 @@ export default function Analyse() {
       body: formData,
     });
 
-    // ✅ Si non authentifié (backend protégé)
     if (res.status === 401) {
       logout();
       const next = encodeURIComponent("/analyse");
@@ -159,9 +219,17 @@ export default function Analyse() {
     if (!res.ok) {
       try {
         const j = JSON.parse(rawText || "{}");
-        throw new Error(j?.details || j?.error || `Erreur (${res.status})`);
-      } catch {
-        throw new Error(rawText?.slice(0, 220) || `Erreur (${res.status})`);
+        const msg = j?.details || j?.error || `Erreur (${res.status})`;
+        if (res.status === 422 && j?.scannedPdf) {
+          const err = new Error(msg);
+          err.code = "SCANNED_PDF";
+          err.details = j;
+          throw err;
+        }
+        throw new Error(msg);
+      } catch (e) {
+        if (e?.code === "SCANNED_PDF") throw e;
+        throw new Error(rawText?.slice(0, 240) || `Erreur (${res.status})`);
       }
     }
 
@@ -175,16 +243,20 @@ export default function Analyse() {
   const buildCombinedHtmlFromPieces = (arr) => {
     const ok = Array.isArray(arr) ? arr : [];
 
-    // ✅ Rapport final demandé : texte OCR + analyse (pas d’images)
+    const low = ok.filter((p) => Number.isFinite(p.confidence) && p.confidence < 35).length;
+    const banner =
+      low > 0
+        ? `<p><strong>⚠️ Qualité faible détectée :</strong> ${low} page(s) ont une confiance OCR < 35%.
+           Recommandation : refaire la photo/scan (meilleure lumière, page à plat, zoom), ou utiliser un scan plus net.</p>`
+        : "";
+
     const blocks = ok
       .map((p, i) => {
         const title = `Pièce ${i + 1} — ${p.name}`;
-
-        const ocrText = (p.extractedText || "").trim();
-        const ocrBlock = `
-          <h3>${title} — Texte OCR extrait</h3>
-          <p>${escapeHtml(ocrText || "Texte OCR indisponible.")}</p>
-        `;
+        const conf = Number.isFinite(p.confidence) ? ` (${p.confidence}%)` : "";
+        const extracted = `<h3>${title} — Texte OCR extrait${conf}</h3><p>${escapeHtml(
+          (p.extractedText || "").slice(0, 4000) || "Texte OCR indisponible."
+        )}</p>`;
 
         const analysisBlock = p.analysisHtml
           ? `<h3>${title} — Analyse</h3>${p.analysisHtml}`
@@ -194,15 +266,101 @@ export default function Analyse() {
           ? `<h3>${title} — Erreur</h3><p>${escapeHtml(p.error)}</p>`
           : "";
 
-        return `${err}${ocrBlock}${analysisBlock}`;
+        return `${err}${extracted}${analysisBlock}`;
       })
       .join("");
 
     return `
       <h2>Rapport OCR + Analyse</h2>
-      <p>Ce rapport contient uniquement le texte OCR extrait, suivi de l’analyse juridique pour chaque pièce.</p>
+      <p>Rapport texte uniquement (OCR + analyse). Une confiance (%) est estimée par page.</p>
+      ${banner}
       ${blocks || "<p>Aucune pièce analysée.</p>"}
     `.trim();
+  };
+
+  // ✅ pipeline multi-images optimisé: concurrency=2
+  const runImagesFlow = async (filesArr, titleForDoc = null) => {
+    if (!filesArr?.length) throw new Error("Aucune image à analyser.");
+
+    setMode("images");
+    setFile(null);
+    setImageFiles(filesArr);
+
+    const init = filesArr.map((f, idx) => ({
+      id: `p_${Date.now()}_${idx}`,
+      name: f.name,
+      status: "en attente",
+      error: "",
+      analysisHtml: "",
+      extractedText: "",
+      ocrUsed: false,
+      confidence: null,
+    }));
+    setPieces(init);
+
+    const results = [...init];
+    let completed = 0;
+
+    const out = await runPool(filesArr, 2, async (f, i) => {
+      const id = init[i].id;
+
+      updatePiece(id, { status: "en cours", error: "" });
+      results[i] = { ...results[i], status: "en cours", error: "" };
+
+      try {
+        const data = await postAnalyseSingle(f);
+        if (!data) return null;
+
+        const patched = {
+          status: "terminé",
+          analysisHtml: data.analysis || "<p>Analyse vide.</p>",
+          extractedText: data.documentText || "",
+          ocrUsed: !!data.ocrUsed,
+          confidence: Number.isFinite(data.ocrConfidence) ? data.ocrConfidence : null,
+        };
+
+        updatePiece(id, patched);
+        results[i] = { ...results[i], ...patched };
+      } catch (e) {
+        const patched = { status: "erreur", error: e?.message || "Erreur analyse" };
+        updatePiece(id, patched);
+        results[i] = { ...results[i], ...patched };
+      } finally {
+        completed++;
+        setProgress(Math.round((completed / filesArr.length) * 100));
+      }
+
+      return results[i];
+    });
+
+    // sync final
+    setPieces(results);
+
+    const combinedHtml = buildCombinedHtmlFromPieces(results);
+    setAnalysis(combinedHtml);
+
+    const mergedText = results
+      .map((p, idx) => {
+        const t = (p.extractedText || "").trim();
+        if (!t) return "";
+        return `--- PAGE ${idx + 1}: ${p.name} ---\n${t}\n`;
+      })
+      .filter(Boolean)
+      .join("\n");
+
+    setDocContext(mergedText || null);
+    setDocTitle(titleForDoc || `Dossier OCR (${filesArr.length} pages)`);
+
+    const record = {
+      filename: titleForDoc || `Dossier OCR (${filesArr.length} pages)`,
+      timestamp: new Date().toLocaleString(),
+      content: combinedHtml,
+    };
+    const updatedHistory = [record, ...history.slice(0, 9)];
+    setHistory(updatedHistory);
+    localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
+
+    return out;
   };
 
   const handleAnalyse = async () => {
@@ -211,7 +369,7 @@ export default function Analyse() {
       setError(
         mode === "doc"
           ? "Veuillez sélectionner un fichier PDF ou DOCX."
-          : "Veuillez sélectionner une ou plusieurs images (JPG/PNG/WebP/TIFF/BMP)."
+          : "Veuillez sélectionner une ou plusieurs images."
       );
       return;
     }
@@ -221,111 +379,50 @@ export default function Analyse() {
     const interval = simulateProgress();
 
     try {
-      // ======================
-      // MODE DOC (PDF/DOCX)
-      // ======================
       if (mode === "doc") {
-        if (!file || !isDocFile(file)) {
-          throw new Error("Format non supporté. Choisissez un PDF ou DOCX.");
+        if (!file || !isDocFile(file)) throw new Error("Format non supporté. Choisissez un PDF ou DOCX.");
+
+        try {
+          const data = await postAnalyseSingle(file);
+          if (!data) return;
+
+          const htmlAnalysis = data.analysis || "❌ Analyse vide.";
+          setAnalysis(htmlAnalysis);
+          setDocContext(data.documentText || null);
+          setDocTitle(file.name);
+
+          const record = {
+            filename: file.name,
+            timestamp: new Date().toLocaleString(),
+            content: htmlAnalysis,
+          };
+          const updatedHistory = [record, ...history.slice(0, 9)];
+          setHistory(updatedHistory);
+          localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
+        } catch (e) {
+          if (e?.code === "SCANNED_PDF" && file.name.toLowerCase().endsWith(".pdf")) {
+            // ✅ scale dynamique (rapide + qualité)
+            const scaleAuto = file.size > 6 * 1024 * 1024 ? 2.1 : 2.3;
+
+            const { imageFiles: imgs, totalPages, renderedPages } = await pdfToImageFiles(file, {
+              scale: scaleAuto,
+              maxPages: 25,
+            });
+
+            if (!imgs.length) {
+              throw new Error("Impossible de convertir ce PDF en images. Réessaie avec un PDF moins lourd.");
+            }
+
+            await runImagesFlow(imgs, `PDF scanné (${renderedPages}/${totalPages} pages)`);
+          } else {
+            throw e;
+          }
         }
-
-        const data = await postAnalyseSingle(file);
-        if (!data) return;
-
-        const htmlAnalysis = data.analysis || "❌ Analyse vide.";
-        setAnalysis(htmlAnalysis);
-        setDocContext(data.documentText || null);
-        setDocTitle(file.name);
-
-        const record = {
-          filename: file.name,
-          timestamp: new Date().toLocaleString(),
-          content: htmlAnalysis,
-        };
-        const updatedHistory = [record, ...history.slice(0, 9)];
-        setHistory(updatedHistory);
-        localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
       }
 
-      // ======================
-      // MODE IMAGES (multi)
-      // ======================
       if (mode === "images") {
         if (!imageFiles.length) throw new Error("Sélectionnez au moins une image.");
-
-        // init pieces (UI)
-        const init = imageFiles.map((f, idx) => ({
-          id: `p_${Date.now()}_${idx}`,
-          name: f.name,
-          status: "en attente",
-          error: "",
-          analysisHtml: "",
-          extractedText: "",
-          ocrUsed: false,
-        }));
-        setPieces(init);
-
-        // ✅ Stockage local fiable des résultats (pas de dépendance au state)
-        const results = [...init];
-
-        // traitement séquentiel
-        for (let i = 0; i < imageFiles.length; i++) {
-          const f = imageFiles[i];
-          const id = init[i].id;
-
-          updatePiece(id, { status: "en cours", error: "" });
-          results[i] = { ...results[i], status: "en cours", error: "" };
-
-          try {
-            const data = await postAnalyseSingle(f);
-            if (!data) return;
-
-            const patched = {
-              status: "terminé",
-              analysisHtml: data.analysis || "<p>Analyse vide.</p>",
-              extractedText: data.documentText || "",
-              ocrUsed: !!data.ocrUsed,
-            };
-
-            updatePiece(id, patched);
-            results[i] = { ...results[i], ...patched };
-          } catch (e) {
-            const patched = { status: "erreur", error: e?.message || "Erreur analyse" };
-            updatePiece(id, patched);
-            results[i] = { ...results[i], ...patched };
-          }
-
-          setProgress(Math.round(((i + 1) / imageFiles.length) * 100));
-        }
-
-        // ✅ Synchronise l’état final une seule fois
-        setPieces(results);
-
-        const combinedHtml = buildCombinedHtmlFromPieces(results);
-        setAnalysis(combinedHtml);
-
-        // docContext = concat texte OCR (utile pour /chat)
-        const mergedText = results
-          .map((p, idx) => {
-            const t = (p.extractedText || "").trim();
-            if (!t) return "";
-            return `--- PIECE ${idx + 1}: ${p.name} ---\n${t}\n`;
-          })
-          .filter(Boolean)
-          .join("\n");
-
-        setDocContext(mergedText || null);
-        setDocTitle(`Dossier OCR (${imageFiles.length} images)`);
-
-        // Historique
-        const record = {
-          filename: `Dossier OCR (${imageFiles.length} images)`,
-          timestamp: new Date().toLocaleString(),
-          content: combinedHtml,
-        };
-        const updatedHistory = [record, ...history.slice(0, 9)];
-        setHistory(updatedHistory);
-        localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
+        await runImagesFlow(imageFiles, `Dossier OCR (${imageFiles.length} images)`);
       }
     } catch (err) {
       console.error("❌ Erreur analyse :", err);
@@ -340,71 +437,13 @@ export default function Analyse() {
     }
   };
 
-  // ✅ PDF final demandé :
-  // - si mode images : TEXTE OCR + ANALYSE par pièce (pas d’images)
-  // - si mode doc : analyse classique (comme avant)
   const handleDownloadPDF = () => {
-    if (mode === "images") {
-      if (!pieces.length) return;
-
-      const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("📄 DroitGPT — Rapport OCR + Analyse", 20, 20);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
-
-      let y = 32;
-
-      const addBlock = (title, text) => {
-        if (y > 270) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(12);
-        doc.text(title, 20, y);
-        y += 7;
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(11);
-        const lines = doc.splitTextToSize(text || "", 170);
-        doc.text(lines, 20, y);
-        y += lines.length * 5 + 8;
-      };
-
-      addBlock(
-        "Résumé",
-        `Rapport généré le ${new Date().toLocaleString()} — ${pieces.length} pièce(s).`
-      );
-
-      addBlock("1) Texte OCR extrait", "");
-      pieces.forEach((p, idx) => {
-        const ocr = (p.extractedText || "").trim();
-        addBlock(`Pièce ${idx + 1} — ${p.name}`, ocr || "Texte OCR indisponible.");
-      });
-
-      addBlock("2) Analyse juridique", "");
-      pieces.forEach((p, idx) => {
-        const ana = safePlainFromHtml(p.analysisHtml || "").trim();
-        addBlock(
-          `Analyse — Pièce ${idx + 1} — ${p.name}`,
-          ana || "Analyse indisponible."
-        );
-      });
-
-      doc.save(`rapport_ocr_analyse_${pieces.length}_pieces.pdf`);
-      return;
-    }
-
-    // mode doc
     if (!analysis) return;
+
     const doc = new jsPDF();
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.text("📄 Analyse Juridique – DroitGPT", 20, 20);
-
+    doc.text("📄 DroitGPT — Rapport OCR + Analyse", 20, 20);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
 
@@ -412,12 +451,7 @@ export default function Analyse() {
     const lines = doc.splitTextToSize(plain, 170);
     doc.text(lines, 20, 32);
 
-    doc.save("analyse_juridique.pdf");
-  };
-
-  const handleResetHistory = () => {
-    localStorage.removeItem("analyseHistory");
-    setHistory([]);
+    doc.save(mode === "images" ? "rapport_ocr_analyse.pdf" : "analyse_juridique.pdf");
   };
 
   const handleChatWithDocument = () => {
@@ -434,17 +468,12 @@ export default function Analyse() {
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-        {/* Header */}
         <div className="px-4 md:px-6 py-4 border-b border-white/10 bg-slate-950/70 flex items-center justify-between gap-3">
           <div>
-            <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-              DroitGPT • Analyse de documents
-            </span>
-            <h1 className="text-lg md:text-xl font-semibold mt-1">
-              Analyse PDF/DOCX + OCR manuscrits (multi-images)
-            </h1>
+            <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">DroitGPT • Analyse de documents</span>
+            <h1 className="text-lg md:text-xl font-semibold mt-1">Analyse PDF/DOCX + OCR manuscrits (multi-pages)</h1>
             <p className="text-[11px] text-slate-400 mt-1">
-              PDF/DOCX (texte) ou photos/scans manuscrits. OCR sur images + analyse juridique RDC.
+              PDF scanné supporté : conversion auto → OCR → analyse (texte seulement).
             </p>
           </div>
 
@@ -472,15 +501,10 @@ export default function Analyse() {
           </div>
         </div>
 
-        {/* Corps */}
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6 py-4 bg-slate-950/70">
-          {/* Colonne gauche : upload + actions */}
           <div className="space-y-4">
-            {/* Mode selector */}
             <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-3">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                Mode d’analyse
-              </div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Mode d’analyse</div>
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"
@@ -496,8 +520,9 @@ export default function Analyse() {
                       : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
                   }`}
                 >
-                  📄 PDF/DOCX (1 fichier)
+                  📄 PDF/DOCX (inclut PDF scanné)
                 </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -516,49 +541,37 @@ export default function Analyse() {
               </div>
             </div>
 
-            {/* Upload box */}
             <div className="rounded-2xl border border-dashed border-slate-600 bg-slate-900/60 px-4 py-4 flex flex-col gap-3">
               {mode === "doc" ? (
                 <>
                   <p className="text-sm text-slate-200">
-                    📁 <strong>Sélectionnez un document PDF ou DOCX</strong>
+                    📁 <strong>Sélectionnez un PDF/DOCX</strong> (PDF scanné accepté)
                   </p>
-                  <p className="text-xs text-slate-400">
-                    Pour PDF scanné (image), utilise plutôt le mode multi-images (OCR).
-                  </p>
-
                   <label className="mt-1 cursor-pointer inline-flex items-center justify-center px-4 py-2 rounded-xl bg-slate-800 border border-slate-600 text-sm text-slate-100 hover:bg-slate-700 transition">
                     Choisir un fichier
                     <input type="file" accept=".pdf,.docx" hidden onChange={handleFileChange} />
                   </label>
-
                   {file && (
                     <p className="text-xs text-emerald-300 mt-1">
                       ✅ Fichier sélectionné : <strong>{file.name}</strong>
                     </p>
                   )}
+                  <p className="text-[11px] text-slate-400">
+                    Si le PDF est scanné, DroitGPT convertit automatiquement les pages en images (optimisé vitesse) puis applique l’OCR.
+                  </p>
                 </>
               ) : (
                 <>
                   <p className="text-sm text-slate-200">
-                    🧾 <strong>Uploader plusieurs images (scans / manuscrits)</strong>
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    Formats: JPG/PNG/WebP/TIFF/BMP. Conseillé: photos nettes, bonne lumière, page à plat.
+                    🧾 <strong>Uploader plusieurs images (manuscrits / scans)</strong>
                   </p>
 
-                  {/* OCR toggle */}
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <div>
-                        <div className="text-xs font-semibold text-slate-100">
-                          ✅ OCR activé
-                        </div>
-                        <div className="text-[11px] text-slate-400 mt-1">
-                          L’OCR s’applique automatiquement aux images.
-                        </div>
+                        <div className="text-xs font-semibold text-slate-100">✅ OCR</div>
+                        <div className="text-[11px] text-slate-400">Extraction du texte à partir des images.</div>
                       </div>
-
                       <button
                         type="button"
                         onClick={() => setUseOcr((v) => !v)}
@@ -572,17 +585,53 @@ export default function Analyse() {
                       </button>
                     </div>
 
-                    <div className="mt-2 flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-400">Langue OCR:</span>
                       <select
                         value={ocrLang}
                         onChange={(e) => setOcrLang(e.target.value)}
                         className="text-xs bg-slate-900/70 border border-white/10 rounded-xl px-2 py-1 text-slate-100"
                       >
-                        <option value="fra+eng">Français + Anglais (recommandé)</option>
+                        <option value="fra+eng">Français + Anglais</option>
                         <option value="fra">Français</option>
                         <option value="eng">Anglais</option>
                       </select>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-100">🧼 Prétraitement (scanner)</div>
+                        <div className="text-[11px] text-slate-400">Optimisé vitesse (moins d’essais).</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setUseOcrPreprocess((v) => !v)}
+                        className={`px-3 py-1.5 rounded-xl text-xs border transition ${
+                          useOcrPreprocess
+                            ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-100"
+                            : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
+                        }`}
+                      >
+                        {useOcrPreprocess ? "Activé" : "Désactivé"}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-100">🧠 Correction IA contrôlée</div>
+                        <div className="text-[11px] text-slate-400">Auto si confiance faible (backend).</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setUseOcrCleanup((v) => !v)}
+                        className={`px-3 py-1.5 rounded-xl text-xs border transition ${
+                          useOcrCleanup
+                            ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-100"
+                            : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
+                        }`}
+                      >
+                        {useOcrCleanup ? "Activé" : "Désactivé"}
+                      </button>
                     </div>
                   </div>
 
@@ -598,9 +647,7 @@ export default function Analyse() {
                   </label>
 
                   {imageFiles.length > 0 && (
-                    <p className="text-xs text-emerald-300 mt-1">
-                      ✅ {imageFiles.length} image(s) sélectionnée(s)
-                    </p>
+                    <p className="text-xs text-emerald-300 mt-1">✅ {imageFiles.length} image(s) sélectionnée(s)</p>
                   )}
                 </>
               )}
@@ -620,16 +667,12 @@ export default function Analyse() {
 
             {loading && (
               <div className="w-full bg-slate-800 rounded-full h-2 mt-1 overflow-hidden">
-                <div
-                  className="bg-emerald-500 h-2 rounded-full transition-all duration-200 ease-out"
-                  style={{ width: `${progress}%` }}
-                />
+                <div className="bg-emerald-500 h-2 rounded-full transition-all duration-200 ease-out" style={{ width: `${progress}%` }} />
               </div>
             )}
 
             {error && <p className="text-xs text-red-400 mt-1">❌ {error}</p>}
 
-            {/* Actions PDF / Reset */}
             {analysis && (
               <div className="flex gap-2">
                 <button
@@ -639,7 +682,10 @@ export default function Analyse() {
                   ⬇️ Télécharger le rapport (PDF)
                 </button>
                 <button
-                  onClick={handleResetHistory}
+                  onClick={() => {
+                    localStorage.removeItem("analyseHistory");
+                    setHistory([]);
+                  }}
                   className="inline-flex items-center justify-center px-4 py-2 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
                 >
                   ♻️ Reset
@@ -657,18 +703,12 @@ export default function Analyse() {
             )}
           </div>
 
-          {/* Colonne droite : résultat + (si mode images) liste des pièces */}
           <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 md:p-5 min-h-[420px]">
             {!analysis ? (
               <div className="text-sm text-slate-300">
                 {mode === "doc"
-                  ? "Téléverse un PDF/DOCX pour obtenir une analyse structurée."
-                  : "Téléverse plusieurs images (PV, notes manuscrites) pour OCR + analyse par pièce + rapport final (texte uniquement)."}
-                {mode === "images" && (
-                  <div className="mt-2 text-xs text-slate-400">
-                    Astuce : photo nette + bonne lumière + page à plat = meilleur OCR.
-                  </div>
-                )}
+                  ? "Téléverse un PDF/DOCX. Les PDF scannés sont convertis automatiquement puis OCR (optimisé vitesse)."
+                  : "Téléverse plusieurs images pour OCR + analyse + confiance (%) par page."}
               </div>
             ) : (
               <div
@@ -677,18 +717,12 @@ export default function Analyse() {
               />
             )}
 
-            {/* Pieces list */}
             {mode === "images" && pieces.length > 0 && (
               <div className="mt-6">
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Pièces (images)
-                </div>
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Pages / Pièces</div>
                 <div className="mt-2 space-y-2">
                   {pieces.map((p, idx) => (
-                    <details
-                      key={p.id}
-                      className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2"
-                    >
+                    <details key={p.id} className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2">
                       <summary className="cursor-pointer flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <div className="text-xs text-slate-200 font-medium truncate">
@@ -710,19 +744,14 @@ export default function Analyse() {
                               {p.status}
                             </span>
                             {p.ocrUsed ? " • OCR" : ""}
+                            {Number.isFinite(p.confidence) ? ` • Confiance: ${p.confidence}%` : ""}
                           </div>
                         </div>
 
-                        <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5">
-                          Ouvrir
-                        </span>
+                        <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5">Ouvrir</span>
                       </summary>
 
-                      {p.error && (
-                        <div className="mt-2 text-xs text-red-300">
-                          ❌ {p.error}
-                        </div>
-                      )}
+                      {p.error && <div className="mt-2 text-xs text-red-300">❌ {p.error}</div>}
 
                       {p.extractedText && (
                         <pre className="mt-2 whitespace-pre-wrap text-[11px] text-slate-200 bg-slate-950/60 border border-white/10 rounded-xl p-2 max-h-40 overflow-auto">
@@ -737,38 +766,6 @@ export default function Analyse() {
                         />
                       )}
                     </details>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Historique */}
-            {history?.length > 0 && (
-              <div className="mt-6">
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  Historique (10 derniers)
-                </div>
-                <div className="mt-2 space-y-2">
-                  {history.map((h, idx) => (
-                    <div
-                      key={idx}
-                      className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs text-slate-200 font-medium">
-                          {h.filename}
-                        </div>
-                        <div className="text-[11px] text-slate-400">
-                          {h.timestamp}
-                        </div>
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-1 line-clamp-2">
-                        {String(h.content || "")
-                          .replace(/<[^>]+>/g, "")
-                          .slice(0, 160)}
-                        …
-                      </div>
-                    </div>
                   ))}
                 </div>
               </div>

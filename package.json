@@ -11,6 +11,7 @@
     "@tailwindcss/typography": "^0.5.16",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
+    "pdfjs-dist": "^5.4.530",
     "pdfmake": "^0.2.20",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
