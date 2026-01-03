@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
 
@@ -7,8 +7,9 @@ const ANALYSE_API = "https://droitgpt-analysepdf.onrender.com";
 // ✅ clé partagée avec ChatInterface.jsx
 const ACTIVE_DOC_KEY = "droitgpt_active_document_context";
 
-// ✅ limite soft pour le chat (on garde TOUT pour le rapport / PDF, mais on évite de casser le chat si énorme)
-const MAX_CHAT_CONTEXT_CHARS = 120000; // ~120k chars (tu peux monter/descendre)
+// ✅ on laisse très large pour ne pas tronquer côté UI;
+// le backend /ask tronquera proprement si nécessaire.
+const MAX_CHAT_CONTEXT_CHARS = 300000;
 
 export default function Analyse() {
   const navigate = useNavigate();
@@ -59,10 +60,9 @@ export default function Analyse() {
     const start = Date.now();
     const interval = setInterval(() => {
       const elapsed = Date.now() - start;
-      // 0 -> 92% en ~45s (lent), puis 100% à la fin réelle
-      const target = Math.min(92, Math.floor((elapsed / 45000) * 92));
+      const target = Math.min(92, Math.floor((elapsed / 52000) * 92));
       setProgress((p) => (p < target ? p + 1 : p));
-    }, 380);
+    }, 420);
     return interval;
   };
 
@@ -80,13 +80,18 @@ export default function Analyse() {
   };
 
   const cleanTextForChat = (t) => {
-    // Nettoyage léger + limite “soft” pour chat
-    const s = String(t || "").replace(/\uFFFD/g, "").trim();
+    let s = String(t || "");
+    // nettoyages basiques
+    s = s.replace(/\uFFFD/g, ""); // replacement char
+    s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ""); // contrôle
+    s = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    s = s.trim();
+
     if (s.length <= MAX_CHAT_CONTEXT_CHARS) return s;
-    // on garde début + fin, utile juridiquement (pages de fin contiennent parfois conclusions/signatures)
-    const head = s.slice(0, Math.floor(MAX_CHAT_CONTEXT_CHARS * 0.7));
-    const tail = s.slice(-Math.floor(MAX_CHAT_CONTEXT_CHARS * 0.3));
-    return `${head}\n\n[...TRONQUÉ POUR LE CHAT: document très long...]\n\n${tail}`;
+
+    const head = s.slice(0, Math.floor(MAX_CHAT_CONTEXT_CHARS * 0.75));
+    const tail = s.slice(-Math.floor(MAX_CHAT_CONTEXT_CHARS * 0.25));
+    return `${head}\n\n[...DOCUMENT TROP LONG: PARTIE INTERMÉDIAIRE MASQUÉE POUR L’INTERFACE...]\n\n${tail}`;
   };
 
   // ---------- PDF -> images (si pdf scanné)
@@ -102,7 +107,6 @@ export default function Analyse() {
     const pagesToRender = Math.min(totalPages, maxPages);
 
     const imageFilesOut = [];
-
     for (let p = 1; p <= pagesToRender; p++) {
       const page = await pdf.getPage(p);
       const viewport = page.getViewport({ scale });
@@ -163,11 +167,10 @@ export default function Analyse() {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.details || data?.error || "Erreur analyse texte");
-
     return data;
   }
 
-  // ---------- Pool (frontend) pour OCR pages
+  // ---------- Pool (frontend)
   async function runPool(items, concurrency, worker, onEachDone) {
     let idx = 0;
     const results = new Array(items.length);
@@ -197,7 +200,7 @@ export default function Analyse() {
 
       ${
         low > 0
-          ? `<p><strong>⚠️ Qualité faible détectée :</strong> ${low} page(s) ont une confiance OCR < 35%.</p>`
+          ? `<p><strong>⚠️ Qualité faible détectée :</strong> ${low} page(s) ont une confiance OCR &lt; 35%.</p>`
           : ""
       }
 
@@ -239,7 +242,6 @@ export default function Analyse() {
         setPieces([...results]);
 
         try {
-          // ✅ OCR ONLY
           const data = await postAnalyseSingle(f, { skipAnalysis: true });
 
           results[i] = {
@@ -260,7 +262,6 @@ export default function Analyse() {
       }
     );
 
-    // ✅ Fusion texte complet
     const fullText = results
       .map((p, idx) => {
         const t = (p.extractedText || "").trim();
@@ -274,7 +275,6 @@ export default function Analyse() {
       throw new Error("OCR vide. Essaie un scan plus net (lumière, page à plat, zoom).");
     }
 
-    // ✅ Analyse globale unique
     const global = await postAnalyseText(fullText);
 
     const finalHtml = buildFinalReportHtml({
@@ -315,7 +315,6 @@ export default function Analyse() {
         if (!file) throw new Error("Veuillez sélectionner un fichier.");
 
         try {
-          // PDF texte / DOCX
           const data = await postAnalyseSingle(file, { skipAnalysis: false });
 
           setDocTitle(file.name);
@@ -339,7 +338,6 @@ export default function Analyse() {
           setHistory(updatedHistory);
           localStorage.setItem("analyseHistory", JSON.stringify(updatedHistory));
         } catch (e) {
-          // scanned PDF -> pdf->images -> OCR -> analyse globale
           if (e?.code === "SCANNED_PDF" && file.name.toLowerCase().endsWith(".pdf")) {
             const scaleAuto = file.size > 6 * 1024 * 1024 ? 2.05 : 2.25;
 
@@ -367,7 +365,7 @@ export default function Analyse() {
       setTimeout(() => {
         setLoading(false);
         setProgress(0);
-      }, 700);
+      }, 900);
     }
   };
 
@@ -399,23 +397,32 @@ export default function Analyse() {
     doc.save("rapport_ocr_analyse.pdf");
   };
 
-  // ---------- Chat with document (fix)
+  // ✅ CATAPULTE vers chat : TEXTE COMPLET OCR -> Chat (localStorage + state)
   const handleChatWithDocument = () => {
     if (!docContext) return;
 
+    const full = String(docContext || "").trim();
+    const cleaned = cleanTextForChat(full);
+
     const payload = {
-      filename: docTitle || "Document analysé",
-      documentText: cleanTextForChat(docContext), // ✅ limite soft pour chat
+      filename: docTitle || "Texte OCR extrait",
+      documentText: cleaned,          // ✅ ce que le chat peut envoyer directement
+      documentTextFull: full,         // ✅ sauvegarde complète (si votre ChatInterface veut l’utiliser)
       ts: Date.now(),
+      source: "analyse",
     };
 
     localStorage.setItem(ACTIVE_DOC_KEY, JSON.stringify(payload));
 
     navigate("/chat", {
       state: {
-        documentText: payload.documentText,
-        filename: payload.filename,
         fromAnalyse: true,
+        filename: payload.filename,
+        documentText: payload.documentText,
+        documentTextFull: payload.documentTextFull,
+        openDocPanel: true,
+        focusInput: true,
+        forceDocumentMode: true, // ✅ important: le chat doit activer “mode document”
       },
     });
   };
@@ -531,7 +538,7 @@ export default function Analyse() {
                 )}
               </div>
 
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleAnalyse}
                   disabled={!canAnalyse || loading}
@@ -622,9 +629,7 @@ export default function Analyse() {
           <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-3 overflow-auto">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Rapport</div>
             {!analysis ? (
-              <div className="mt-3 text-sm text-slate-300">
-                Sélectionne un PDF/DOCX ou des images, puis lance l’analyse.
-              </div>
+              <div className="mt-3 text-sm text-slate-300">Sélectionne un fichier puis lance l’analyse.</div>
             ) : (
               <div className="mt-3 prose prose-invert max-w-none">
                 <div dangerouslySetInnerHTML={{ __html: analysis }} />

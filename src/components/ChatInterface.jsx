@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
-import jsPDF from "jspdf";
 import { useAuth } from "../auth/AuthContext.jsx";
 
 const API_BASE = "https://droitgpt-indexer.onrender.com";
@@ -58,10 +57,17 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(false);
   const [dots, setDots] = useState("");
 
-  // ✅ Document actif (injecté dans le chat)
+  // ✅ Document actif
   const [activeDoc, setActiveDoc] = useState(null);
 
+  // ✅ mode document forcé quand doc chargé
+  const [documentMode, setDocumentMode] = useState(false);
+
+  // ✅ panneau “voir texte extrait”
+  const [showDocText, setShowDocText] = useState(false);
+
   const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
   const location = useLocation();
 
   /* =======================
@@ -74,9 +80,7 @@ export default function ChatInterface() {
   useEffect(() => {
     let interval;
     if (loading) {
-      interval = setInterval(() => {
-        setDots((d) => (d.length < 3 ? d + "." : ""));
-      }, 500);
+      interval = setInterval(() => setDots((d) => (d.length < 3 ? d + "." : "")), 500);
     } else {
       setDots("");
     }
@@ -87,18 +91,43 @@ export default function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // ✅ Récupère le document depuis Analyse.jsx (state) + fallback localStorage
+  // ✅ Catapulte: récupère le document depuis Analyse.jsx (state) + fallback localStorage
   useEffect(() => {
     const st = location?.state;
 
-    if (st?.fromAnalyse && st?.documentText) {
+    if (st?.fromAnalyse && (st?.documentText || st?.documentTextFull)) {
       const payload = {
-        filename: st.filename || "Document analysé",
-        documentText: String(st.documentText || ""),
+        filename: st.filename || st.documentTitle || "Texte OCR extrait",
+        documentText: String(st.documentText || st.documentTextFull || ""),
+        documentTextFull: String(st.documentTextFull || st.documentText || ""),
         ts: Date.now(),
       };
+
       setActiveDoc(payload);
       localStorage.setItem(ACTIVE_DOC_KEY, JSON.stringify(payload));
+
+      // ✅ force mode document quand on arrive depuis analyse
+      setDocumentMode(true);
+
+      if (st?.openDocPanel) setShowDocText(true);
+      if (st?.focusInput) setTimeout(() => inputRef.current?.focus(), 80);
+
+      // petite info au user (sans spam)
+      setMessages((prev) => {
+        const already = prev.some((m) => m?.meta === "DOC_LOADED");
+        if (already) return prev;
+        return [
+          ...prev,
+          {
+            from: "assistant",
+            meta: "DOC_LOADED",
+            text:
+              `<p>📎 <strong>Document chargé.</strong><br/>` +
+              `Je répondrai en me basant sur ce document. Pose ta question.</p>`,
+          },
+        ];
+      });
+
       return;
     }
 
@@ -106,7 +135,10 @@ export default function ChatInterface() {
       const raw = localStorage.getItem(ACTIVE_DOC_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed?.documentText) setActiveDoc(parsed);
+        if (parsed?.documentText) {
+          setActiveDoc(parsed);
+          setDocumentMode(true);
+        }
       }
     } catch {}
   }, [location]);
@@ -133,7 +165,7 @@ export default function ChatInterface() {
   };
 
   /* =======================
-     Streaming simulé (effet ChatGPT) — OPTIMISÉ
+     Streaming simulé
   ======================= */
   const typeWriterEffect = async (html) => {
     if (!html) return;
@@ -160,42 +192,28 @@ export default function ChatInterface() {
     }
   };
 
-  // ✅ Contexte doc injecté au backend (sans l’afficher comme message “normal”)
-  const buildContextMessage = () => {
-    if (!activeDoc?.documentText) return null;
-    const title = escapeHtml(activeDoc.filename || "Document");
-    const txt = escapeHtml(activeDoc.documentText);
-
-    return {
-      from: "assistant",
-      text:
-        `<strong>📎 CONTEXTE DOCUMENT (${title})</strong><br/>` +
-        `<em>Utilise ce texte comme base pour répondre aux questions.</em><br/><br/>` +
-        `<div style="white-space:pre-wrap">${txt}</div>`,
-      _hiddenContext: true, // juste un flag local, ignoré côté backend
-    };
-  };
-
   /* =======================
      Send
   ======================= */
   const handleSend = async () => {
     if (!userInput.trim() || loading) return;
 
-    const input = userInput.trim();
+    const visibleInput = userInput.trim();
     setUserInput("");
     setLoading(true);
 
-    // affichage dans l’UI
-    setMessages((p) => [...p, { from: "user", text: escapeHtml(input) }, { from: "assistant", text: "" }]);
+    // UI: affiche la question
+    setMessages((p) => [...p, { from: "user", text: escapeHtml(visibleInput) }, { from: "assistant", text: "" }]);
 
     try {
-      const contextMsg = buildContextMessage();
+      // ✅ Important : on envoie la conversation "normale"
+      const payloadMessages = [...messages, { from: "user", text: visibleInput }];
 
-      // ✅ Payload envoyé au backend : on injecte le contexte au début
-      const payloadMessages = contextMsg
-        ? [contextMsg, ...messages, { from: "user", text: input }]
-        : [...messages, { from: "user", text: input }];
+      // ✅ si documentMode actif, on envoie documentText
+      const docTextToSend =
+        documentMode && activeDoc?.documentText
+          ? activeDoc.documentText
+          : null;
 
       const res = await fetch(`${API_BASE}/ask`, {
         method: "POST",
@@ -206,12 +224,20 @@ export default function ChatInterface() {
         body: JSON.stringify({
           messages: payloadMessages,
           lang: "fr",
+          documentText: docTextToSend,
+          documentTitle: activeDoc?.filename || null,
         }),
       });
 
-      if (res.status === 401) return redirectToLogin();
+      // ✅ Ne plus déconnecter sur /ask (car /ask est public maintenant)
+      if (res.status === 401) {
+        updateLastAssistantMessage(
+          "<p>⚠️ Session non autorisée pour cette action. Réessaie ou reconnecte-toi.</p>"
+        );
+        return;
+      }
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       const answer = data?.answer || "<p>❌ Réponse vide.</p>";
 
       await typeWriterEffect(answer);
@@ -224,6 +250,8 @@ export default function ChatInterface() {
 
   const clearActiveDoc = () => {
     setActiveDoc(null);
+    setShowDocText(false);
+    setDocumentMode(false);
     try {
       localStorage.removeItem(ACTIVE_DOC_KEY);
     } catch {}
@@ -256,10 +284,7 @@ export default function ChatInterface() {
                 📂 Analyse document
               </Link>
 
-              <Link
-                to="/assistant-vocal"
-                className="px-3 py-1.5 rounded-full border border-emerald-500/80 text-emerald-200"
-              >
+              <Link to="/assistant-vocal" className="px-3 py-1.5 rounded-full border border-emerald-500/80 text-emerald-200">
                 🎤 Assistant vocal
               </Link>
 
@@ -269,16 +294,49 @@ export default function ChatInterface() {
             </nav>
           </div>
 
-          {/* ✅ Bandeau doc chargé */}
+          {/* Bandeau doc chargé */}
           {activeDoc?.documentText && (
-            <div className="mt-3 rounded-2xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-100 flex items-center justify-between gap-3">
-              <div className="truncate">
-                📎 <strong>Document chargé :</strong> {activeDoc.filename || "Document"}
-                <span className="text-blue-200/80"> • {String(activeDoc.documentText || "").length.toLocaleString()} caractères</span>
+            <div className="mt-3 rounded-2xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
+              <div className="flex items-center justify-between gap-3">
+                <div className="truncate">
+                  📎 <strong>Document chargé :</strong> {activeDoc.filename || "Texte OCR extrait"}
+                  <span className="text-blue-200/80">
+                    {" "}
+                    • {String(activeDoc.documentText || "").length.toLocaleString()} caractères
+                  </span>
+                  <span className="ml-2 text-emerald-200/90">
+                    • {documentMode ? "Mode document: ON" : "Mode document: OFF"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setDocumentMode((v) => !v)}
+                    className="px-3 py-1 rounded-xl border border-emerald-300/30 hover:bg-emerald-500/10"
+                    title="Si ON: l’assistant répond en priorité sur le document"
+                  >
+                    {documentMode ? "Utiliser le document ✅" : "Ignorer le document"}
+                  </button>
+
+                  <button
+                    onClick={() => setShowDocText((s) => !s)}
+                    className="px-3 py-1 rounded-xl border border-blue-300/30 hover:bg-blue-500/10"
+                  >
+                    {showDocText ? "Masquer le texte" : "Voir le texte extrait"}
+                  </button>
+
+                  <button onClick={clearActiveDoc} className="px-3 py-1 rounded-xl border border-blue-300/30 hover:bg-blue-500/10">
+                    Retirer
+                  </button>
+                </div>
               </div>
-              <button onClick={clearActiveDoc} className="px-3 py-1 rounded-xl border border-blue-300/30 hover:bg-blue-500/10">
-                Retirer
-              </button>
+
+              {showDocText && (
+                <div className="mt-2 rounded-xl border border-white/10 bg-slate-950/40 p-2 max-h-[240px] overflow-auto">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-blue-200/80 mb-2">Texte OCR</div>
+                  <pre className="whitespace-pre-wrap text-[12px] text-slate-100">{activeDoc.documentText}</pre>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -300,20 +358,28 @@ export default function ChatInterface() {
           })}
 
           {loading && <div className="text-xs text-slate-300">Assistant rédige{dots}</div>}
-
           <div ref={messagesEndRef} />
         </div>
 
         {/* INPUT */}
         <div className="border-t border-white/10 bg-slate-950/90 px-3 md:px-5 py-3">
           <textarea
+            ref={inputRef}
             className="w-full px-4 py-4 rounded-2xl bg-slate-900 text-sm min-h-[180px] max-h-[360px] resize-y"
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
-            placeholder="Décrivez votre situation juridique ici…"
+            placeholder={
+              activeDoc?.documentText && documentMode
+                ? "Pose ta question sur le document (résumé, contradictions, risques, conclusions, recommandations)…"
+                : "Décrivez votre situation juridique ici…"
+            }
           />
 
-          <button onClick={handleSend} disabled={loading} className="mt-2 px-4 py-2 rounded-xl bg-emerald-500 text-white">
+          <button
+            onClick={handleSend}
+            disabled={loading}
+            className="mt-2 px-4 py-2 rounded-xl bg-emerald-500 text-white disabled:opacity-40"
+          >
             Envoyer
           </button>
         </div>
