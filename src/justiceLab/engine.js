@@ -4,6 +4,8 @@
 // + fallback meta robuste + pieces status amélioré
 
 export const STEPS = [
+  "MODE",
+  "ROLE",
   "BRIEFING",
   "QUALIFICATION",
   "PROCEDURE",
@@ -70,7 +72,7 @@ export function createNewRun(caseData) {
 
     startedAt: nowISO(),
     finishedAt: null,
-    step: "BRIEFING",
+    step: "MODE",
 
     eventCard,
 
@@ -89,6 +91,16 @@ export function createNewRun(caseData) {
 
     // état runtime
     state: {
+      // session multi / solo-ai
+      session: {
+        mode: "SOLO_AI", // "SOLO_AI" | "COOP"
+        roomId: null,
+        participantId: null,
+        displayName: "",
+        isHost: false,
+        version: 0,
+        lastSyncAt: null,
+      },
       excludedPieceIds: [],
       admittedLatePieceIds: [],
       pendingTasks: [],
