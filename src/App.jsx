@@ -32,7 +32,6 @@ import JusticeLab from "./pages/JusticeLab.jsx";
 import JusticeLabPlay from "./pages/JusticeLabPlay.jsx";
 import JusticeLabResults from "./pages/JusticeLabResults.jsx";
 import JusticeLabDashboard from "./pages/JusticeLabDashboard.jsx";
-import JusticeLabChampionship from "./pages/justiceLab/JusticeLabChampionship.jsx";
 
 // ✅ NOUVEAU: phases dédiées
 import JusticeLabAudience from "./pages/JusticeLabAudience.jsx";
@@ -131,26 +130,26 @@ function App() {
             }
           />
 
-          {/* 🏆 Championnat (protégé) */}
+          {/* ✅ Multijoueur quick-join : /justice-lab/play?room=JL-XXXXXX */}
           <Route
-            path="/justice-lab/championship"
+            path="/justice-lab/play"
             element={
               <ProtectedRoute>
-                <JusticeLabChampionship />
+                <JusticeLabPlay />
               </ProtectedRoute>
             }
           />
 
           <Route
-            path="/justice-lab/play"
-            element={<JusticeLabPlay />}
+            path="/justice-lab/play/:caseId"
+            element={
+              <ProtectedRoute>
+                <JusticeLabPlay />
+              </ProtectedRoute>
+            }
           />
 
-          <Route
-            path="/justice-lab/play/:caseId"
-            element={<JusticeLabPlay />}
-          />
-{/* ✅ Results (robuste) :
+          {/* ✅ Results (robuste) :
               - /justice-lab/results (state-run ou fallback dernier run)
               - /justice-lab/results/:runId (URL classique)
           */}

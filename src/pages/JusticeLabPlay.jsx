@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
   createNewRun,
@@ -225,171 +225,158 @@ function resolveCaseData(decodedCaseId) {
   return null;
 }
 
-// ======================
-// ✅ Join landing (permet de rejoindre une salle non-locale via un lien ?room=JL-XXXXXX)
-// ======================
-function JoinRoomLanding({ roomId, navigate, displayNameDefault }) {
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-  const [room, setRoom] = useState(null);
-  const [displayName, setDisplayName] = useState(displayNameDefault || "");
-  const [role, setRole] = useState("Avocat");
-  const [joining, setJoining] = useState(false);
+// ✅ Landing page: rejoindre une room distante via un code (sans caseId local)
+function JoinRoomLanding({ apiBase, roomId, role, name, participantIdFromUrl, onReady, onBack }) {
+  const [status, setStatus] = useState("Connexion...");
+  const [error, setError] = useState(null);
+  const [pid, setPid] = useState(participantIdFromUrl || "");
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        setErr("");
-        const data = await getJSON(`${API_BASE}/justice-lab/rooms/${encodeURIComponent(roomId)}`);
-        if (cancelled) return;
-        setRoom(data);
-      } catch (e) {
-        if (cancelled) return;
-        setErr("Salle introuvable, expirée, ou accès refusé. Vérifie le code et reconnecte-toi.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
+    let alive = true;
+    let pollTimer = null;
+
+    const normalizeRole = (r) => {
+      const rr = String(r || "Avocat").trim();
+      if (rr === "Juge" || rr === "Procureur" || rr === "Avocat") return rr;
+      return "Avocat";
     };
-  }, [roomId]);
 
-  const join = async () => {
-    if (!roomId) return;
-    if (!displayName.trim()) return setErr("Entre un nom/identifiant (ex: 'Me KABONGO').");
-    const caseId = room?.caseId || room?.snapshot?.caseId || room?.snapshot?.caseMeta?.caseId;
-    if (!caseId) return setErr("Cette salle n’a pas encore chargé le dossier (attends que l’hôte lance l’audience).");
+    const getDisplayName = () => {
+      const n = String(name || "").trim();
+      if (n) return n;
+      try {
+        const saved = lsAvailable() ? localStorage.getItem("justicelab_display_name") : "";
+        if (saved && String(saved).trim()) return String(saved).trim();
+      } catch {
+        // ignore
+      }
+      return "Joueur";
+    };
 
-    try {
-      setJoining(true);
-      setErr("");
-      const data = await postJSON(`${API_BASE}/justice-lab/rooms/join`, {
-        roomId,
-        displayName: displayName.trim(),
-        role,
-        caseId,
-      });
+    const parseSnapshot = (room) => {
+      const snap = room?.snapshot && typeof room.snapshot === "object" ? room.snapshot : null;
+      const cid = room?.caseId || snap?.caseId || snap?.caseMeta?.caseId || null;
+      const cd = snap?.caseMeta?.caseData || snap?.caseData || null;
+      return { snap, caseId: cid, caseData: cd };
+    };
 
-      // ✅ on bascule vers /justice-lab/play/:caseId avec un state qui hydrate la session COOP
-      navigate(`/justice-lab/play/${encodeURIComponent(caseId)}?room=${encodeURIComponent(roomId)}`, {
-        state: {
-          roomJoinData: data,
-          roomId: data.roomId,
-          participantId: data.participantId,
-          displayName: displayName.trim(),
-          role,
-        },
-      });
-    } catch (e) {
-      const msg = String(e?.message || "");
-      if (msg.includes("ROOM_FULL")) setErr("Salle complète (max joueurs atteint). Crée une nouvelle salle.");
-      else if (msg.includes("CASE_MISMATCH")) setErr("Ce code de salle correspond à un autre dossier.");
-      else setErr("Impossible de rejoindre la salle. Réessaie ou vérifie ton token.");
-    } finally {
-      setJoining(false);
-    }
-  };
+    const run = async () => {
+      try {
+        setError(null);
+        const rid = String(roomId || "").trim().toUpperCase();
+        if (!rid) throw new Error("CODE_SALLE_INVALIDE");
+
+        // ⚠️ nécessite token (ProtectedRoute normalement)
+        if (!getAuthToken()) {
+          throw new Error("AUTH_TOKEN_MISSING");
+        }
+
+        const displayName = getDisplayName();
+        const r = normalizeRole(role);
+
+        let participantId = String(participantIdFromUrl || "").trim();
+        if (!participantId) {
+          setStatus("Inscription dans la salle...");
+          const joined = await postJSON(`${apiBase}/justice-lab/rooms/join`, {
+            roomId: rid,
+            displayName,
+            role: r,
+          });
+          participantId = String(joined?.participantId || "").trim();
+          if (!participantId) throw new Error("JOIN_FAILED");
+        }
+        if (!alive) return;
+        setPid(participantId);
+
+        const fetchRoom = async () => {
+          const room = await getJSON(
+            `${apiBase}/justice-lab/rooms/${encodeURIComponent(rid)}?participantId=${encodeURIComponent(participantId)}`
+          );
+          return room;
+        };
+
+        setStatus("Récupération de l’audience...");
+        const room = await fetchRoom();
+        if (!alive) return;
+
+        let { caseId: cid, caseData: cd } = parseSnapshot(room);
+
+        // Si l’hôte n’a pas encore publié de snapshot, on attend
+        if (!cid || !cd) {
+          setStatus("En attente de synchronisation de l’hôte... (snapshot)");
+          pollTimer = setInterval(async () => {
+            try {
+              const r2 = await fetchRoom();
+              if (!alive) return;
+              const parsed = parseSnapshot(r2);
+              cid = parsed.caseId;
+              cd = parsed.caseData;
+              if (cid && cd) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                if (!alive) return;
+                onReady({ roomId: rid, participantId, caseId: cid, caseData: cd, role: r, name: displayName });
+              }
+            } catch {
+              // ignore (transient)
+            }
+          }, 2000);
+          return;
+        }
+
+        onReady({ roomId: rid, participantId, caseId: cid, caseData: cd, role: r, name: displayName });
+      } catch (e) {
+        if (!alive) return;
+        const msg = String(e?.message || e);
+        if (msg === "AUTH_TOKEN_MISSING") {
+          setError("Session expirée. Reconnecte-toi puis réessaie.");
+        } else if (msg.includes("HTTP_404")) {
+          setError("Salle introuvable ou expirée. Vérifie le code et réessaie.");
+        } else {
+          setError("Impossible de rejoindre la salle. " + msg);
+        }
+        setStatus("Erreur");
+      }
+    };
+
+    run();
+
+    return () => {
+      alive = false;
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+  }, [apiBase, roomId, role, name, participantIdFromUrl, onReady]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
-      <div className="max-w-lg w-full rounded-3xl border border-white/10 bg-white/5 p-5">
-        <div className="flex items-start justify-between gap-3">
+      <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Justice Lab • Multijoueur</div>
-            <h1 className="mt-1 text-xl font-semibold">Rejoindre une salle d’audience</h1>
-            <div className="mt-1 text-sm text-slate-300">
-              Code : <span className="font-semibold text-slate-100">{roomId}</span>
-            </div>
+            <p className="text-sm font-semibold">Rejoindre une audience (Multijoueur)</p>
+            <p className="text-xs text-slate-300 mt-1">Code : <span className="font-mono text-slate-100">{roomId}</span></p>
           </div>
-          <Link to="/justice-lab" className="text-sm text-emerald-300 underline">
+          <button
+            type="button"
+            onClick={onBack}
+            className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+          >
             Retour
-          </Link>
-        </div>
-
-        {loading ? (
-          <div className="mt-4 text-sm text-slate-300">Chargement de la salle…</div>
-        ) : null}
-
-        {!loading && room ? (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Infos salle</div>
-            <div className="mt-2 text-sm text-slate-200">
-              Dossier : <span className="font-semibold">{room?.caseId || room?.snapshot?.caseId || "(en attente)"}</span>
-            </div>
-            <div className="mt-2 text-sm text-slate-200">
-              Joueurs : <span className="font-semibold">{Array.isArray(room?.players) ? room.players.length : "—"}</span>
-            </div>
-            {Array.isArray(room?.players) && room.players.length ? (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {room.players.slice(0, 6).map((p) => (
-                  <span key={p.participantId} className="text-xs px-2 py-1 rounded-full border border-white/10 bg-white/5">
-                    {p.displayName} • {p.role}{p.isHost ? " (hôte)" : ""}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <div className="mt-3 text-xs text-slate-400">
-              Astuce : si le dossier affiche “(en attente)”, l’hôte doit ouvrir le jeu et synchroniser la salle.
-            </div>
-          </div>
-        ) : null}
-
-        {err ? (
-          <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-rose-200 text-sm">{err}</div>
-        ) : null}
-
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Identité</div>
-            <input
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Ex: Me KABONGO"
-              className="mt-2 w-full px-3 py-2 rounded-xl bg-slate-950/60 border border-white/10 outline-none text-sm"
-            />
-            <div className="mt-3 text-xs text-slate-400">Ce nom apparaîtra dans le PV et sur le scoreboard.</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Rôle</div>
-            <div className="mt-2 grid gap-2">
-              {ROLES.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  onClick={() => setRole(r.id)}
-                  className={
-                    "text-left px-3 py-2 rounded-xl border transition " +
-                    (role === r.id ? "border-emerald-500/60 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10")
-                  }
-                >
-                  <div className="text-sm font-semibold">{r.label}</div>
-                  <div className="text-xs text-slate-300 mt-1">{r.desc}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={joining || loading}
-            onClick={join}
-            className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 transition text-sm font-semibold text-slate-950 disabled:opacity-60"
-          >
-            {joining ? "Connexion…" : "Rejoindre la salle"}
-          </button>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm"
-          >
-            Rafraîchir
           </button>
         </div>
+
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+          <p className="text-xs text-slate-300">{status}</p>
+          {pid ? <p className="text-[11px] text-slate-400 mt-1">Participant : <span className="font-mono">{pid}</span></p> : null}
+          {error ? <p className="text-xs text-rose-200 mt-2">{error}</p> : null}
+        </div>
+
+        <p className="text-[11px] text-slate-400 mt-4">
+          Si tu restes sur “En attente de synchronisation”, demande à l’hôte de lancer l’audience et de
+          “Synchroniser” (snapshot) depuis son interface.
+        </p>
       </div>
     </div>
   );
@@ -500,22 +487,50 @@ function PedagogyPanel({ caseData, compact = false }) {
 
 export default function JusticeLabPlay() {
   const { caseId } = useParams();
-  const navigate = useNavigate();
   const location = useLocation();
+  const navigate = useNavigate();
 
-  // ✅ Support lien partageable pour rejoindre une salle (même sans caseId local)
-  const roomFromQuery = useMemo(() => {
-    try {
-      const sp = new URLSearchParams(location?.search || "");
-      const r = sp.get("room") || sp.get("roomId") || "";
-      return String(r || "").trim().toUpperCase();
-    } catch {
-      return "";
-    }
-  }, [location?.search]);
+  // ✅ Quick join (depuis JusticeLab) : /justice-lab/play?room=JL-XXXXXX&role=...&name=...
+  const quickJoin = useMemo(() => {
+    const sp = new URLSearchParams(location.search || "");
+    const room = String(sp.get("room") || "").trim().toUpperCase();
+    const role = String(sp.get("role") || "Avocat").trim();
+    const name = String(sp.get("name") || "").trim();
+    const participantId = String(sp.get("participantId") || "").trim();
+    return { room, role, name, participantId };
+  }, [location.search]);
 
   const decodedCaseId = useMemo(() => decodeURIComponent(caseId || ""), [caseId]);
   const caseData = useMemo(() => resolveCaseData(decodedCaseId), [decodedCaseId]);
+
+  // ✅ Mode "landing" : si on arrive avec un code room mais sans caseId
+  //    (ex: utilisateur 2 rejoint une salle distante) => on join la room, on récupère snapshot/caseData,
+  //    puis on redirige vers /justice-lab/play/:caseId?... pour charger l'expérience COOP.
+  if (!caseId && quickJoin.room) {
+    return (
+      <JoinRoomLanding
+        apiBase={API_BASE}
+        roomId={quickJoin.room}
+        role={quickJoin.role}
+        name={quickJoin.name}
+        participantIdFromUrl={quickJoin.participantId}
+        onReady={({ roomId, participantId, caseId: cid, caseData: cd, role: r, name: n }) => {
+          try {
+            if (cd?.caseId) saveCaseToCache(cd);
+          } catch {
+            // ignore
+          }
+          const params = new URLSearchParams();
+          params.set("room", roomId);
+          params.set("participantId", participantId);
+          if (r) params.set("role", r);
+          if (n) params.set("name", n);
+          navigate(`/justice-lab/play/${encodeURIComponent(cid)}?${params.toString()}`, { replace: true });
+        }}
+        onBack={() => navigate("/justice-lab")}
+      />
+    );
+  }
 
   useMemo(() => {
     if (caseData?.caseId) saveCaseToCache(caseData);
@@ -551,79 +566,6 @@ export default function JusticeLabPlay() {
 
   const [roomInfo, setRoomInfo] = useState(null);
   const roomPollRef = useRef(null);
-  const didHydrateRoomRef = useRef(false);
-
-  // ✅ Pré-remplir le code salle si ?room=...
-  useEffect(() => {
-    if (!roomFromQuery) return;
-    setRoomCodeInput((prev) => (prev ? prev : roomFromQuery));
-  }, [roomFromQuery]);
-
-  // ✅ Si on arrive depuis la page JoinRoomLanding, on hydrate directement la session COOP
-  useEffect(() => {
-    const nav = location?.state || {};
-    const joinData = nav?.roomJoinData || null;
-    if (!joinData || !run?.runId) return;
-    if (didHydrateRoomRef.current) return;
-
-    didHydrateRoomRef.current = true;
-
-    const roleFromNav = nav?.role || run?.answers?.role || "Avocat";
-    const nameFromNav = nav?.displayName || displayNameInput || "";
-    const rid = String(joinData?.roomId || nav?.roomId || roomFromQuery || "").trim().toUpperCase();
-    const pid = String(joinData?.participantId || nav?.participantId || "").trim();
-    const version = Number(joinData?.version || 0);
-
-    if (nameFromNav && nameFromNav !== displayNameInput) setDisplayNameInput(nameFromNav);
-
-    const sessionNext = {
-      ...(run?.state?.session || {}),
-      mode: "COOP",
-      roomId: rid,
-      participantId: pid,
-      displayName: nameFromNav,
-      isHost: false,
-      version,
-      lastSyncAt: nowIso(),
-    };
-
-    setRoomInfo(joinData);
-
-    // hydrate snapshot if provided
-    if (joinData?.snapshot && typeof joinData.snapshot === "object") {
-      const snap = joinData.snapshot;
-      snap.state = snap.state || {};
-      snap.state.session = sessionNext;
-      snap.answers = { ...(snap.answers || {}), role: roleFromNav };
-      snap.step = "ROLE";
-      try {
-        upsertAndSetActive(snap);
-        setActiveRunId(snap.runId);
-      } catch {
-        // ignore
-      }
-      setRun(snap);
-      setStep("ROLE");
-      return;
-    }
-
-    // otherwise patch current run
-    const next = {
-      ...run,
-      step: "ROLE",
-      answers: { ...(run.answers || {}), role: roleFromNav },
-      state: { ...(run.state || {}), session: sessionNext },
-    };
-    try {
-      upsertAndSetActive(next);
-      setActiveRunId(next.runId);
-    } catch {
-      // ignore
-    }
-    setRun(next);
-    setStep("ROLE");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location?.state, run?.runId]);
 
   // Audience
   const [audienceScene, setAudienceScene] = useState(() => run?.answers?.audience?.scene || null);
@@ -770,18 +712,13 @@ export default function JusticeLabPlay() {
   }, [greffierName]);
 
   if (!caseData || !run) {
-    // ✅ Join direct d’une salle partagée (même si le dossier n’est pas local)
-    if (roomFromQuery) {
-      return <JoinRoomLanding roomId={roomFromQuery} navigate={navigate} displayNameDefault={displayNameInput} />;
-    }
-
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
         <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
           <p className="text-sm text-slate-200 font-semibold">Dossier introuvable.</p>
           <p className="text-sm text-slate-300 mt-2">
-            Si ce dossier a été généré dynamiquement, assure-toi qu’il est encore dans le cache local (ou
-            regénère-le depuis Justice Lab).
+            Si ce dossier a été généré dynamiquement, assure-toi qu’il est encore dans le cache local
+            (ou regénère-le depuis Justice Lab).
           </p>
           <div className="mt-4 flex gap-2">
             <Link className="inline-flex text-emerald-300 underline" to="/justice-lab">
