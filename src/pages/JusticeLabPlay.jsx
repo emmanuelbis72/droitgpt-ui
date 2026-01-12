@@ -41,6 +41,11 @@ const ROLES = [
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
 const CASE_CACHE_KEY_V1 = "justicelab_caseCache_v1";
 
+// ✅ Code salle (multijoueur)
+const ROOM_CODE_RE = /^JL-[A-Z0-9]{6}$/;
+const normalizeRoomId = (v) => String(v || "").trim().toUpperCase();
+const isValidRoomId = (rid) => ROOM_CODE_RE.test(String(rid || ""));
+
 function lsAvailable() {
   try {
     if (typeof window === "undefined" || !window.localStorage) return false;
@@ -242,7 +247,13 @@ function JoinRoomLanding({ roomId, navigate, displayNameDefault }) {
       try {
         setLoading(true);
         setErr("");
-        const data = await getJSON(`${API_BASE}/justice-lab/rooms/${encodeURIComponent(roomId)}`);
+        const rid = normalizeRoomId(roomId);
+        if (!isValidRoomId(rid)) {
+          setErr("Code de salle invalide. Format attendu: JL-XXXXXX.");
+          setRoom(null);
+          return;
+        }
+        const data = await getJSON(`${API_BASE}/justice-lab/rooms/${encodeURIComponent(rid)}`);
         if (cancelled) return;
         setRoom(data);
       } catch (e) {
@@ -258,7 +269,9 @@ function JoinRoomLanding({ roomId, navigate, displayNameDefault }) {
   }, [roomId]);
 
   const join = async () => {
-    if (!roomId) return;
+    const rid = normalizeRoomId(roomId);
+    if (!rid) return;
+    if (!isValidRoomId(rid)) return setErr("Code de salle invalide. Format attendu: JL-XXXXXX.");
     if (!displayName.trim()) return setErr("Entre un nom/identifiant (ex: 'Me KABONGO').");
     const caseId = room?.caseId || room?.snapshot?.caseId || room?.snapshot?.caseMeta?.caseId;
     if (!caseId) return setErr("Cette salle n’a pas encore chargé le dossier (attends que l’hôte lance l’audience).");
@@ -267,17 +280,17 @@ function JoinRoomLanding({ roomId, navigate, displayNameDefault }) {
       setJoining(true);
       setErr("");
       const data = await postJSON(`${API_BASE}/justice-lab/rooms/join`, {
-        roomId,
+        roomId: rid,
         displayName: displayName.trim(),
         role,
         caseId,
       });
 
       // ✅ on bascule vers /justice-lab/play/:caseId avec un state qui hydrate la session COOP
-      navigate(`/justice-lab/play/${encodeURIComponent(caseId)}?room=${encodeURIComponent(roomId)}`, {
+      navigate(`/justice-lab/play/${encodeURIComponent(caseId)}?room=${encodeURIComponent(rid)}`, {
         state: {
           roomJoinData: data,
-          roomId: data.roomId,
+          roomId: data.roomId || rid,
           participantId: data.participantId,
           displayName: displayName.trim(),
           role,
@@ -508,7 +521,8 @@ export default function JusticeLabPlay() {
     try {
       const sp = new URLSearchParams(location?.search || "");
       const r = sp.get("room") || sp.get("roomId") || "";
-      return String(r || "").trim().toUpperCase();
+      const rid = normalizeRoomId(r);
+      return isValidRoomId(rid) ? rid : "";
     } catch {
       return "";
     }
@@ -855,7 +869,7 @@ export default function JusticeLabPlay() {
         session: {
           ...(run.state?.session || {}),
           mode: "COOP",
-          roomId: data.roomId,
+          roomId: data.roomId || rid,
           participantId: data.participantId,
           displayName,
           isHost: true,
@@ -871,8 +885,10 @@ export default function JusticeLabPlay() {
 
   const roomApiJoin = async ({ roomId, displayName, role }) => {
     setSessionError(null);
+    const rid = normalizeRoomId(roomId);
+    if (!isValidRoomId(rid)) throw new Error("ROOM_ID_INVALID");
     const data = await postJSON(`${API_BASE}/justice-lab/rooms/join`, {
-      roomId,
+      roomId: rid,
       displayName,
       role,
       caseId: run.caseId || run.caseMeta?.caseId,
@@ -887,7 +903,7 @@ export default function JusticeLabPlay() {
         session: {
           ...(run.state?.session || {}),
           mode: "COOP",
-          roomId: data.roomId,
+          roomId: data.roomId || rid,
           participantId: data.participantId,
           displayName,
           isHost: false,
@@ -913,7 +929,9 @@ export default function JusticeLabPlay() {
   };
 
   const roomApiAction = async (action) => {
-    if (!roomId) return;
+    const rid = normalizeRoomId(roomId);
+    if (!rid) return;
+    if (!isValidRoomId(rid)) return setErr("Code de salle invalide. Format attendu: JL-XXXXXX.");
     try {
       // ✅ Compat: support anciens formats (type:"SNAPSHOT"/"SUGGESTION") et nouveaux (SYNC_SNAPSHOT payload)
       let type = String(action?.type || "").trim();
@@ -1770,8 +1788,13 @@ export default function JusticeLabPlay() {
                         className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm font-semibold"
                         onClick={async () => {
                           try {
+                            const rid = normalizeRoomId(roomCodeInput);
+                            if (!isValidRoomId(rid)) {
+                              setSessionError("Code de salle invalide. Format attendu: JL-XXXXXX.");
+                              return;
+                            }
                             await roomApiJoin({
-                              roomId: (roomCodeInput || "").trim(),
+                              roomId: rid,
                               displayName: (displayNameInput || "").trim() || "Joueur",
                               role: (run.answers?.role || "Juge").trim() || "Juge",
                             });
