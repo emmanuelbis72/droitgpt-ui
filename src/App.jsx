@@ -32,7 +32,7 @@ import JusticeLab from "./pages/JusticeLab.jsx";
 import JusticeLabPlay from "./pages/JusticeLabPlay.jsx";
 import JusticeLabResults from "./pages/JusticeLabResults.jsx";
 import JusticeLabDashboard from "./pages/JusticeLabDashboard.jsx";
-import JusticeLabChampionship from "./pages/JusticeLabChampionship.jsx";
+import JusticeLabChampionship from "./pages/justiceLab/JusticeLabChampionship.jsx";
 
 // ✅ NOUVEAU: phases dédiées
 import JusticeLabAudience from "./pages/JusticeLabAudience.jsx";
@@ -131,16 +131,26 @@ function App() {
             }
           />
 
+          {/* 🏆 Championnat (protégé) */}
           <Route
-            path="/justice-lab/play/:caseId"
+            path="/justice-lab/championship"
             element={
               <ProtectedRoute>
-                <JusticeLabPlay />
+                <JusticeLabChampionship />
               </ProtectedRoute>
             }
           />
 
-          {/* ✅ Results (robuste) :
+          <Route
+            path="/justice-lab/play"
+            element={<JusticeLabPlay />}
+          />
+
+          <Route
+            path="/justice-lab/play/:caseId"
+            element={<JusticeLabPlay />}
+          />
+{/* ✅ Results (robuste) :
               - /justice-lab/results (state-run ou fallback dernier run)
               - /justice-lab/results/:runId (URL classique)
           */}
@@ -230,17 +240,7 @@ function App() {
             }
           />
 
-          <Route
-  path="/justice-lab/championship"
-  element={
-    <ProtectedRoute>
-      <JusticeLabChampionship />
-    </ProtectedRoute>
-  }
-/>
-
-{/* Fallback */}
-
+          {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
