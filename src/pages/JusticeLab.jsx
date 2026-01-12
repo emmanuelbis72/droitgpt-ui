@@ -1,38 +1,9 @@
 // src/pages/JusticeLab.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { CASES, generateCase, listGeneratedCases } from "../justiceLab/cases";
 
 const MAX_DYNAMIC_VISIBLE = 24;
-
-// ✅ Centralisation des options "bientôt dispo"
-const UPCOMING_FEATURES = [
-  {
-    key: "import_pdf",
-    title: "📎 Importer un dossier réel (PDF)",
-    description: (
-      <>
-        Ajoute un PDF : on crée un dossier “import” et on le lance en simulation.
-        <div className="mt-1 text-[11px] text-slate-500">(Extraction avancée backend = option future)</div>
-      </>
-    ),
-    ctaLabel: "Choisir un PDF (désactivé)",
-  },
-  {
-    key: "exam_mode",
-    title: "🎓 Mode Examen ENM / Magistrature",
-    description: (
-      <>
-        Notation “officielle” (plus stricte). Ouvre les audiences avec{" "}
-        <code className="text-slate-200">?mode=exam</code>.
-        <div className="mt-2 text-[11px] text-slate-500">
-          DÉSACTIVÉ — (Le scoring détaillé sera lu dans ton engine / results. Ici on activera le mode côté navigation.)
-        </div>
-      </>
-    ),
-    ctaLabel: "Activer (désactivé)",
-  },
-];
 
 function formatDomainLabel(d) {
   const map = {
@@ -69,38 +40,16 @@ function safeUpper(v) {
   return String(v || "").toUpperCase();
 }
 
-function UpcomingFeatureCard({ title, description, ctaLabel }) {
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold">{title}</div>
-          <div className="text-xs text-slate-400 mt-1">{description}</div>
-        </div>
-        <span className="text-[11px] px-2 py-1 rounded-full border border-slate-700 bg-slate-900/40 text-slate-200">
-          BIENTÔT DISPO
-        </span>
-      </div>
-
-      <div className="mt-3">
-        <button
-          disabled
-          className="rounded-xl border border-slate-700 bg-slate-900/30 px-3 py-2 text-xs opacity-60 cursor-not-allowed"
-          title="Bientôt disponible"
-        >
-          {ctaLabel}
-        </button>
-      </div>
-
-      <div className="mt-3 text-[11px] text-slate-400">
-        🔒 Fonctionnalité temporairement désactivée — <span className="text-slate-200">bientôt disponible</span>.
-      </div>
-    </div>
-  );
+function getApiBase() {
+  const base =
+    (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) ||
+    "https://droitgpt-indexer.onrender.com";
+  return String(base).replace(/\/$/, "");
 }
 
 export default function JusticeLab() {
   const navigate = useNavigate();
+  const fileRef = useRef(null);
 
   const baseCases = Array.isArray(CASES) ? CASES : [];
 
@@ -112,6 +61,19 @@ export default function JusticeLab() {
   const [selectedLevel, setSelectedLevel] = useState("débutant");
   const [casePrompt, setCasePrompt] = useState("");
 
+  // Import PDF
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
+
+  // Mode Examen
+  const [examMode, setExamMode] = useState(() => {
+    try {
+      return localStorage.getItem("justicelab_exam_mode") === "1";
+    } catch {
+      return false;
+    }
+  });
+
   // Dossiers IA (cache)
   const [dynamicCases, setDynamicCases] = useState([]);
 
@@ -120,10 +82,30 @@ export default function JusticeLab() {
   const [filterDomain, setFilterDomain] = useState("all");
   const [filterLevel, setFilterLevel] = useState("all");
 
+  // ✅ Multijoueur quick-join (depuis JusticeLab)
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [joinRoomId, setJoinRoomId] = useState("");
+  const [joinName, setJoinName] = useState(() => {
+    try {
+      return localStorage.getItem("justicelab_display_name") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [joinRole, setJoinRole] = useState("Avocat");
+
   useEffect(() => {
     const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
     setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("justicelab_exam_mode", examMode ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [examMode]);
 
   const counts = useMemo(() => {
     const localCount = baseCases.length || 0; // attendu: 24
@@ -136,8 +118,8 @@ export default function JusticeLab() {
     return [...(dynamicCases || []), ...(baseCases || [])];
   }, [dynamicCases, baseCases]);
 
-  const domains = useMemo(
-    () => [
+  const domains = useMemo(() => {
+    return [
       "",
       "penal",
       "foncier",
@@ -157,9 +139,8 @@ export default function JusticeLab() {
       "bancaire",
       "droit-des-affaires",
       "propriete-intellectuelle",
-    ],
-    []
-  );
+    ];
+  }, []);
 
   const filteredCases = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -191,7 +172,25 @@ export default function JusticeLab() {
 
   function openCase(caseId) {
     const id = encodeURIComponent(caseId);
-    navigate(`/justice-lab/play/${id}`);
+    const qs = examMode ? "?mode=exam" : "";
+    navigate(`/justice-lab/play/${id}${qs}`);
+  }
+
+
+  function goJoinRoom() {
+    const rid = safeUpper(joinRoomId).trim();
+    if (!rid) return;
+
+    try {
+      localStorage.setItem("justicelab_display_name", joinName || "");
+    } catch {}
+
+    const params = new URLSearchParams();
+    params.set("room", rid);
+    params.set("role", joinRole);
+    if (String(joinName || "").trim()) params.set("name", String(joinName).trim());
+
+    navigate(`/justice-lab/play?${params.toString()}`);
   }
 
   async function handleGenerate() {
@@ -224,6 +223,46 @@ export default function JusticeLab() {
     }
   }
 
+  // ✅ Import PDF (version stable sans dépendances lourdes)
+  // - On crée un “dossier importé” (source: import) + prompt basé sur le nom du fichier
+  // - Optionnel: si tu ajoutes plus tard un endpoint backend d’extraction PDF, on pourra l’utiliser
+  async function handleImportPdf(file) {
+    setImportError("");
+    if (!file) return;
+
+    setImporting(true);
+    try {
+      // 1) Création d’un dossier “import” local (stable)
+      const prompt = `Dossier importé (PDF): ${file.name}. Résume, identifie les parties, les faits, les pièces et prépare une audience réaliste.`;
+      const imported = await Promise.resolve(
+        generateCase({
+          level: selectedLevel,
+          domain: selectedDomain || "",
+          prompt,
+          source: "import",
+        })
+      );
+
+      // 2) (Optionnel futur) upload vers backend — désactivé par défaut pour éviter erreurs
+      // const base = getApiBase();
+      // const url = `${base}/justice-lab/import-pdf`;
+      // const fd = new FormData();
+      // fd.append("file", file);
+      // fd.append("caseId", imported.id);
+      // await fetch(url, { method: "POST", body: fd });
+
+      const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
+      setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
+
+      openCase(imported.id);
+    } catch (e) {
+      setImportError(e?.message || "Impossible d’importer le PDF.");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-100">
       {/* Header */}
@@ -234,7 +273,7 @@ export default function JusticeLab() {
             <div className="text-lg md:text-xl font-semibold">Simulateur judiciaire intelligent</div>
             <div className="text-xs text-slate-400 mt-1">Gameplay • Réalisme • Pédagogie • Évaluation</div>
 
-            {/* Badges Local vs IA */}
+            {/* ✅ Badges Local vs IA */}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="text-[11px] px-2 py-1 rounded-full border border-slate-700 bg-slate-900/40 text-slate-200">
                 🔹 Dossiers locaux ({counts.localCount})
@@ -249,6 +288,12 @@ export default function JusticeLab() {
             <Link className="text-xs text-slate-300 hover:text-white" to="/">
               Accueil
             </Link>
+            <Link className="text-xs text-slate-300 hover:text-white" to="/justice-lab/championship">
+              Championnat
+            </Link>
+            <Link className="text-xs text-slate-300 hover:text-white" to="/justice-lab/dashboard">
+              Dashboard
+            </Link>
             <Link className="text-xs text-slate-300 hover:text-white" to="/chat">
               Chat juridique
             </Link>
@@ -256,9 +301,117 @@ export default function JusticeLab() {
         </div>
       </div>
 
+      {/* ✅ Modal : rejoindre une salle (multijoueur) */}
+      {showJoinModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-950 p-5">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold">Rejoindre une salle d’audience</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  Entre le code salle (ex: <span className="text-slate-200">JL-AB12CD</span>) puis choisis ton rôle.
+                </div>
+              </div>
+              <button
+                className="px-3 py-1 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                onClick={() => setShowJoinModal(false)}
+              >
+                Fermer
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <div className="text-xs text-slate-300 mb-1">Code salle</div>
+                <input
+                  value={joinRoomId}
+                  onChange={(e) => setJoinRoomId(e.target.value)}
+                  placeholder="JL-XXXXXX"
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-slate-300 mb-1">Nom affiché</div>
+                  <input
+                    value={joinName}
+                    onChange={(e) => setJoinName(e.target.value)}
+                    placeholder="Ex: Emmanuel"
+                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-300 mb-1">Rôle</div>
+                  <select
+                    value={joinRole}
+                    onChange={(e) => setJoinRole(e.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+                  >
+                    <option>Juge</option>
+                    <option>Procureur</option>
+                    <option>Avocat</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="w-full px-4 py-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15 transition text-sm font-semibold"
+                onClick={goJoinRoom}
+              >
+                ✅ Rejoindre maintenant
+              </button>
+
+              <div className="text-[11px] text-slate-400">
+                Astuce : si le rôle est déjà occupé, choisis un autre rôle (Juge/Procureur/Avocat).
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="max-w-6xl mx-auto px-5 md:px-8 py-6">
+
+        {/* ✅ Accès rapide : Multijoueur + Championnat */}
+        <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">🏆 Championnat national & Audiences multijoueurs</div>
+              <div className="text-xs text-slate-300 mt-1">
+                Rejoins une salle partagée (même si le dossier n’est pas local) ou lance une audience multijoueur.
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => navigate("/justice-lab/championship")}
+                className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold hover:bg-amber-500/15"
+              >
+                🏆 Onglet Championnat
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowJoinModal(true)}
+                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold hover:bg-white/10"
+              >
+                🔑 Rejoindre une salle
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate("/justice-lab/play")}
+                className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold hover:bg-emerald-500/15"
+              >
+                🎙️ Créer une salle
+              </button>
+            </div>
+          </div>
+        </div>
         <div className="grid lg:grid-cols-3 gap-4">
-          {/* Left: Générateur + options bientôt dispo centralisées */}
+          {/* Left: Générateur + Import + Examen */}
           <div className="lg:col-span-1 space-y-4">
             {/* Générateur */}
             <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
@@ -333,22 +486,65 @@ export default function JusticeLab() {
               </div>
             </div>
 
-            {/* ✅ Options centralisées : "Bientôt dispo" */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/30 p-4">
-              <div className="text-sm font-semibold">🧩 Options (bientôt disponibles)</div>
+            {/* ✅ Import PDF */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="text-sm font-semibold">📎 Importer un dossier réel (PDF)</div>
               <div className="text-xs text-slate-400 mt-1">
-                Ces modules sont en préparation. Ils seront activés après finalisation du workflow et du scoring.
+                Ajoute un PDF : on crée un dossier “import” et on le lance en simulation.
               </div>
 
-              <div className="mt-3 space-y-3">
-                {UPCOMING_FEATURES.map((f) => (
-                  <UpcomingFeatureCard
-                    key={f.key}
-                    title={f.title}
-                    description={f.description}
-                    ctaLabel={f.ctaLabel}
-                  />
-                ))}
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={(e) => handleImportPdf(e.target.files?.[0])}
+                />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={importing}
+                  className="rounded-xl border border-slate-700 bg-slate-900/40 hover:bg-white/5 px-3 py-2 text-xs"
+                >
+                  {importing ? "Import..." : "Choisir un PDF"}
+                </button>
+
+                <span className="text-[11px] text-slate-500">
+                  (Extraction avancée backend = option future)
+                </span>
+              </div>
+
+              {importError ? (
+                <div className="mt-3 text-xs text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">
+                  {importError}
+                </div>
+              ) : null}
+            </div>
+
+            {/* ✅ Mode Examen */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">🎓 Mode Examen ENM / Magistrature</div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Notation “officielle” (plus stricte). Ouvre les audiences avec <code className="text-slate-200">?mode=exam</code>.
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setExamMode((v) => !v)}
+                  className={`shrink-0 px-3 py-2 rounded-xl text-xs border ${
+                    examMode
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {examMode ? "ACTIVÉ" : "DÉSACTIVÉ"}
+                </button>
+              </div>
+
+              <div className="mt-3 text-[11px] text-slate-500">
+                (Le scoring détaillé sera lu dans ton engine / results. Ici on active le mode côté navigation.)
               </div>
             </div>
           </div>

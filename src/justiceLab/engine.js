@@ -170,6 +170,122 @@ export function getPiecesStatusSummary(run, caseData) {
 export function mergeAudienceWithTemplates(caseData, apiData) {
   const templates = Array.isArray(caseData?.objectionTemplates) ? caseData.objectionTemplates : [];
 
+  // ✅ Garantit que chaque objection a des "effects" valides (3 branches)
+  // et que les IDs de pièces cités existent réellement.
+  const piecesArr = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
+  const allowedPieceIds = new Set(piecesArr.map((p, i) => String(p?.id || `P${i + 1}`)));
+  const latePieceIds = new Set(
+    piecesArr
+      .filter((p) => Boolean(p?.isLate || p?.late))
+      .map((p) => String(p?.id))
+      .filter(Boolean)
+  );
+  const lowReliabilityId =
+    piecesArr
+      .map((p, i) => ({ id: String(p?.id || `P${i + 1}`), r: Number(p?.reliability) }))
+      .filter((x) => Number.isFinite(x.r))
+      .sort((a, b) => a.r - b.r)?.[0]?.id ||
+    (piecesArr[0]?.id ? String(piecesArr[0].id) : "P1");
+
+  const cleanPieceIds = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map(String)
+      .filter((id) => allowedPieceIds.has(id))
+      .slice(0, 6);
+  };
+
+  const cleanRisk = (risk) => {
+    const r = risk && typeof risk === "object" ? risk : {};
+    return {
+      dueProcessBonus: Number.isFinite(Number(r.dueProcessBonus)) ? Number(r.dueProcessBonus) : 0,
+      appealRiskPenalty: Number.isFinite(Number(r.appealRiskPenalty)) ? Number(r.appealRiskPenalty) : 0,
+    };
+  };
+
+  const normalizeBranch = (raw, fallback) => {
+    const e = raw && typeof raw === "object" ? raw : {};
+    const excludePieceIds = cleanPieceIds(e.excludePieceIds);
+    const admitLatePieceIds = cleanPieceIds(e.admitLatePieceIds);
+
+    const addTask =
+      e.addTask && typeof e.addTask === "object"
+        ? {
+            type: safeStr(e.addTask.type || "instruction", 24),
+            label: safeStr(e.addTask.label || "Mesure", 120),
+            detail: safeStr(e.addTask.detail || "", 260),
+          }
+        : null;
+
+    const clarification =
+      e.clarification && typeof e.clarification === "object"
+        ? {
+            label: safeStr(e.clarification.label || "Clarification", 120),
+            detail: safeStr(e.clarification.detail || "", 260),
+          }
+        : null;
+
+    const out = {
+      excludePieceIds,
+      admitLatePieceIds,
+      ...(addTask ? { addTask } : {}),
+      ...(clarification ? { clarification } : {}),
+      why: safeStr(e.why || "", 220),
+      risk: cleanRisk(e.risk),
+    };
+
+    // si branche vide, appliquer un fallback (toujours valide)
+    const empty =
+      !out.excludePieceIds.length &&
+      !out.admitLatePieceIds.length &&
+      !out.addTask &&
+      !out.clarification &&
+      (!out.why || !out.why.trim());
+    return empty ? fallback : out;
+  };
+
+  const defaultEffects = () => {
+    // Un défaut "réaliste": une objection touchant une pièce et une branche "demander précision".
+    const anyLate = Array.from(latePieceIds)[0];
+    return {
+      onAccueillir: {
+        excludePieceIds: [lowReliabilityId].filter((id) => allowedPieceIds.has(id)),
+        admitLatePieceIds: [],
+        addTask: { type: "note", label: "Motiver la décision", detail: "Faits → règle → application → effet." },
+        why: "Mesure de police d'audience/probatoire pour garantir l'équité.",
+        risk: { dueProcessBonus: 1, appealRiskPenalty: 0 },
+      },
+      onRejeter: {
+        excludePieceIds: [],
+        admitLatePieceIds: [],
+        why: "Rejet : absence de grief suffisant / mesure disproportionnée.",
+        risk: { dueProcessBonus: 0, appealRiskPenalty: 1 },
+      },
+      onDemander: {
+        excludePieceIds: [],
+        admitLatePieceIds: anyLate && allowedPieceIds.has(anyLate) ? [anyLate] : [],
+        clarification: { label: "Précisions exigées", detail: "Identifier l'acte, le grief et la pièce concernée." },
+        why: "Le juge clarifie avant de statuer, au regard du contradictoire.",
+        risk: { dueProcessBonus: 2, appealRiskPenalty: 0 },
+      },
+    };
+  };
+
+  const normalizeEffects = (rawEffects) => {
+    const e = rawEffects && typeof rawEffects === "object" ? rawEffects : {};
+
+    // Si l'IA renvoie des effets non-branchés, on les projette sur les 3 branches.
+    const hasBranches = Boolean(e.onAccueillir || e.onRejeter || e.onDemander);
+    const base = hasBranches ? e : { onAccueillir: e, onRejeter: e, onDemander: e };
+
+    const def = defaultEffects();
+    return {
+      onAccueillir: normalizeBranch(base.onAccueillir, def.onAccueillir),
+      onRejeter: normalizeBranch(base.onRejeter, def.onRejeter),
+      onDemander: normalizeBranch(base.onDemander, def.onDemander),
+    };
+  };
+
   const tribunal = safeStr(caseData?.meta?.tribunal || caseData?.tribunal || "Tribunal", 60);
   const chambre = safeStr(caseData?.meta?.chambre || caseData?.chambre || "Audience", 80);
   const ville = safeStr(caseData?.meta?.city || caseData?.meta?.ville || caseData?.city || "RDC", 40);
@@ -210,7 +326,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
       title: safeStr(o.title || "Objection", 80),
       statement: safeStr(o.statement || "", 600),
       options: ["Accueillir", "Rejeter", "Demander précision"],
-      effects: o.effects || o.effect || null,
+      effects: normalizeEffects(o.effects || o.effect || null),
       bestChoiceByRole: o.bestChoiceByRole || null,
     });
   }
@@ -224,7 +340,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
       title: safeStr(t.title || "Objection", 80),
       statement: safeStr(t.statement || "", 600),
       options: ["Accueillir", "Rejeter", "Demander précision"],
-      effects: t.effects || t.effect || null,
+      effects: normalizeEffects(t.effects || t.effect || null),
       bestChoiceByRole: t.bestChoiceByRole || null,
     });
   }

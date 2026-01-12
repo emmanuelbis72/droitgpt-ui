@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
   createNewRun,
@@ -225,6 +225,176 @@ function resolveCaseData(decodedCaseId) {
   return null;
 }
 
+// ======================
+// ✅ Join landing (permet de rejoindre une salle non-locale via un lien ?room=JL-XXXXXX)
+// ======================
+function JoinRoomLanding({ roomId, navigate, displayNameDefault }) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [room, setRoom] = useState(null);
+  const [displayName, setDisplayName] = useState(displayNameDefault || "");
+  const [role, setRole] = useState("Avocat");
+  const [joining, setJoining] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setErr("");
+        const data = await getJSON(`${API_BASE}/justice-lab/rooms/${encodeURIComponent(roomId)}`);
+        if (cancelled) return;
+        setRoom(data);
+      } catch (e) {
+        if (cancelled) return;
+        setErr("Salle introuvable, expirée, ou accès refusé. Vérifie le code et reconnecte-toi.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId]);
+
+  const join = async () => {
+    if (!roomId) return;
+    if (!displayName.trim()) return setErr("Entre un nom/identifiant (ex: 'Me KABONGO').");
+    const caseId = room?.caseId || room?.snapshot?.caseId || room?.snapshot?.caseMeta?.caseId;
+    if (!caseId) return setErr("Cette salle n’a pas encore chargé le dossier (attends que l’hôte lance l’audience).");
+
+    try {
+      setJoining(true);
+      setErr("");
+      const data = await postJSON(`${API_BASE}/justice-lab/rooms/join`, {
+        roomId,
+        displayName: displayName.trim(),
+        role,
+        caseId,
+      });
+
+      // ✅ on bascule vers /justice-lab/play/:caseId avec un state qui hydrate la session COOP
+      navigate(`/justice-lab/play/${encodeURIComponent(caseId)}?room=${encodeURIComponent(roomId)}`, {
+        state: {
+          roomJoinData: data,
+          roomId: data.roomId,
+          participantId: data.participantId,
+          displayName: displayName.trim(),
+          role,
+        },
+      });
+    } catch (e) {
+      const msg = String(e?.message || "");
+      if (msg.includes("ROOM_FULL")) setErr("Salle complète (max joueurs atteint). Crée une nouvelle salle.");
+      else if (msg.includes("CASE_MISMATCH")) setErr("Ce code de salle correspond à un autre dossier.");
+      else setErr("Impossible de rejoindre la salle. Réessaie ou vérifie ton token.");
+    } finally {
+      setJoining(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
+      <div className="max-w-lg w-full rounded-3xl border border-white/10 bg-white/5 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Justice Lab • Multijoueur</div>
+            <h1 className="mt-1 text-xl font-semibold">Rejoindre une salle d’audience</h1>
+            <div className="mt-1 text-sm text-slate-300">
+              Code : <span className="font-semibold text-slate-100">{roomId}</span>
+            </div>
+          </div>
+          <Link to="/justice-lab" className="text-sm text-emerald-300 underline">
+            Retour
+          </Link>
+        </div>
+
+        {loading ? (
+          <div className="mt-4 text-sm text-slate-300">Chargement de la salle…</div>
+        ) : null}
+
+        {!loading && room ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Infos salle</div>
+            <div className="mt-2 text-sm text-slate-200">
+              Dossier : <span className="font-semibold">{room?.caseId || room?.snapshot?.caseId || "(en attente)"}</span>
+            </div>
+            <div className="mt-2 text-sm text-slate-200">
+              Joueurs : <span className="font-semibold">{Array.isArray(room?.players) ? room.players.length : "—"}</span>
+            </div>
+            {Array.isArray(room?.players) && room.players.length ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {room.players.slice(0, 6).map((p) => (
+                  <span key={p.participantId} className="text-xs px-2 py-1 rounded-full border border-white/10 bg-white/5">
+                    {p.displayName} • {p.role}{p.isHost ? " (hôte)" : ""}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-3 text-xs text-slate-400">
+              Astuce : si le dossier affiche “(en attente)”, l’hôte doit ouvrir le jeu et synchroniser la salle.
+            </div>
+          </div>
+        ) : null}
+
+        {err ? (
+          <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-rose-200 text-sm">{err}</div>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Identité</div>
+            <input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Ex: Me KABONGO"
+              className="mt-2 w-full px-3 py-2 rounded-xl bg-slate-950/60 border border-white/10 outline-none text-sm"
+            />
+            <div className="mt-3 text-xs text-slate-400">Ce nom apparaîtra dans le PV et sur le scoreboard.</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Rôle</div>
+            <div className="mt-2 grid gap-2">
+              {ROLES.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setRole(r.id)}
+                  className={
+                    "text-left px-3 py-2 rounded-xl border transition " +
+                    (role === r.id ? "border-emerald-500/60 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10")
+                  }
+                >
+                  <div className="text-sm font-semibold">{r.label}</div>
+                  <div className="text-xs text-slate-300 mt-1">{r.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={joining || loading}
+            onClick={join}
+            className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 transition text-sm font-semibold text-slate-950 disabled:opacity-60"
+          >
+            {joining ? "Connexion…" : "Rejoindre la salle"}
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm"
+          >
+            Rafraîchir
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function normalizePartyValue(v) {
   if (!v) return { title: "-", sub: "" };
   if (typeof v === "string") return { title: v, sub: "" };
@@ -331,6 +501,18 @@ function PedagogyPanel({ caseData, compact = false }) {
 export default function JusticeLabPlay() {
   const { caseId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // ✅ Support lien partageable pour rejoindre une salle (même sans caseId local)
+  const roomFromQuery = useMemo(() => {
+    try {
+      const sp = new URLSearchParams(location?.search || "");
+      const r = sp.get("room") || sp.get("roomId") || "";
+      return String(r || "").trim().toUpperCase();
+    } catch {
+      return "";
+    }
+  }, [location?.search]);
 
   const decodedCaseId = useMemo(() => decodeURIComponent(caseId || ""), [caseId]);
   const caseData = useMemo(() => resolveCaseData(decodedCaseId), [decodedCaseId]);
@@ -369,6 +551,79 @@ export default function JusticeLabPlay() {
 
   const [roomInfo, setRoomInfo] = useState(null);
   const roomPollRef = useRef(null);
+  const didHydrateRoomRef = useRef(false);
+
+  // ✅ Pré-remplir le code salle si ?room=...
+  useEffect(() => {
+    if (!roomFromQuery) return;
+    setRoomCodeInput((prev) => (prev ? prev : roomFromQuery));
+  }, [roomFromQuery]);
+
+  // ✅ Si on arrive depuis la page JoinRoomLanding, on hydrate directement la session COOP
+  useEffect(() => {
+    const nav = location?.state || {};
+    const joinData = nav?.roomJoinData || null;
+    if (!joinData || !run?.runId) return;
+    if (didHydrateRoomRef.current) return;
+
+    didHydrateRoomRef.current = true;
+
+    const roleFromNav = nav?.role || run?.answers?.role || "Avocat";
+    const nameFromNav = nav?.displayName || displayNameInput || "";
+    const rid = String(joinData?.roomId || nav?.roomId || roomFromQuery || "").trim().toUpperCase();
+    const pid = String(joinData?.participantId || nav?.participantId || "").trim();
+    const version = Number(joinData?.version || 0);
+
+    if (nameFromNav && nameFromNav !== displayNameInput) setDisplayNameInput(nameFromNav);
+
+    const sessionNext = {
+      ...(run?.state?.session || {}),
+      mode: "COOP",
+      roomId: rid,
+      participantId: pid,
+      displayName: nameFromNav,
+      isHost: false,
+      version,
+      lastSyncAt: nowIso(),
+    };
+
+    setRoomInfo(joinData);
+
+    // hydrate snapshot if provided
+    if (joinData?.snapshot && typeof joinData.snapshot === "object") {
+      const snap = joinData.snapshot;
+      snap.state = snap.state || {};
+      snap.state.session = sessionNext;
+      snap.answers = { ...(snap.answers || {}), role: roleFromNav };
+      snap.step = "ROLE";
+      try {
+        upsertAndSetActive(snap);
+        setActiveRunId(snap.runId);
+      } catch {
+        // ignore
+      }
+      setRun(snap);
+      setStep("ROLE");
+      return;
+    }
+
+    // otherwise patch current run
+    const next = {
+      ...run,
+      step: "ROLE",
+      answers: { ...(run.answers || {}), role: roleFromNav },
+      state: { ...(run.state || {}), session: sessionNext },
+    };
+    try {
+      upsertAndSetActive(next);
+      setActiveRunId(next.runId);
+    } catch {
+      // ignore
+    }
+    setRun(next);
+    setStep("ROLE");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location?.state, run?.runId]);
 
   // Audience
   const [audienceScene, setAudienceScene] = useState(() => run?.answers?.audience?.scene || null);
@@ -515,13 +770,18 @@ export default function JusticeLabPlay() {
   }, [greffierName]);
 
   if (!caseData || !run) {
+    // ✅ Join direct d’une salle partagée (même si le dossier n’est pas local)
+    if (roomFromQuery) {
+      return <JoinRoomLanding roomId={roomFromQuery} navigate={navigate} displayNameDefault={displayNameInput} />;
+    }
+
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
         <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
           <p className="text-sm text-slate-200 font-semibold">Dossier introuvable.</p>
           <p className="text-sm text-slate-300 mt-2">
-            Si ce dossier a été généré dynamiquement, assure-toi qu’il est encore dans le cache local
-            (ou regénère-le depuis Justice Lab).
+            Si ce dossier a été généré dynamiquement, assure-toi qu’il est encore dans le cache local (ou
+            regénère-le depuis Justice Lab).
           </p>
           <div className="mt-4 flex gap-2">
             <Link className="inline-flex text-emerald-300 underline" to="/justice-lab">

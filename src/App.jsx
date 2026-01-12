@@ -32,6 +32,7 @@ import JusticeLab from "./pages/JusticeLab.jsx";
 import JusticeLabPlay from "./pages/JusticeLabPlay.jsx";
 import JusticeLabResults from "./pages/JusticeLabResults.jsx";
 import JusticeLabDashboard from "./pages/JusticeLabDashboard.jsx";
+import JusticeLabChampionship from "./pages/JusticeLabChampionship.jsx";
 
 // ✅ NOUVEAU: phases dédiées
 import JusticeLabAudience from "./pages/JusticeLabAudience.jsx";
@@ -229,7 +230,17 @@ function App() {
             }
           />
 
-          {/* Fallback */}
+          <Route
+  path="/justice-lab/championship"
+  element={
+    <ProtectedRoute>
+      <JusticeLabChampionship />
+    </ProtectedRoute>
+  }
+/>
+
+{/* Fallback */}
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
