@@ -135,58 +135,6 @@ async function getJSON(url) {
   }
 }
 
-
-/* --- Rooms helpers (public endpoints) --- */
-async function postRoomJSON(url, body) {
-  const token = getAuthToken();
-  const headers = { "Content-Type": "application/json" };
-  // rooms are public, but if token exists we still send it
-  if (token && token.length > 10) headers.Authorization = `Bearer ${token}`;
-
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 25000);
-
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-    if (!r.ok) {
-      const txt = await r.text();
-      throw new Error(`HTTP_${r.status}: ${txt.slice(0, 200)}`);
-    }
-    return await r.json();
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-async function getRoomJSON(url) {
-  const token = getAuthToken();
-  const headers = {};
-  if (token && token.length > 10) headers.Authorization = `Bearer ${token}`;
-
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 25000);
-
-  try {
-    const r = await fetch(url, {
-      method: "GET",
-      headers,
-      signal: ctrl.signal,
-    });
-    if (!r.ok) {
-      const txt = await r.text();
-      throw new Error(`HTTP_${r.status}: ${txt.slice(0, 200)}`);
-    }
-    return await r.json();
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 function computePiecesBoard(run, caseData) {
   const base = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
   const decisions = run?.answers?.audience?.decisions || [];
@@ -287,7 +235,7 @@ export default function JusticeLabAudience() {
         text: action?.text || undefined,
       };
 
-      await postRoomJSON(`${API_BASE}/justice-lab/rooms/action`, {
+      await postJSON(`${API_BASE}/justice-lab/rooms/action`, {
         roomId,
         participantId,
         action: actionToSend,
@@ -533,7 +481,7 @@ export default function JusticeLabAudience() {
         {error && (
           <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
             {error === "AUTH_TOKEN_MISSING"
-              ? "Token manquant : reconnecte-toi pour utiliser les fonctions IA (audience/scoring). Le multijoueur (rooms) peut rester accessible."
+              ? "Token manquant : reconnecte-toi puis relance l’audience."
               : error}
           </div>
         )}
