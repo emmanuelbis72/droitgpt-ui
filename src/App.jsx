@@ -52,17 +52,6 @@ function JusticeLabResultsFallback() {
     // ignore
   }
   return <Navigate to="/justice-lab" replace />;
-function JusticeLabJournalFallback() {
-  try {
-    const runs = readRuns();
-    const last = runs?.[0] || null;
-    if (last?.runId) return <Navigate to={`/justice-lab/journal/${encodeURIComponent(last.runId)}`} replace />;
-  } catch {
-    // ignore
-  }
-  return <Navigate to="/justice-lab" replace />;
-}
-
 }
 
 function App() {
@@ -141,16 +130,6 @@ function App() {
             }
           />
 
-          {/* ✅ Multijoueur quick-join : /justice-lab/play?room=JL-XXXXXX */}
-          <Route
-            path="/justice-lab/play"
-            element={
-              <ProtectedRoute>
-                <JusticeLabPlay />
-              </ProtectedRoute>
-            }
-          />
-
           <Route
             path="/justice-lab/play/:caseId"
             element={
@@ -185,17 +164,7 @@ function App() {
           />
 
           {/* ✅ Journal (audit log) */}
-          
           <Route
-            path="/justice-lab/journal"
-            element={
-              <ProtectedRoute>
-                <JusticeLabJournalFallback />
-              </ProtectedRoute>
-            }
-          />
-
-<Route
             path="/justice-lab/journal/:runId"
             element={
               <ProtectedRoute>
