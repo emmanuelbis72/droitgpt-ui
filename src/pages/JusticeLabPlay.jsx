@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
   createNewRun,
@@ -331,7 +331,6 @@ function PedagogyPanel({ caseData, compact = false }) {
 export default function JusticeLabPlay() {
   const { caseId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
 
   const decodedCaseId = useMemo(() => decodeURIComponent(caseId || ""), [caseId]);
   const caseData = useMemo(() => resolveCaseData(decodedCaseId), [decodedCaseId]);
@@ -1208,11 +1207,11 @@ export default function JusticeLabPlay() {
     }
   };
 
-  const roleCard = (r) => {
+  const roleCard = (r, idx) => {
     const active = (run.answers?.role || "Juge") === r.id;
     return (
       <button
-        key={r.id}
+        key={`${r.id}-${idx}`}
         type="button"
         disabled={isCoop}
         onClick={() => {
@@ -1236,11 +1235,11 @@ export default function JusticeLabPlay() {
     );
   };
 
-  const procedureCard = (c) => {
+  const procedureCard = (c, idx) => {
     const active = run.answers?.procedureChoice === c.id;
     return (
       <button
-        key={c.id}
+        key={`${c.id}-${idx}`}
         type="button"
         onClick={() =>
           saveRunState({
@@ -1466,9 +1465,9 @@ export default function JusticeLabPlay() {
                     </div>
 
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {ROLES.map((r) => (
+                      {ROLES.map((r, idx) => (
                         <button
-                          key={r.id}
+                          key={`${r.id}-${idx}`}
                           type="button"
                           className={`px-3 py-2 rounded-xl border text-xs transition ${
                             (run.answers?.role || "Juge") === r.id
@@ -1600,7 +1599,7 @@ export default function JusticeLabPlay() {
                 <h2 className="text-sm font-semibold text-emerald-200">🧾 Pièces au dossier</h2>
                 <div className="mt-3 space-y-2">
                   {(caseData.pieces || []).map((p, idx) => (
-                    <div key={`${p?.id || "PIECE"}_${idx}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                    <div key={`${p.id}-${idx}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-sm font-semibold text-slate-100">
                           {p.id} • {p.title}
@@ -1847,7 +1846,7 @@ export default function JusticeLabPlay() {
                           {excludedPieces.length ? (
                             <ul className="mt-2 text-xs text-slate-200 space-y-1">
                               {excludedPieces.slice(0, 6).map((p, idx) => (
-                                <li key={`${p?.id || "PIECE"}_${idx}`}>• {p.title}</li>
+                                <li key={`${p.id}-${idx}`}>• {p.title}</li>
                               ))}
                             </ul>
                           ) : (
@@ -1860,7 +1859,7 @@ export default function JusticeLabPlay() {
                           {admittedLatePieces.length ? (
                             <ul className="mt-2 text-xs text-slate-200 space-y-1">
                               {admittedLatePieces.slice(0, 6).map((p, idx) => (
-                                <li key={`${p?.id || "PIECE"}_${idx}`}>• {p.title}</li>
+                                <li key={`${p.id}-${idx}`}>• {p.title}</li>
                               ))}
                             </ul>
                           ) : (
@@ -1921,7 +1920,7 @@ export default function JusticeLabPlay() {
                   <div className="text-sm text-slate-300">Aucune objection.</div>
                 ) : (
                   <div className="space-y-3">
-                    {(audienceScene?.objections || []).map((obj) => {
+                    {(audienceScene?.objections || []).map((obj, idx) => {
                       const d = getDecisionForObj(obj.id);
                       const current = { decision: d?.decision || "", reasoning: d?.reasoning || "" };
 
@@ -1930,7 +1929,7 @@ export default function JusticeLabPlay() {
                       const best = bestChoiceForRole(obj, role);
 
                       return (
-                        <div key={obj.id} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
+                        <div key={`${obj.id}-${idx}`} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
                           <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80">
                             {obj.by} • {obj.id}
                           </div>

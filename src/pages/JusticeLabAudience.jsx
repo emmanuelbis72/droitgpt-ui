@@ -135,6 +135,34 @@ async function getJSON(url) {
   }
 }
 
+  async function getRoomStateSafe(rid, pid) {
+    const room = String(rid || "").trim();
+    if (!room) return null;
+    const participant = pid ? String(pid) : "";
+    const url = `${API_BASE}/justice-lab/rooms/${encodeURIComponent(room)}${participant ? `?participantId=${encodeURIComponent(participant)}` : ""}`;
+    try {
+      return await getJSON(url);
+    } catch (e) {
+      const msg = String(e?.message || "");
+      if (msg.includes("HTTP_404") || msg.includes("HTTP_405")) {
+        const candidates = [
+          `${API_BASE}/justice-lab/rooms/state`,
+          `${API_BASE}/justice-lab/rooms/snapshot`,
+          `${API_BASE}/justice-lab/rooms/get`,
+        ];
+        for (const endpoint of candidates) {
+          try {
+            const st = await postJSON(endpoint, { roomId: room, participantId: participant });
+            if (st) return st;
+          } catch (_) {}
+        }
+        return null;
+      }
+      throw e;
+    }
+  }
+
+
 function computePiecesBoard(run, caseData) {
   const base = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
   const decisions = run?.answers?.audience?.decisions || [];
@@ -203,7 +231,6 @@ export default function JusticeLabAudience() {
 
   const role = run?.answers?.role || "Juge";
   const mode = run?.state?.session?.mode || "SOLO_AI"; // SOLO_AI | COOP | SOLO_MANUAL
-  const isHost = Boolean(run?.state?.session?.isHost);
   const ultraPro = Boolean(run?.state?.settings?.ultraPro);
   const audit = run?.state?.auditLog || [];
   const piecesBoard = useMemo(
@@ -399,35 +426,6 @@ export default function JusticeLabAudience() {
 
   async function saveDecision() {
     if (!run || !selectedObj) return;
-
-    const aiRole = String(roomState?.meta?.aiRole || run?.state?.session?.aiRole || "").trim();
-    const aiIsJudge = mode === "COOP" && aiRole === "Juge";
-
-    // ✅ COOP : si l'IA est Juge, l'host peut trancher au nom de l'IA (décision + sync snapshot).
-    if (aiIsJudge && role !== "Juge" && isHost) {
-      const next = applyAudienceDecision(run, {
-        objectionId: selectedObj.id,
-        decision: choice,
-        reasoning,
-        role: "Juge",
-        effects: selectedObj.effects || null,
-      });
-      commitRun(next);
-      await roomApiAction({
-        type: "JUDGE_DECISION",
-        payload: {
-          asAI: true,
-          objectionId: selectedObj.id,
-          decision: choice,
-          reasoning: (reasoning || "").slice(0, 1400),
-          effects: selectedObj.effects || null,
-        },
-      });
-      await roomApiAction({ type: "SYNC_SNAPSHOT", payload: { snapshot: next }, snapshot: next });
-      setLocked(true);
-      setFeedback({ ok: true, note: "Décision rendue par l'IA (Juge)." });
-      return;
-    }
 
     if (mode === "COOP" && role !== "Juge") {
       await roomApiAction({
