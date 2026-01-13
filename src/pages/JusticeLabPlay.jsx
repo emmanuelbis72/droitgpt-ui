@@ -329,11 +329,24 @@ function PedagogyPanel({ caseData, compact = false }) {
 }
 
 export default function JusticeLabPlay() {
-  const { caseId } = useParams();
+  const { caseId: routeCaseId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const decodedCaseId = useMemo(() => decodeURIComponent(caseId || ""), [caseId]);
-  const caseData = useMemo(() => resolveCaseData(decodedCaseId), [decodedCaseId]);
+  // URL helpers
+  const urlParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const joinMode = urlParams.get("join") === "1";
+  const urlRoom = (urlParams.get("room") || "").trim();
+
+  // The caseId may come from the route OR from the joined room state (run.caseId)
+  const [resolvedCaseId, setResolvedCaseId] = useState(() => (routeCaseId ? decodeURIComponent(routeCaseId) : ""));
+
+  // Keep resolvedCaseId in sync with the route
+  useEffect(() => {
+    if (routeCaseId) setResolvedCaseId(decodeURIComponent(routeCaseId));
+  }, [routeCaseId]);
+
+  const caseData = useMemo(() => resolveCaseData(resolvedCaseId), [resolvedCaseId]);
 
   useMemo(() => {
     if (caseData?.caseId) saveCaseToCache(caseData);
@@ -369,6 +382,12 @@ export default function JusticeLabPlay() {
 
   const [roomInfo, setRoomInfo] = useState(null);
   const roomPollRef = useRef(null);
+
+  // If the user opens the page directly in join mode, pre-fill the room code
+  useEffect(() => {
+    if (!joinMode) return;
+    if (urlRoom) setRoomCodeInput(urlRoom);
+  }, [joinMode, urlRoom]);
 
   // Audience
   const [audienceScene, setAudienceScene] = useState(() => run?.answers?.audience?.scene || null);
@@ -514,7 +533,94 @@ export default function JusticeLabPlay() {
     }
   }, [greffierName]);
 
+  // When opening directly in "join" mode, we allow joining an existing audience without a preselected dossier.
   if (!caseData || !run) {
+    if (joinMode) {
+      return (
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
+          <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
+            <p className="text-sm text-slate-200 font-semibold">Rejoindre une audience</p>
+            <p className="text-sm text-slate-300 mt-2">
+              Entre le code de la salle (fourni par le créateur) et choisis ton rôle.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs text-slate-300">Ton nom (visible en salle)</label>
+                <input
+                  value={displayNameInput}
+                  onChange={(e) => setDisplayNameInput(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 outline-none"
+                  placeholder="Ex: Me Bisimwa"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-300">Code de la salle</label>
+                <input
+                  value={roomCodeInput}
+                  onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 outline-none"
+                  placeholder="Ex: ABC123"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-300">Rôle souhaité</label>
+                <select
+                  value={coopRole}
+                  onChange={(e) => setCoopRole(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 outline-none"
+                >
+                  <option value="JUGE">Juge</option>
+                  <option value="MINISTERE_PUBLIC">Ministère Public</option>
+                  <option value="AVOCAT_DEFENSE">Avocat de la Défense</option>
+                  <option value="AVOCAT_PARTIE_CIVILE">Avocat de la Partie Civile</option>
+                  <option value="GREFFIER">Greffier</option>
+                  <option value="PREVENU">Prévenu / Mis en cause</option>
+                  <option value="PARTIE_CIVILE">Partie Civile</option>
+                </select>
+              </div>
+
+              {sessionError ? (
+                <div className="text-xs text-red-300">{sessionError}</div>
+              ) : null}
+
+              <button
+                type="button"
+                className="w-full px-4 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400 transition"
+                onClick={async () => {
+                  try {
+                    if (!roomCodeInput.trim()) {
+                      setSessionError("Entre le code de la salle.");
+                      return;
+                    }
+                    if (!displayNameInput.trim()) {
+                      setSessionError("Entre ton nom.");
+                      return;
+                    }
+                    await roomApiJoin({
+                      roomId: roomCodeInput.trim(),
+                      displayName: displayNameInput.trim(),
+                      role: coopRole,
+                    });
+                  } catch (e) {
+                    setSessionError(e?.message || "Impossible de rejoindre cette salle.");
+                  }
+                }}
+              >
+                Rejoindre la salle
+              </button>
+
+              <Link className="inline-flex text-emerald-300 underline text-sm" to="/justice-lab">
+                Retour Justice Lab
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
         <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -588,7 +694,7 @@ export default function JusticeLabPlay() {
 
     const next = {
       ...run,
-      step: "LOBBY",
+      step: "ROLE",
       answers: { ...(run.answers || {}), role },
       state: {
         ...(run.state || {}),
@@ -606,29 +712,39 @@ export default function JusticeLabPlay() {
     };
     setRoomInfo(data);
     saveRunState(next);
-    setStep("LOBBY");
+    setStep("ROLE");
   };
 
   const roomApiJoin = async ({ roomId, displayName, role }) => {
     setSessionError(null);
-    const normalizedRoomId = String(roomId || "").trim().toUpperCase().startsWith("JL-")
-      ? String(roomId || "").trim().toUpperCase()
-      : (`JL-${String(roomId || "").trim().toUpperCase()}`.replace(/^JL-JL-/, "JL-"));
     const data = await postJSON(`${API_BASE}/justice-lab/rooms/join`, {
-      roomId: normalizedRoomId,
+      roomId,
       displayName,
       role,
-      caseId: run.caseId || run.caseMeta?.caseId,
+      // When joining from the lobby without preselecting a dossier, run can be null.
+      caseId: run?.caseId || run?.caseMeta?.caseId || resolvedCaseId || "",
     });
 
+    const base = run || {
+      runId: `jl_${Date.now()}`,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      caseId: data.caseId || resolvedCaseId || "",
+      caseMeta: {},
+      step: "ROLE",
+      answers: {},
+      state: {},
+    };
+
     const next = {
-      ...run,
-      step: "LOBBY",
-      answers: { ...(run.answers || {}), role },
+      ...base,
+      step: "ROLE",
+      caseId: data.caseId || base.caseId || resolvedCaseId || "",
+      answers: { ...(base.answers || {}), role },
       state: {
-        ...(run.state || {}),
+        ...(base.state || {}),
         session: {
-          ...(run.state?.session || {}),
+          ...(base.state?.session || {}),
           mode: "COOP",
           roomId: data.roomId,
           participantId: data.participantId,
@@ -646,11 +762,21 @@ export default function JusticeLabPlay() {
       // keep our local session identifiers
       snap.state = snap.state || {};
       snap.state.session = next.state.session;
+      // Ensure we can resolve the case after joining
+      if (snap.caseId) setResolvedCaseId(snap.caseId);
+      else if (data.caseId) setResolvedCaseId(data.caseId);
+
       setRun(snap);
       upsertAndSetActive(snap);
       setActiveRunId(snap.runId);
     } else {
       saveRunState(next);
+    }
+
+    // Replace URL with the dossier id to keep refresh stable
+    const cid = (data.caseId || data?.snapshot?.caseId || next.caseId || "").trim();
+    if (cid) {
+      navigate(`/justice-lab/play/${encodeURIComponent(cid)}`, { replace: true });
     }
     setStep("ROLE");
   };
@@ -689,24 +815,6 @@ export default function JusticeLabPlay() {
       console.warn("room action failed", e);
     }
   };
-
-const startCoopRoom = async () => {
-  if (!isCoop || !roomId) return;
-  const playersCount = Array.isArray(roomInfo?.players) ? roomInfo.players.length : 0;
-  if (playersCount < 2) {
-    setSessionError("Attends au moins 1 autre participant avant de démarrer.");
-    return;
-  }
-  try {
-    await roomApiAction({ type: "START", payload: { startedAt: nowIso() } });
-  } catch {
-    // ignore
-  }
-  // on démarre localement
-  setSessionError(null);
-  setStep("ROLE");
-};
-
 
   // poll room state
   useEffect(() => {
@@ -762,23 +870,10 @@ const startCoopRoom = async () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCoop, roomId, participantId]);
 
-
-// auto-advance when room starts
-useEffect(() => {
-  if (!isCoop) return;
-  const started = Boolean(roomInfo?.started || roomInfo?.status === "LIVE" || roomInfo?.phase === "LIVE" || roomInfo?.phase === "RUNNING");
-  if (step === "LOBBY" && started) {
-    setStep("ROLE");
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [isCoop, step, roomInfo?.started, roomInfo?.status, roomInfo?.phase]);
-
   const goNext = async () => {
     if (isScoring || isLoadingAudience) return;
 
     if (step === "MODE") return setStep("ROLE");
-
-    if (step === "LOBBY") return;
 
     if (step === "ROLE") return setStep("BRIEFING");
     if (step === "BRIEFING") return setStep("QUALIFICATION");
@@ -1590,104 +1685,7 @@ useEffect(() => {
           )}
 
           {/* ROLE */}
-          
-{step === "LOBBY" && (
-  <div className="mt-6">
-    <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-5">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="text-sm font-semibold text-indigo-200">🟣 Salle en attente</div>
-          <div className="mt-1 text-xs text-slate-300">
-            Partage ce code pour que les autres rejoignent. Le créateur démarre l’audience quand tout le monde est prêt.
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              try {
-                if (navigator?.clipboard && roomId) navigator.clipboard.writeText(roomId);
-              } catch {
-                // ignore
-              }
-            }}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs"
-          >
-            Copier le code
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStep("MODE")}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs"
-          >
-            Quitter
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-4 grid md:grid-cols-3 gap-4">
-        <div className="p-4 rounded-2xl border border-white/10 bg-slate-950/40">
-          <div className="text-xs text-slate-400">Code de la salle</div>
-          <div className="mt-2 text-xl font-extrabold tracking-wider">{roomId}</div>
-          <div className="mt-2 text-[11px] text-slate-500">Rôle (toi) : {session?.role || run?.answers?.role}</div>
-        </div>
-
-        <div className="md:col-span-2 p-4 rounded-2xl border border-white/10 bg-slate-950/40">
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-slate-400">Participants connectés</div>
-            <div className="text-xs text-slate-500">
-              {(Array.isArray(roomInfo?.players) ? roomInfo.players.length : 0)} joueur(s)
-            </div>
-          </div>
-
-          <div className="mt-3 grid sm:grid-cols-2 gap-2">
-            {(Array.isArray(roomInfo?.players) ? roomInfo.players : []).map((p) => (
-              <div key={p.participantId || p.id} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-                <div className="text-xs font-semibold text-slate-100">
-                  {p.displayName || p.name || "Joueur"}
-                </div>
-                <div className="text-[11px] text-slate-400">
-                  {p.role ? `Rôle: ${p.role}` : "Rôle: (non défini)"} • {String(p.participantId || "").slice(0, 10)}
-                </div>
-              </div>
-            ))}
-            {(!roomInfo?.players || roomInfo.players.length === 0) && (
-              <div className="text-xs text-slate-400">En attente des joueurs…</div>
-            )}
-          </div>
-
-          <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
-            <div className="text-xs text-slate-400">
-              {session?.isHost ? "Tu es le créateur. Démarre quand prêt." : "Attends que le créateur démarre."}
-            </div>
-
-            {session?.isHost ? (
-              <button
-                type="button"
-                onClick={startCoopRoom}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold"
-              >
-                ▶️ Démarrer l’audience
-              </button>
-            ) : (
-              <div className="text-xs px-3 py-2 rounded-xl border border-white/10 bg-white/5">
-                ⏳ En attente du démarrage…
-              </div>
-            )}
-          </div>
-
-          {sessionError && (
-            <div className="mt-3 text-xs text-rose-300 border border-rose-500/20 bg-rose-500/10 p-3 rounded-xl">
-              {sessionError}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  </div>
-)}
-{step === "ROLE" && (
+          {step === "ROLE" && (
             <div className="grid gap-4 md:grid-cols-3">
               {ROLES.map(roleCard)}
               <div className="md:col-span-3 rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -2060,7 +2058,7 @@ useEffect(() => {
                       const best = bestChoiceForRole(obj, role);
 
                       return (
-                        <div key={obj.id} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
+                        <div key={`${obj.id || "obj"}-${obj.by || ""}-${obj.title || ""}`} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
                           <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80">
                             {obj.by} • {obj.id}
                           </div>

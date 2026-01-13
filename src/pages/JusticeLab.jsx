@@ -102,6 +102,11 @@ function UpcomingFeatureCard({ title, description, ctaLabel }) {
 export default function JusticeLab() {
   const navigate = useNavigate();
 
+  // Tabs
+  const [tab, setTab] = useState("dossiers"); // dossiers | join | championship
+  const [joinCode, setJoinCode] = useState("");
+  const [joinError, setJoinError] = useState("");
+
   const baseCases = Array.isArray(CASES) ? CASES : [];
 
   const [creating, setCreating] = useState(false);
@@ -257,6 +262,86 @@ export default function JusticeLab() {
       </div>
 
       <div className="max-w-6xl mx-auto px-5 md:px-8 py-6">
+        {/* Tabs */}
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setTab("dossiers")}
+            className={
+              "px-3 py-2 rounded-xl text-sm border transition " +
+              (tab === "dossiers"
+                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100"
+                : "border-slate-800 bg-slate-950/40 text-slate-200 hover:border-slate-700")
+            }
+          >
+            Dossiers
+          </button>
+          <button
+            onClick={() => setTab("join")}
+            className={
+              "px-3 py-2 rounded-xl text-sm border transition " +
+              (tab === "join"
+                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100"
+                : "border-slate-800 bg-slate-950/40 text-slate-200 hover:border-slate-700")
+            }
+          >
+            Joindre une audience
+          </button>
+          <button
+            onClick={() => setTab("championship")}
+            className={
+              "px-3 py-2 rounded-xl text-sm border transition border-slate-800 bg-slate-950/40 text-slate-400 cursor-not-allowed"
+            }
+            disabled
+            title="Bientôt disponible"
+          >
+            Championship (bientôt)
+          </button>
+        </div>
+
+        {tab === "join" && (
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 max-w-xl">
+            <div className="text-sm font-semibold">Rejoindre une salle d'audience</div>
+            <div className="text-xs text-slate-400 mt-1">
+              Entre le code de la salle (ex: <span className="text-slate-200">JL-AB12CD</span>).
+            </div>
+            <div className="mt-3 flex flex-col sm:flex-row gap-2">
+              <input
+                value={joinCode}
+                onChange={(e) => {
+                  setJoinError("");
+                  setJoinCode(e.target.value);
+                }}
+                placeholder="JL-XXXXXX"
+                className="w-full sm:flex-1 px-3 py-2 rounded-xl bg-slate-900/50 border border-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+              />
+              <button
+                onClick={() => {
+                  const code = String(joinCode || "").trim().toUpperCase();
+                  if (!code) {
+                    setJoinError("Code requis.");
+                    return;
+                  }
+                  navigate(`/justice-lab/play?join=1&room=${encodeURIComponent(code)}`);
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold"
+              >
+                Continuer
+              </button>
+            </div>
+            {joinError && <div className="mt-2 text-xs text-rose-300">{joinError}</div>}
+          </div>
+        )}
+
+        {tab === "championship" && (
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="text-sm font-semibold">Championship</div>
+            <div className="text-xs text-slate-400 mt-1">
+              Bientôt : classement, arbitre IA, finale publique et replays.
+            </div>
+          </div>
+        )}
+
+        {tab === "dossiers" && (
         <div className="grid lg:grid-cols-3 gap-4">
           {/* Left: Générateur + options bientôt dispo centralisées */}
           <div className="lg:col-span-1 space-y-4">
@@ -444,6 +529,7 @@ export default function JusticeLab() {
             ) : null}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

@@ -130,6 +130,16 @@ function App() {
             }
           />
 
+          {/* Join / lobby screen without selecting a dossier first */}
+          <Route
+            path="/justice-lab/play"
+            element={
+              <ProtectedRoute>
+                <JusticeLabPlay />
+              </ProtectedRoute>
+            }
+          />
+
           <Route
             path="/justice-lab/play/:caseId"
             element={
