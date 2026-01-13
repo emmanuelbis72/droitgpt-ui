@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
   createNewRun,
@@ -329,24 +329,12 @@ function PedagogyPanel({ caseData, compact = false }) {
 }
 
 export default function JusticeLabPlay() {
-  const { caseId: routeCaseId } = useParams();
+  const { caseId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // URL helpers
-  const urlParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
-  const joinMode = urlParams.get("join") === "1";
-  const urlRoom = (urlParams.get("room") || "").trim();
-
-  // The caseId may come from the route OR from the joined room state (run.caseId)
-  const [resolvedCaseId, setResolvedCaseId] = useState(() => (routeCaseId ? decodeURIComponent(routeCaseId) : ""));
-
-  // Keep resolvedCaseId in sync with the route
-  useEffect(() => {
-    if (routeCaseId) setResolvedCaseId(decodeURIComponent(routeCaseId));
-  }, [routeCaseId]);
-
-  const caseData = useMemo(() => resolveCaseData(resolvedCaseId), [resolvedCaseId]);
+  const decodedCaseId = useMemo(() => decodeURIComponent(caseId || ""), [caseId]);
+  const caseData = useMemo(() => resolveCaseData(decodedCaseId), [decodedCaseId]);
 
   useMemo(() => {
     if (caseData?.caseId) saveCaseToCache(caseData);
@@ -382,12 +370,6 @@ export default function JusticeLabPlay() {
 
   const [roomInfo, setRoomInfo] = useState(null);
   const roomPollRef = useRef(null);
-
-  // If the user opens the page directly in join mode, pre-fill the room code
-  useEffect(() => {
-    if (!joinMode) return;
-    if (urlRoom) setRoomCodeInput(urlRoom);
-  }, [joinMode, urlRoom]);
 
   // Audience
   const [audienceScene, setAudienceScene] = useState(() => run?.answers?.audience?.scene || null);
@@ -533,94 +515,7 @@ export default function JusticeLabPlay() {
     }
   }, [greffierName]);
 
-  // When opening directly in "join" mode, we allow joining an existing audience without a preselected dossier.
   if (!caseData || !run) {
-    if (joinMode) {
-      return (
-        <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
-          <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
-            <p className="text-sm text-slate-200 font-semibold">Rejoindre une audience</p>
-            <p className="text-sm text-slate-300 mt-2">
-              Entre le code de la salle (fourni par le créateur) et choisis ton rôle.
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs text-slate-300">Ton nom (visible en salle)</label>
-                <input
-                  value={displayNameInput}
-                  onChange={(e) => setDisplayNameInput(e.target.value)}
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 outline-none"
-                  placeholder="Ex: Me Bisimwa"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-300">Code de la salle</label>
-                <input
-                  value={roomCodeInput}
-                  onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 outline-none"
-                  placeholder="Ex: ABC123"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-300">Rôle souhaité</label>
-                <select
-                  value={coopRole}
-                  onChange={(e) => setCoopRole(e.target.value)}
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 outline-none"
-                >
-                  <option value="JUGE">Juge</option>
-                  <option value="MINISTERE_PUBLIC">Ministère Public</option>
-                  <option value="AVOCAT_DEFENSE">Avocat de la Défense</option>
-                  <option value="AVOCAT_PARTIE_CIVILE">Avocat de la Partie Civile</option>
-                  <option value="GREFFIER">Greffier</option>
-                  <option value="PREVENU">Prévenu / Mis en cause</option>
-                  <option value="PARTIE_CIVILE">Partie Civile</option>
-                </select>
-              </div>
-
-              {sessionError ? (
-                <div className="text-xs text-red-300">{sessionError}</div>
-              ) : null}
-
-              <button
-                type="button"
-                className="w-full px-4 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400 transition"
-                onClick={async () => {
-                  try {
-                    if (!roomCodeInput.trim()) {
-                      setSessionError("Entre le code de la salle.");
-                      return;
-                    }
-                    if (!displayNameInput.trim()) {
-                      setSessionError("Entre ton nom.");
-                      return;
-                    }
-                    await roomApiJoin({
-                      roomId: roomCodeInput.trim(),
-                      displayName: displayNameInput.trim(),
-                      role: coopRole,
-                    });
-                  } catch (e) {
-                    setSessionError(e?.message || "Impossible de rejoindre cette salle.");
-                  }
-                }}
-              >
-                Rejoindre la salle
-              </button>
-
-              <Link className="inline-flex text-emerald-300 underline text-sm" to="/justice-lab">
-                Retour Justice Lab
-              </Link>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
         <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -721,30 +616,17 @@ export default function JusticeLabPlay() {
       roomId,
       displayName,
       role,
-      // When joining from the lobby without preselecting a dossier, run can be null.
-      caseId: run?.caseId || run?.caseMeta?.caseId || resolvedCaseId || "",
+      caseId: run.caseId || run.caseMeta?.caseId,
     });
 
-    const base = run || {
-      runId: `jl_${Date.now()}`,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      caseId: data.caseId || resolvedCaseId || "",
-      caseMeta: {},
-      step: "ROLE",
-      answers: {},
-      state: {},
-    };
-
     const next = {
-      ...base,
+      ...run,
       step: "ROLE",
-      caseId: data.caseId || base.caseId || resolvedCaseId || "",
-      answers: { ...(base.answers || {}), role },
+      answers: { ...(run.answers || {}), role },
       state: {
-        ...(base.state || {}),
+        ...(run.state || {}),
         session: {
-          ...(base.state?.session || {}),
+          ...(run.state?.session || {}),
           mode: "COOP",
           roomId: data.roomId,
           participantId: data.participantId,
@@ -762,21 +644,11 @@ export default function JusticeLabPlay() {
       // keep our local session identifiers
       snap.state = snap.state || {};
       snap.state.session = next.state.session;
-      // Ensure we can resolve the case after joining
-      if (snap.caseId) setResolvedCaseId(snap.caseId);
-      else if (data.caseId) setResolvedCaseId(data.caseId);
-
       setRun(snap);
       upsertAndSetActive(snap);
       setActiveRunId(snap.runId);
     } else {
       saveRunState(next);
-    }
-
-    // Replace URL with the dossier id to keep refresh stable
-    const cid = (data.caseId || data?.snapshot?.caseId || next.caseId || "").trim();
-    if (cid) {
-      navigate(`/justice-lab/play/${encodeURIComponent(cid)}`, { replace: true });
     }
     setStep("ROLE");
   };
@@ -1727,8 +1599,8 @@ export default function JusticeLabPlay() {
               <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
                 <h2 className="text-sm font-semibold text-emerald-200">🧾 Pièces au dossier</h2>
                 <div className="mt-3 space-y-2">
-                  {(caseData.pieces || []).map((p) => (
-                    <div key={p.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                  {(caseData.pieces || []).map((p, idx) => (
+                    <div key={`${p?.id || "PIECE"}_${idx}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-sm font-semibold text-slate-100">
                           {p.id} • {p.title}
@@ -1974,8 +1846,8 @@ export default function JusticeLabPlay() {
                           <div className="text-xs text-slate-300 font-semibold">🧾 Pièces écartées</div>
                           {excludedPieces.length ? (
                             <ul className="mt-2 text-xs text-slate-200 space-y-1">
-                              {excludedPieces.slice(0, 6).map((p) => (
-                                <li key={p.id}>• {p.title}</li>
+                              {excludedPieces.slice(0, 6).map((p, idx) => (
+                                <li key={`${p?.id || "PIECE"}_${idx}`}>• {p.title}</li>
                               ))}
                             </ul>
                           ) : (
@@ -1987,8 +1859,8 @@ export default function JusticeLabPlay() {
                           <div className="text-xs text-slate-300 font-semibold">📎 Pièces tardives admises</div>
                           {admittedLatePieces.length ? (
                             <ul className="mt-2 text-xs text-slate-200 space-y-1">
-                              {admittedLatePieces.slice(0, 6).map((p) => (
-                                <li key={p.id}>• {p.title}</li>
+                              {admittedLatePieces.slice(0, 6).map((p, idx) => (
+                                <li key={`${p?.id || "PIECE"}_${idx}`}>• {p.title}</li>
                               ))}
                             </ul>
                           ) : (
@@ -2058,7 +1930,7 @@ export default function JusticeLabPlay() {
                       const best = bestChoiceForRole(obj, role);
 
                       return (
-                        <div key={`${obj.id || "obj"}-${obj.by || ""}-${obj.title || ""}`} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
+                        <div key={obj.id} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
                           <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80">
                             {obj.by} • {obj.id}
                           </div>
