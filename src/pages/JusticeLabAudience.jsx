@@ -31,6 +31,8 @@ const formatTime = (iso) => {
 };
 
 function getAuthToken() {
+  // ⚠️ Ne bloque pas l'UI si l'utilisateur n'est pas connecté.
+  // On tente de retrouver le token dans localStorage OU sessionStorage + scan heuristique.
   const candidates = [
     "droitgpt_access_token",
     "droitgpt_token",
@@ -48,7 +50,7 @@ function getAuthToken() {
     if (typeof window !== "undefined" && window.sessionStorage) stores.push(window.sessionStorage);
   } catch {}
 
-  // 1) cles connues
+  // 1) clés connues
   for (const store of stores) {
     for (const k of candidates) {
       try {
@@ -58,7 +60,7 @@ function getAuthToken() {
     }
   }
 
-  // 2) heuristic: scanne toutes les cles qui contiennent token/auth/session
+  // 2) scan heuristique (token/auth/session)
   for (const store of stores) {
     try {
       for (let i = 0; i < store.length; i += 1) {
@@ -68,35 +70,15 @@ function getAuthToken() {
         const v = store.getItem(k);
         const s = String(v || "").trim();
         if (s.length < 20) continue;
-        // prefere un JWT
+        // préfère un JWT
         if (s.includes(".") && s.split(".").length === 3) return s;
         if (s.startsWith("eyJ")) return s;
       }
     } catch {}
   }
 
-  // 3) cookies
-  try {
-    const parts = String(document.cookie || "").split(";").map((p) => p.trim());
-    for (const p of parts) {
-      const idx = p.indexOf("=");
-      if (idx === -1) continue;
-      const name = p.slice(0, idx).trim().toLowerCase();
-      const val = decodeURIComponent(p.slice(idx + 1));
-      if (!/token|auth/i.test(name)) continue;
-      const s = String(val || "").trim();
-      if (s.length < 20) continue;
-      if (s.includes(".") && s.split(".").length === 3) return s;
-      if (s.startsWith("eyJ")) return s;
-    }
-  } catch {}
-
-  return null;
+  return "";
 }
-
-
-
-
 
 function getActiveRunLocal() {
   try {
@@ -143,7 +125,7 @@ function resolveCaseDataFromRun(run) {
 /* ---------------- Backend helpers ---------------- */
 async function postJSON(url, body) {
   const token = getAuthToken();
-  if (!token || token.length < 10) throw new Error("AUTH_TOKEN_MISSING");
+  // ✅ Token optionnel : si le backend exige l'auth, il renverra 401 (et on l'affiche proprement).
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 25000);
@@ -151,11 +133,10 @@ async function postJSON(url, body) {
   try {
     const r = await fetch(url, {
       method: "POST",
-      headers: (() => {
-        const h = { "Content-Type": "application/json" };
-        if (token) h.Authorization = `Bearer ${token}`;
-        return h;
-      })(),
+      headers: {
+        "Content-Type": "application/json",
+        ...(token && token.length > 10 ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
@@ -171,7 +152,6 @@ async function postJSON(url, body) {
 
 async function getJSON(url) {
   const token = getAuthToken();
-  if (!token || token.length < 10) throw new Error("AUTH_TOKEN_MISSING");
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 25000);
@@ -179,7 +159,9 @@ async function getJSON(url) {
   try {
     const r = await fetch(url, {
       method: "GET",
-      headers: (() => { const h = {}; if (token) h.Authorization = `Bearer ${token}`; return h; })(),
+      headers: {
+        ...(token && token.length > 10 ? { Authorization: `Bearer ${token}` } : {}),
+      },
       signal: ctrl.signal,
     });
     if (!r.ok) {

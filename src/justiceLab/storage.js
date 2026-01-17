@@ -97,7 +97,7 @@ function normalizeRuns(runs) {
     if (!("finishedAt" in x)) x.finishedAt = x.finishedAt || null;
 
     // step
-    if (!x.step) x.step = "MODE";
+    if (!x.step) x.step = "BRIEFING";
 
     // answers
     if (!x.answers) x.answers = {};
@@ -114,26 +114,6 @@ function normalizeRuns(runs) {
 
     // state
     if (!x.state) x.state = {};
-    // session multi / solo-ai
-    if (!x.state.session || typeof x.state.session !== "object") {
-      x.state.session = {
-        mode: "SOLO_AI", // "SOLO_AI" | "COOP"
-        roomId: null,
-        participantId: null,
-        displayName: "",
-        isHost: false,
-        version: 0,
-        lastSyncAt: null,
-      };
-    } else {
-      if (!x.state.session.mode) x.state.session.mode = "SOLO_AI";
-      if (!("roomId" in x.state.session)) x.state.session.roomId = null;
-      if (!("participantId" in x.state.session)) x.state.session.participantId = null;
-      if (!("displayName" in x.state.session)) x.state.session.displayName = "";
-      if (!("isHost" in x.state.session)) x.state.session.isHost = false;
-      if (!("version" in x.state.session)) x.state.session.version = 0;
-      if (!("lastSyncAt" in x.state.session)) x.state.session.lastSyncAt = null;
-    }
     if (!Array.isArray(x.state.excludedPieceIds)) x.state.excludedPieceIds = [];
     if (!Array.isArray(x.state.admittedLatePieceIds)) x.state.admittedLatePieceIds = [];
     if (!Array.isArray(x.state.pendingTasks)) x.state.pendingTasks = [];
