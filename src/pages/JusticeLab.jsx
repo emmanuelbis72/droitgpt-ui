@@ -1,7 +1,85 @@
 // src/pages/JusticeLab.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { CASES, generateCase, listGeneratedCases } from "../justiceLab/cases";
+import { CASES, listGeneratedCases } from "../justiceLab/cases";
+
+function getAuthToken() {
+  try {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("auth_token") || localStorage.getItem("token") || null;
+  } catch {
+    return null;
+  }
+}
+
+async function postJSON(url, body) {
+  const token = getAuthToken();
+  if (!token) throw new Error("AUTH_TOKEN_MISSING");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`HTTP_${resp.status}:${text.slice(0, 220)}`);
+    }
+    return await resp.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Même cache que src/justiceLab/cases.js
+const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
+function saveCaseToCacheV2(caseData) {
+  try {
+    if (typeof window === "undefined") return;
+    if (!caseData?.caseId) return;
+    const raw = localStorage.getItem(CASE_CACHE_KEY_V2);
+    const cache = raw ? JSON.parse(raw) : {};
+    cache[caseData.caseId] = caseData;
+    localStorage.setItem(CASE_CACHE_KEY_V2, JSON.stringify(cache));
+  } catch {
+    // ignore
+  }
+}
+
+function mapDomainToLabel(d) {
+  const m = {
+    "": "Auto",
+    penal: "Pénal",
+    foncier: "Foncier",
+    travail: "Travail",
+    ohada: "OHADA",
+    constitutionnel: "Constitutionnel",
+    administratif: "Administratif",
+    civil: "Civil",
+    famille: "Famille",
+    fiscal: "Fiscal",
+    douanier: "Douanier",
+    minier: "Minier",
+    militaire: "Pénal militaire",
+    environnement: "Environnement",
+    routier: "Routier / Circulation",
+    immobilier: "Immobilier",
+    bancaire: "Bancaire / Finance",
+    "droit-des-affaires": "Droit des affaires",
+    "propriete-intellectuelle": "Propriété intellectuelle",
+  };
+  return m[d] || d || "Auto";
+}
+
+function mapLevelToLabel(lvl) {
+  if (lvl === "avancé") return "Avancé";
+  if (lvl === "intermédiaire") return "Intermédiaire";
+  return "Débutant";
+}
 
 const MAX_DYNAMIC_VISIBLE = 24;
 
@@ -204,24 +282,34 @@ export default function JusticeLab() {
     setCreating(true);
 
     try {
-      const prompt = casePrompt.trim();
-      const domain = selectedDomain || ""; // "" = auto
+      const prompt = (casePrompt || "").trim();
+      const domaine = mapDomainToLabel(selectedDomain || "");
+      const level = mapLevelToLabel(selectedLevel || "débutant");
 
-      const newCase = await Promise.resolve(
-        generateCase({
-          level: selectedLevel,
-          domain,
-          prompt,
-          source: "generated",
-        })
-      );
+      // ✅ Génération côté backend (réelle IA) — inclut prompt utilisateur
+      const API_BASE = import.meta?.env?.VITE_INDEXER_API || "https://droitgpt-indexer.onrender.com";
+      const resp = await postJSON(`${API_BASE}/justice-lab/generate-case`, {
+        mode: "full",
+        domaine,
+        level,
+        lang: "fr",
+        seed: String(Date.now()),
+        prompt,
+      });
 
-      if (!newCase?.id) throw new Error("Le générateur a renvoyé un dossier invalide (id manquant).");
+      const caseData = resp?.caseData;
+      if (!caseData?.caseId) throw new Error("Le backend a renvoyé un dossier invalide (caseId manquant).");
+
+      // ✅ Persist local cache (pour apparaître dans la liste et s’ouvrir immédiatement)
+      saveCaseToCacheV2({
+        ...caseData,
+        meta: { ...(caseData.meta || {}), source: "generated", generatedAt: caseData?.meta?.generatedAt || new Date().toISOString() },
+      });
 
       const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
       setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
 
-      openCase(newCase.id);
+      openCase(caseData.caseId);
     } catch (e) {
       setCreateError(e?.message || "Erreur lors de la génération du dossier.");
     } finally {

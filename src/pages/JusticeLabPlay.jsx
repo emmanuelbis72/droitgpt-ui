@@ -7,18 +7,6 @@ import {
   mergeAudienceWithTemplates,
   setAudienceScene as setAudienceSceneOnRun,
   applyAudienceDecision,
-  initTrialV1,
-  TRIAL_V1_STAGES,
-  getCurrentTrialStage,
-  setCurrentTrialStage,
-  attachStageAudienceScene,
-  appendStagePV,
-  initProceduralCalendar,
-  addCalendarEvent,
-  markCalendarEventDone,
-  applyAutoIncidents,
-  buildJudgmentDraft,
-  buildAppealDraft,
 } from "../justiceLab/engine.js";
 
 import {
@@ -97,20 +85,72 @@ function saveCaseToCache(caseData) {
 }
 
 function getAuthToken() {
-  // ✅ IMPORTANT : compat ton token réel
   const candidates = [
     "droitgpt_access_token",
+    "droitgpt_token",
     "token",
     "authToken",
     "accessToken",
-    "droitgpt_token",
+    "access_token",
   ];
-  for (const k of candidates) {
-    const v = localStorage.getItem(k);
-    if (v && v.trim().length > 10) return v.trim();
+
+  const stores = [];
+  try {
+    if (typeof window !== "undefined" && window.localStorage) stores.push(window.localStorage);
+  } catch {}
+  try {
+    if (typeof window !== "undefined" && window.sessionStorage) stores.push(window.sessionStorage);
+  } catch {}
+
+  // 1) cles connues
+  for (const store of stores) {
+    for (const k of candidates) {
+      try {
+        const v = store.getItem(k);
+        if (v && String(v).trim().length > 10) return String(v).trim();
+      } catch {}
+    }
   }
+
+  // 2) heuristic: scanne toutes les cles qui contiennent token/auth/session
+  for (const store of stores) {
+    try {
+      for (let i = 0; i < store.length; i += 1) {
+        const k = store.key(i);
+        if (!k) continue;
+        if (!/token|auth|session/i.test(k)) continue;
+        const v = store.getItem(k);
+        const s = String(v || "").trim();
+        if (s.length < 20) continue;
+        // prefere un JWT
+        if (s.includes(".") && s.split(".").length === 3) return s;
+        if (s.startsWith("eyJ")) return s;
+      }
+    } catch {}
+  }
+
+  // 3) cookies
+  try {
+    const parts = String(document.cookie || "").split(";").map((p) => p.trim());
+    for (const p of parts) {
+      const idx = p.indexOf("=");
+      if (idx === -1) continue;
+      const name = p.slice(0, idx).trim().toLowerCase();
+      const val = decodeURIComponent(p.slice(idx + 1));
+      if (!/token|auth/i.test(name)) continue;
+      const s = String(val || "").trim();
+      if (s.length < 20) continue;
+      if (s.includes(".") && s.split(".").length === 3) return s;
+      if (s.startsWith("eyJ")) return s;
+    }
+  } catch {}
+
   return null;
 }
+
+
+
+
 
 function toFlagsFromAi(ai) {
   const flags = [];
@@ -142,7 +182,6 @@ function toDebriefFromAi(ai) {
 
 async function postJSON(url, body) {
   const token = getAuthToken();
-  if (!token) throw new Error("AUTH_TOKEN_MISSING");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
@@ -150,11 +189,16 @@ async function postJSON(url, body) {
   try {
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: (() => {
+        const h = { "Content-Type": "application/json" };
+        if (token) h.Authorization = `Bearer ${token}`;
+        return h;
+      })(),
       signal: controller.signal,
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
+      if (resp.status === 401) throw new Error("AUTH_TOKEN_MISSING");
       const text = await resp.text().catch(() => "");
       throw new Error(`HTTP_${resp.status}:${text.slice(0, 200)}`);
     }
@@ -166,16 +210,16 @@ async function postJSON(url, body) {
 
 async function getJSON(url) {
   const token = getAuthToken();
-  if (!token) throw new Error("AUTH_TOKEN_MISSING");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const resp = await fetch(url, {
       method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: (() => { const h = {}; if (token) h.Authorization = `Bearer ${token}`; return h; })(),
       signal: controller.signal,
     });
     if (!resp.ok) {
+      if (resp.status === 401) throw new Error("AUTH_TOKEN_MISSING");
       const text = await resp.text().catch(() => "");
       throw new Error(`HTTP_${resp.status}:${text.slice(0, 200)}`);
     }
@@ -384,12 +428,7 @@ export default function JusticeLabPlay() {
 
   // Audience
   const [audienceScene, setAudienceScene] = useState(() => run?.answers?.audience?.scene || null);
-
   const [isLoadingAudience, setIsLoadingAudience] = useState(false);
-  // ✅ Progress bar génération audience (<= 12s)
-  const [audienceGenProgress, setAudienceGenProgress] = useState(0);
-  const audienceGenTimerRef = useRef(null);
-
 
   // Scoring IA + Appeal IA
   const [isScoring, setIsScoring] = useState(false);
@@ -411,15 +450,6 @@ export default function JusticeLabPlay() {
 
   // ✅ Audience ultra pro (formation continue)
   const [ultraPro, setUltraPro] = useState(() => Boolean(run?.state?.settings?.ultraPro));
-
-  // ✅ Procès complet V1 (multi-audiences)
-  const [trialV1, setTrialV1] = useState(() => Boolean(run?.state?.settings?.trialV1));
-
-  const currentTrialStage = useMemo(() => {
-    if (!trialV1) return null;
-    return getCurrentTrialStage(run);
-  }, [trialV1, run]);
-
 
   // ✅ Greffier (nom)
   const [greffierName, setGreffierName] = useState(() => {
@@ -447,35 +477,6 @@ export default function JusticeLabPlay() {
     saveRunState(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ultraPro]);
-
-  // ✅ persist trialV1 setting in run (+ init trial state)
-  useEffect(() => {
-    if (!run?.runId) return;
-    const current = Boolean(run?.state?.settings?.trialV1);
-    if (current === Boolean(trialV1)) return;
-
-    let next = {
-      ...run,
-      state: {
-        ...(run.state || {}),
-        settings: { ...(run.state?.settings || {}), trialV1: Boolean(trialV1) },
-      },
-    };
-
-    // init timeline when enabling
-    if (Boolean(trialV1)) {
-      next = initTrialV1(next, caseData);
-    } else {
-      // if disabling, keep state.trial but mark as inactive (no destruction)
-      next.state = next.state || {};
-      next.state.settings = { ...(next.state.settings || {}), trialV1: false };
-    }
-
-    saveRunState(next);
-    setRun(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trialV1]);
-
 
 
   // ✅ persister run en storage comme active
@@ -805,29 +806,10 @@ export default function JusticeLabPlay() {
     if (step === "BRIEFING") return setStep("QUALIFICATION");
     if (step === "QUALIFICATION") return setStep("PROCEDURE");
     if (step === "PROCEDURE") {
-      // Procès complet V1: on passe en timeline (multi-audiences)
-      if (Boolean(run?.state?.settings?.trialV1)) {
-        const next = initTrialV1(run, caseData);
-        saveRunState(next);
-        setRun(next);
-        return setStep("TRIAL");
-      }
       await loadAudience();
       return setStep("AUDIENCE");
     }
-    if (step === "TRIAL") {
-      // Procès complet V1: on ne peut aller à la décision que lorsque toutes les étapes sont terminées
-      if (Boolean(run?.state?.settings?.trialV1) && trialAllDone) return setStep("DECISION");
-      return;
-    }
-
-    if (step === "AUDIENCE") {
-      // Procès complet V1: retour timeline après l'audience de l'étape
-      if (Boolean(run?.state?.settings?.trialV1)) {
-        return setStep("TRIAL");
-      }
-      return setStep("DECISION");
-    }
+    if (step === "AUDIENCE") return setStep("DECISION");
     if (step === "DECISION") return finalize();
   };
 
@@ -837,34 +819,12 @@ export default function JusticeLabPlay() {
     if (step === "BRIEFING") return setStep("ROLE");
     if (step === "QUALIFICATION") return setStep("BRIEFING");
     if (step === "PROCEDURE") return setStep("QUALIFICATION");
-    if (step === "TRIAL") return setStep("PROCEDURE");
-    if (step === "AUDIENCE") {
-      if (Boolean(run?.state?.settings?.trialV1)) return setStep("TRIAL");
-      return setStep("PROCEDURE");
-    }
-    if (step === "DECISION") {
-      if (Boolean(run?.state?.settings?.trialV1)) return setStep("TRIAL");
-      return setStep("AUDIENCE");
-    }
+    if (step === "AUDIENCE") return setStep("PROCEDURE");
+    if (step === "DECISION") return setStep("AUDIENCE");
   };
 
   const loadAudience = async () => {
     if (audienceScene?.objections?.length) return;
-
-    
-    // Progress bar (max ~12s)
-    setAudienceGenProgress(0);
-    if (audienceGenTimerRef.current) clearInterval(audienceGenTimerRef.current);
-    const t0 = Date.now();
-    audienceGenTimerRef.current = setInterval(() => {
-      const dt = Date.now() - t0;
-      const p = Math.min(95, Math.round((dt / 11000) * 95));
-      setAudienceGenProgress(p);
-      if (p >= 95) {
-        clearInterval(audienceGenTimerRef.current);
-        audienceGenTimerRef.current = null;
-      }
-    }, 200);
 
     setIsLoadingAudience(true);
     try {
@@ -938,11 +898,6 @@ export default function JusticeLabPlay() {
       saveRunState(nextRun);
     } finally {
       setIsLoadingAudience(false);
-      setAudienceGenProgress(100);
-      if (audienceGenTimerRef.current) {
-        clearInterval(audienceGenTimerRef.current);
-        audienceGenTimerRef.current = null;
-      }
     }
   };
 
@@ -1218,138 +1173,6 @@ export default function JusticeLabPlay() {
     saveRunState(next);
   };
 
-
-
-  // ================================
-  // ✅ PROCÈS COMPLET V1 — helpers UI
-  // ================================
-  const trialStageMap = useMemo(() => {
-    const m = {};
-    for (const s of (TRIAL_V1_STAGES || [])) m[s.id] = s;
-    return m;
-  }, []);
-
-  const loadStageAudience = async (stageId) => {
-    if (!stageId) return;
-    const def = trialStageMap[stageId] || {};
-
-    // ensure trial initialized
-    let baseRun = run;
-    if (!baseRun?.state?.trial || baseRun.state.trial.version !== "V1") {
-      baseRun = initTrialV1(baseRun, caseData);
-    }
-    baseRun = setCurrentTrialStage(baseRun, stageId);
-    saveRunState(baseRun);
-    setRun(baseRun);
-
-    
-    // Progress bar (max ~12s)
-    setAudienceGenProgress(0);
-    if (audienceGenTimerRef.current) clearInterval(audienceGenTimerRef.current);
-    const t0 = Date.now();
-    audienceGenTimerRef.current = setInterval(() => {
-      const dt = Date.now() - t0;
-      const p = Math.min(95, Math.round((dt / 11000) * 95));
-      setAudienceGenProgress(p);
-      if (p >= 95) {
-        clearInterval(audienceGenTimerRef.current);
-        audienceGenTimerRef.current = null;
-      }
-    }, 200);
-
-    setIsLoadingAudience(true);
-    try {
-      const payload = {
-        caseData,
-        runData: baseRun,
-
-        // meta de l'étape du procès
-        hearingType: stageId,
-        hearingObjective: def.objective || "Audience simulée (formation)",
-
-        // ultra pro
-        audienceStyle: ultraPro ? "ULTRA_PRO" : "STANDARD",
-        minTurns: Number(def.minTurns || (ultraPro ? 40 : 22)),
-        minObjections: Number(def.minObjections || (ultraPro ? 8 : 4)),
-        includeIncidents: def.includeIncidents !== false,
-        includePiecesLinks: true,
-      };
-
-      const data = await postJSON(`${API_BASE}/justice-lab/audience`, payload);
-      const merged = mergeAudienceWithTemplates(caseData, data);
-
-      // stocker dans la timeline + aussi comme scene active
-      let next = attachStageAudienceScene(baseRun, stageId, merged);
-      next = setAudienceSceneOnRun(next, merged);
-
-      setAudienceScene(merged);
-      saveRunState(next);
-      setRun(next);
-      setStep("AUDIENCE");
-    } catch (e) {
-      console.warn(e);
-      setSessionError("Impossible de générer l'audience de l'étape.");
-    } finally {
-      setIsLoadingAudience(false);
-      setAudienceGenProgress(100);
-      if (audienceGenTimerRef.current) {
-        clearInterval(audienceGenTimerRef.current);
-        audienceGenTimerRef.current = null;
-      }
-    }
-  };
-
-  const markStageDone = (stageId, note) => {
-    if (!stageId) return;
-    const t = run?.state?.trial;
-    if (!t || !Array.isArray(t.stages)) return;
-
-    const next = {
-      ...run,
-      state: {
-        ...(run.state || {}),
-        trial: {
-          ...t,
-          stages: t.stages.map((s) =>
-            s.id === stageId
-              ? {
-                  ...s,
-                  status: "DONE",
-                  finishedAt: s.finishedAt || nowIso(),
-                  notes: [...(Array.isArray(s.notes) ? s.notes : []), ...(note ? [String(note).slice(0, 400)] : [])],
-                }
-              : s
-          ),
-          journal: [...(Array.isArray(t.journal) ? t.journal : []), { ts: nowIso(), type: "STAGE_DONE", text: `Étape terminée → ${stageId}` }],
-        },
-      },
-    };
-
-    saveRunState(next);
-    setRun(next);
-  };
-
-  const advanceToNextStage = () => {
-    const t = run?.state?.trial;
-    if (!t || !Array.isArray(t.stages)) return;
-
-    const currentId = t.currentStageId;
-    const stages = [...t.stages].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const idx = stages.findIndex((s) => s.id === currentId);
-    const nextStage = stages.find((s, i) => i > idx && s.status !== "DONE") || null;
-
-    if (!nextStage) return; // plus d'étape
-
-    const next = setCurrentTrialStage(run, nextStage.id);
-    saveRunState(next);
-    setRun(next);
-  };
-
-  const trialAllDone = useMemo(() => {
-    const st = run?.state?.trial?.stages;
-    if (!Array.isArray(st) || !st.length) return false;
-    return st.every((s) => s.status === "DONE");
-  }, [run]);
   const finalize = async () => {
     setScoreError(null);
     setAppealError(null);
@@ -1638,62 +1461,6 @@ export default function JusticeLabPlay() {
                   et documentées (PV / journal). Choisis un mode : solo (IA joue les autres rôles) ou co‑op (2–3 joueurs).
                 </p>
 
-                <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/30 p-4">
-                  <div className="text-xs font-semibold text-slate-100">🧩 Format de simulation</div>
-                  <div className="mt-1 text-xs text-slate-300">
-                    Audience unique (1 audience) ou <b>Procès complet V1</b> (multi-audiences).
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className={`px-3 py-2 rounded-xl border text-xs transition ${
-                        !trialV1
-                          ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-100"
-                          : "border-white/10 bg-white/5 hover:bg-white/10 text-slate-100"
-                      }`}
-                      onClick={() => {
-                        setTrialV1(false);
-                        const next = {
-                          ...run,
-                          state: {
-                            ...(run.state || {}),
-                            settings: { ...(run.state?.settings || {}), trialV1: false },
-                          },
-                        };
-                        saveRunState(next);
-                        setRun(next);
-                      }}
-                    >
-                      Audience unique
-                    </button>
-
-                    <button
-                      type="button"
-                      className={`px-3 py-2 rounded-xl border text-xs transition ${
-                        trialV1
-                          ? "border-indigo-500/60 bg-indigo-500/10 text-indigo-100"
-                          : "border-white/10 bg-white/5 hover:bg-white/10 text-slate-100"
-                      }`}
-                      onClick={() => {
-                        setTrialV1(true);
-                        let next = {
-                          ...run,
-                          state: {
-                            ...(run.state || {}),
-                            settings: { ...(run.state?.settings || {}), trialV1: true },
-                          },
-                        };
-                        next = initTrialV1(next, caseData);
-                        saveRunState(next);
-                        setRun(next);
-                      }}
-                    >
-                      Procès complet V1
-                    </button>
-                  </div>
-                </div>
-
                 <div className="mt-4 space-y-3">
                   <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -1844,327 +1611,6 @@ export default function JusticeLabPlay() {
             </div>
           )}
 
-
-
-          {/* TRIAL */}
-          {step === "TRIAL" && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Procès complet V1</div>
-                    <h2 className="mt-2 text-lg font-semibold text-slate-100">Timeline multi-audiences (RDC)</h2>
-                    <p className="mt-2 text-sm text-slate-300">
-                      Un procès réaliste se déroule en plusieurs audiences. Termine chaque étape pour accéder à la décision finale.
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs text-slate-300">État</div>
-                    <div className="text-sm font-semibold text-slate-100">{trialAllDone ? "PRÊT POUR JUGEMENT" : "EN COURS"}</div>
-                  </div>
-                </div>
-
-                <div className="mt-4 space-y-2">
-                  {(run?.state?.trial?.stages || []).map((s) => {
-                    const active = s.id === run?.state?.trial?.currentStageId;
-                    const statusColor =
-                      s.status === "DONE"
-                        ? "border-emerald-500/40 bg-emerald-500/5"
-                        : active
-                          ? "border-indigo-500/40 bg-indigo-500/5"
-                          : "border-white/10 bg-white/5";
-
-                    return (
-                      <div key={s.id} className={`rounded-2xl border p-4 ${statusColor}`}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-slate-100">{s.title}</div>
-                            <div className="text-xs text-slate-300 mt-1">{s.objective}</div>
-                            <div className="text-[11px] text-slate-400 mt-2">
-                              Statut: <span className="text-slate-200 font-semibold">{s.status}</span>
-                              {s.finishedAt ? ` • terminé ${String(s.finishedAt).slice(0, 10)}` : ""}
-                            </div>
-                          </div>
-
-                          <div className="flex flex-col gap-2 min-w-[180px]">
-                            <button
-                              type="button"
-                              className={`px-3 py-2 rounded-xl text-sm font-semibold transition ${
-                                active ? "bg-indigo-600 hover:bg-indigo-700" : "bg-slate-800 hover:bg-slate-700"
-                              }`}
-                              onClick={() => {
-                                const next = setCurrentTrialStage(run, s.id);
-                                saveRunState(next);
-                                setRun(next);
-                              }}
-                            >
-                              {active ? "Étape active" : "Activer"}
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={isLoadingAudience}
-                              className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm font-semibold disabled:opacity-60"
-                              onClick={() => loadStageAudience(s.id)}
-                            >
-                              Générer l’audience
-                            </button>
-
-                            <button
-                              type="button"
-                              className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm font-semibold"
-                              onClick={() => markStageDone(s.id, "Étape validée")}
-                            >
-                              Marquer terminé
-                            </button>
-                          </div>
-                        </div>
-
-                        {s.audienceScene ? (
-                          <div className="mt-3 rounded-xl border border-white/10 bg-slate-950/40 p-3 text-xs text-slate-300">
-                            <div className="flex items-center justify-between gap-2">
-                              <div>
-                                ✅ Audience prête — {s.audienceScene?.sceneMeta?.tribunal || "Tribunal"} • {s.audienceScene?.turns?.length || 0} tours
-                              </div>
-                              <button
-                                type="button"
-                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 transition text-xs font-semibold"
-                                onClick={() => {
-                                  // ouvrir cette audience
-                                  const next = setAudienceSceneOnRun(run, s.audienceScene);
-                                  saveRunState(next);
-                                  setAudienceScene(s.audienceScene);
-                                  setRun(next);
-                                  setStep("AUDIENCE");
-                                }}
-                              >
-                                Ouvrir
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 transition text-sm font-semibold"
-                    onClick={advanceToNextStage}
-                  >
-                    Étape suivante →
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!trialAllDone}
-                    className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 transition text-sm font-semibold disabled:opacity-60"
-                    onClick={() => trialAllDone && setStep("DECISION")}
-                  >
-                    Passer au jugement
-                  </button>
-                </div>
-
-                {isLoadingAudience ? (
-                  <div className="mt-3">
-                    <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
-                      <div
-                        className="h-full bg-indigo-500/80 transition-all"
-                        style={{ width: `${audienceGenProgress}%` }}
-                      />
-                    </div>
-                    <div className="mt-1 text-xs text-indigo-200">
-                      ⏳ Génération… {audienceGenProgress}%
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-
-              <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Calendrier + incidents + PV</div>
-                <h3 className="mt-2 text-sm font-semibold text-slate-100">Procédure — calendrier réaliste RDC</h3>
-                <p className="mt-2 text-xs text-slate-300">
-                  Fixation, renvois, mises en état et audiences. Les incidents peuvent être suggérés (auto) puis consignés.
-                </p>
-
-                {/* CALENDRIER */}
-                <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-slate-200 font-semibold">📅 Calendrier procédural</div>
-                    <button
-                      type="button"
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 transition text-xs font-semibold"
-                      onClick={() => {
-                        const next0 = initProceduralCalendar(run, caseData);
-                        saveRunState(next0);
-                        setRun(next0);
-                      }}
-                    >
-                      Init/Sync
-                    </button>
-                  </div>
-
-                  <div className="mt-2 space-y-2">
-                    {(
-                      (run?.state?.trial?.calendar?.events || [])
-                        .slice()
-                        .sort((a, b) => String(a.date).localeCompare(String(b.date)))
-                        .slice(0, 8)
-                    ).map((e) => (
-                      <div key={e.id} className="rounded-xl border border-white/10 bg-white/5 p-2 text-xs text-slate-300">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-slate-100 font-semibold">{e.date} • {e.label}</div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[11px] ${e.status === "DONE" ? "text-emerald-300" : "text-slate-400"}`}>{e.status}</span>
-                            {e.status !== "DONE" ? (
-                              <button
-                                type="button"
-                                className="px-2 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition text-[11px]"
-                                onClick={() => {
-                                  const next = markCalendarEventDone(run, e.id);
-                                  saveRunState(next);
-                                  setRun(next);
-                                }}
-                              >
-                                Marquer fait
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                        {e.detail ? <div className="mt-1 text-[11px] text-slate-400">{e.detail}</div> : null}
-                      </div>
-                    ))}
-
-                    {!(run?.state?.trial?.calendar?.events || []).length ? (
-                      <div className="text-xs text-slate-400">Aucun événement. Clique "Init/Sync".</div>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm font-semibold"
-                      onClick={() => {
-                        // renvoi rapide à J+7 (heuristique)
-                        const last = (run?.state?.trial?.calendar?.events || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(-1)[0];
-                        const base = last?.date || new Date().toISOString().slice(0, 10);
-                        const d = new Date(base);
-                        d.setDate(d.getDate() + 7);
-                        const next = addCalendarEvent(run, {
-                          type: "RENVOI",
-                          date: d.toISOString().slice(0, 10),
-                          label: "Renvoi",
-                          detail: "Renvoi ordonné (motif à préciser).",
-                          stageId: run?.state?.trial?.currentStageId || null,
-                        });
-                        saveRunState(next);
-                        setRun(next);
-                      }}
-                    >
-                      + Renvoi (J+7)
-                    </button>
-
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm font-semibold"
-                      onClick={() => {
-                        const stageId = run?.state?.trial?.currentStageId || "INTRO";
-                        const next = applyAutoIncidents(run, caseData, stageId, { mode: "SUGGEST" });
-                        saveRunState(next);
-                        setRun(next);
-                      }}
-                    >
-                      ⚖️ Suggérer incidents (auto)
-                    </button>
-
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 transition text-sm font-semibold"
-                      onClick={() => {
-                        const stageId = run?.state?.trial?.currentStageId || "INTRO";
-                        const next = applyAutoIncidents(run, caseData, stageId, { mode: "APPLY" });
-                        saveRunState(next);
-                        setRun(next);
-                      }}
-                    >
-                      ✅ Enregistrer incidents (auto)
-                    </button>
-                  </div>
-
-                  {/* Incidents list */}
-                  <div className="mt-3">
-                    <div className="text-xs text-slate-200 font-semibold">Incidents (suggestions / enregistrés)</div>
-                    <div className="mt-2 space-y-2">
-                      {(run?.state?.trial?.incidents || []).slice().reverse().slice(0, 6).map((i) => (
-                        <div key={i.id} className="rounded-xl border border-white/10 bg-white/5 p-2 text-xs text-slate-300">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="text-slate-100 font-semibold">{i.label}</div>
-                            <div className="text-[11px] text-slate-400">{i.status} • {i.stageId}</div>
-                          </div>
-                          {i.detail ? <div className="mt-1 text-[11px] text-slate-400">{i.detail}</div> : null}
-                        </div>
-                      ))}
-                      {!(run?.state?.trial?.incidents || []).length ? (
-                        <div className="text-xs text-slate-400">Aucun incident enregistré/suggéré.</div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                {/* PV */}
-                <div className="mt-4">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">PV & checklists</div>
-                  <h3 className="mt-2 text-sm font-semibold text-slate-100">Greffier — notes rapides</h3>
-                  <p className="mt-2 text-xs text-slate-300">
-                    Ajoute des notes (PV) rattachées à l’étape active. Elles sont conservées dans le run.
-                  </p>
-                </div>
-
-                <div className="mt-3">
-                  <textarea
-                    className="w-full min-h-[110px] rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-400/50"
-                    placeholder="Ex: Incidents soulevés, pièces communiquées, décision sur renvoi, observations du parquet…"
-                    value={draftReasoningById.__trial_pv || ""}
-                    onChange={(e) => setDraftReasoningById((p) => ({ ...(p || {}), __trial_pv: e.target.value }))}
-                  />
-
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 transition text-sm font-semibold"
-                      onClick={() => {
-                        const stageId = run?.state?.trial?.currentStageId || "INTRO";
-                        const txt = String(draftReasoningById.__trial_pv || "").trim();
-                        if (!txt) return;
-                        const next = appendStagePV(run, stageId, { by: greffierName, text: txt });
-                        saveRunState(next);
-                        setRun(next);
-                        setDraftReasoningById((p) => ({ ...(p || {}), __trial_pv: "" }));
-                      }}
-                    >
-                      Ajouter au PV
-                    </button>
-                  </div>
-
-                  <div className="mt-3 space-y-2">
-                    {(currentTrialStage?.pv || []).slice(0, 8).map((row, i) => (
-                      <div key={`${row.ts}-${i}`} className="rounded-xl border border-white/10 bg-slate-950/40 p-3 text-xs text-slate-300">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-slate-100 font-semibold">{row.by || "Greffier"}</div>
-                          <div className="text-[11px] text-slate-400">{String(row.ts || "").slice(0, 19).replace("T", " ")}</div>
-                        </div>
-                        <div className="mt-1 whitespace-pre-wrap">{row.text}</div>
-                      </div>
-                    ))}
-                    {!(currentTrialStage?.pv || []).length ? (
-                      <div className="text-xs text-slate-400">Aucune note PV pour l’étape active.</div>
-                    ) : null}
-                  </div>
-                </div>
-              </section>
-            </div>
-          )}
           {/* ROLE */}
           {step === "ROLE" && (
             <div className="grid gap-4 md:grid-cols-3">
@@ -2657,75 +2103,6 @@ export default function JusticeLabPlay() {
           {/* DECISION */}
           {step === "DECISION" && (
             <div className="grid gap-4 md:grid-cols-2">
-              <div className="md:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Jugement motivé + voie d’appel (auto)</div>
-                    <div className="text-sm text-slate-200 mt-1">
-                      Génère une structure réaliste (RDC) à partir des étapes, PV et incidents.
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 transition text-sm font-semibold"
-                      onClick={() => {
-                        const draft = buildJudgmentDraft({ caseData, run });
-                        const next = {
-                          ...run,
-                          answers: {
-                            ...(run.answers || {}),
-                            decisionMotivation: draft.motivation + "\n\n" + draft.voiesRecours,
-                            decisionDispositif: draft.dispositif,
-                          },
-                        };
-                        saveRunState(next);
-                        setRun(next);
-                      }}
-                    >
-                      ⚡ Auto-structurer
-                    </button>
-
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 transition text-sm font-semibold"
-                      onClick={() => {
-                        const ap = buildAppealDraft({ caseData, run });
-                        const next = {
-                          ...run,
-                          appeal: {
-                            createdAt: new Date().toISOString(),
-                            memo: ap.memo,
-                            grounds: ap.grounds,
-                            risk: ap.risk,
-                            due: ap.due,
-                          },
-                        };
-                        saveRunState(next);
-                        setRun(next);
-                        // option: orienter vers APPEAL si l'écran existe
-                        if (typeof setStep === "function") {
-                          // si le module Appeal existe déjà chez toi, on y bascule
-                          // sinon on laisse juste le brouillon dans run.appeal
-                        }
-                      }}
-                    >
-                      🧩 Générer note d’appel
-                    </button>
-                  </div>
-                </div>
-
-                {run?.appeal?.memo ? (
-                  <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-100">
-                    <div className="font-semibold">Brouillon d’appel prêt (formation)</div>
-                    <div className="mt-1 text-amber-50/90">
-                      Risque: {String(run.appeal.risk ?? "-")}/10 • Bonus contradictoire: {String(run.appeal.due ?? "-")}/10
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
               <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
                 <h2 className="text-sm font-semibold text-emerald-200 mb-2">🧾 Motivation</h2>
                 <p className="text-xs text-emerald-50/90 mb-3">Faits → Questions → Droit → Application → Conclusion</p>
