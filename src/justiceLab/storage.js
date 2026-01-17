@@ -1,3 +1,45 @@
+function getAuthToken() {
+  try {
+    if (typeof window === "undefined") return null;
+
+    const candidates = [
+      // most common in DroitGPT
+      "droitgpt_access_token",
+      "access_token",
+      "AUTH_TOKEN",
+      "auth_token",
+      "authToken",
+      "token",
+      "accessToken",
+      "droitgpt_token",
+      "jwt",
+    ];
+
+    for (const k of candidates) {
+      const v = (localStorage.getItem(k) || sessionStorage.getItem(k));
+      if (v && String(v).trim().length > 20) return String(v).trim();
+    }
+
+    // fallback: JSON session objects
+    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
+    for (const k of sessionKeys) {
+      const raw = (localStorage.getItem(k) || sessionStorage.getItem(k));
+      if (!raw) continue;
+      try {
+        const obj = JSON.parse(raw);
+        const v = obj?.token || obj?.access_token || obj?.accessToken || obj?.jwt || obj?.data?.token || obj?.data?.access_token;
+        if (v && String(v).trim().length > 20) return String(v).trim();
+      } catch {
+        // ignore
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // src/justiceLab/storage.js
 // V5 ULTRA PRO (prod) : runs/stats + activeRunId + helpers session + guard localStorage
 // Compatible JusticeLabPlay / Dashboard / Results / Journal / Audience / Appeal
@@ -97,7 +139,7 @@ function normalizeRuns(runs) {
     if (!("finishedAt" in x)) x.finishedAt = x.finishedAt || null;
 
     // step
-    if (!x.step) x.step = "BRIEFING";
+    if (!x.step) x.step = "MODE";
 
     // answers
     if (!x.answers) x.answers = {};
@@ -114,6 +156,26 @@ function normalizeRuns(runs) {
 
     // state
     if (!x.state) x.state = {};
+    // session multi / solo-ai
+    if (!x.state.session || typeof x.state.session !== "object") {
+      x.state.session = {
+        mode: "SOLO_AI", // "SOLO_AI" | "COOP"
+        roomId: null,
+        participantId: null,
+        displayName: "",
+        isHost: false,
+        version: 0,
+        lastSyncAt: null,
+      };
+    } else {
+      if (!x.state.session.mode) x.state.session.mode = "SOLO_AI";
+      if (!("roomId" in x.state.session)) x.state.session.roomId = null;
+      if (!("participantId" in x.state.session)) x.state.session.participantId = null;
+      if (!("displayName" in x.state.session)) x.state.session.displayName = "";
+      if (!("isHost" in x.state.session)) x.state.session.isHost = false;
+      if (!("version" in x.state.session)) x.state.session.version = 0;
+      if (!("lastSyncAt" in x.state.session)) x.state.session.lastSyncAt = null;
+    }
     if (!Array.isArray(x.state.excludedPieceIds)) x.state.excludedPieceIds = [];
     if (!Array.isArray(x.state.admittedLatePieceIds)) x.state.admittedLatePieceIds = [];
     if (!Array.isArray(x.state.pendingTasks)) x.state.pendingTasks = [];

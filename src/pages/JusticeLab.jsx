@@ -6,27 +6,66 @@ import { CASES, listGeneratedCases } from "../justiceLab/cases";
 function getAuthToken() {
   try {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem("auth_token") || localStorage.getItem("token") || null;
+
+    const candidates = [
+      // most common in DroitGPT
+      "droitgpt_access_token",
+      "access_token",
+      "AUTH_TOKEN",
+      "auth_token",
+      "authToken",
+      "token",
+      "accessToken",
+      "droitgpt_token",
+      "jwt",
+    ];
+
+    for (const k of candidates) {
+      const v = (localStorage.getItem(k) || sessionStorage.getItem(k));
+      if (v && String(v).trim().length > 20) return String(v).trim();
+    }
+
+    // fallback: JSON session objects
+    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
+    for (const k of sessionKeys) {
+      const raw = (localStorage.getItem(k) || sessionStorage.getItem(k));
+      if (!raw) continue;
+      try {
+        const obj = JSON.parse(raw);
+        const v = obj?.token || obj?.access_token || obj?.accessToken || obj?.jwt || obj?.data?.token || obj?.data?.access_token;
+        if (v && String(v).trim().length > 20) return String(v).trim();
+      } catch {
+        // ignore
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }
 }
 
+
 async function postJSON(url, body) {
   const token = getAuthToken();
-  if (!token) throw new Error("AUTH_TOKEN_MISSING");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers,
+      credentials: "include",
       signal: controller.signal,
       body: JSON.stringify(body),
     });
+
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
+      if (resp.status === 401 || resp.status === 403) throw new Error("AUTH_TOKEN_MISSING");
       throw new Error(`HTTP_${resp.status}:${text.slice(0, 220)}`);
     }
     return await resp.json();
@@ -34,6 +73,7 @@ async function postJSON(url, body) {
     clearTimeout(timeout);
   }
 }
+
 
 // Même cache que src/justiceLab/cases.js
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";

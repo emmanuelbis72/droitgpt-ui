@@ -13,44 +13,47 @@ const API_BASE =
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
 
 function getAuthToken() {
-  // ✅ Ajout de la clé réelle trouvée: droitgpt_access_token
-  const candidates = [
-    "droitgpt_access_token",
-    "droitgpt_token",
-    "accessToken",
-    "authToken",
-    "token",
-    "jwt",
-    "jwtToken",
-    "idToken",
-  ];
+  try {
+    if (typeof window === "undefined") return null;
 
-  // 1) Chercher dans localStorage + sessionStorage
-  for (const store of [localStorage, sessionStorage]) {
+    const candidates = [
+      // most common in DroitGPT
+      "droitgpt_access_token",
+      "access_token",
+      "AUTH_TOKEN",
+      "auth_token",
+      "authToken",
+      "token",
+      "accessToken",
+      "droitgpt_token",
+      "jwt",
+    ];
+
     for (const k of candidates) {
-      const v = store.getItem(k);
-      if (v && v.trim().length > 10) return v.trim();
+      const v = (localStorage.getItem(k) || sessionStorage.getItem(k));
+      if (v && String(v).trim().length > 20) return String(v).trim();
     }
-  }
 
-  // 2) fallback: token parfois stocké dans un objet JSON
-  const objKeys = ["user", "auth", "profile"];
-  for (const store of [localStorage, sessionStorage]) {
-    for (const k of objKeys) {
-      const raw = store.getItem(k);
+    // fallback: JSON session objects
+    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
+    for (const k of sessionKeys) {
+      const raw = (localStorage.getItem(k) || sessionStorage.getItem(k));
       if (!raw) continue;
       try {
         const obj = JSON.parse(raw);
-        const v = obj?.token || obj?.accessToken || obj?.jwt || obj?.idToken;
-        if (v && String(v).trim().length > 10) return String(v).trim();
+        const v = obj?.token || obj?.access_token || obj?.accessToken || obj?.jwt || obj?.data?.token || obj?.data?.access_token;
+        if (v && String(v).trim().length > 20) return String(v).trim();
       } catch {
         // ignore
       }
     }
-  }
 
-  return "";
+    return null;
+  } catch {
+    return null;
+  }
 }
+
 
 function safeStr(v, max = 1200) {
   return String(v ?? "").slice(0, max);
@@ -101,18 +104,16 @@ function buildBestCaseData({ navCase, run, caseMeta }) {
 
 async function postJSON(url, body) {
   const token = getAuthToken();
-  // ✅ token optionnel: si l'API exige l'auth, elle renverra 401 (affiché proprement)
+  // token optional (backend will return 401 if required)
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
 
   try {
     const resp = await fetch(url, {
+      credentials: "include",
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token && token.length > 10 ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       signal: controller.signal,
       body: JSON.stringify(body),
     });

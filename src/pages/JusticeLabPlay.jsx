@@ -85,51 +85,47 @@ function saveCaseToCache(caseData) {
 }
 
 function getAuthToken() {
-  // ⚠️ Ne bloque pas l'UI si l'utilisateur n'est pas connecté.
-  // On tente localStorage + sessionStorage + scan heuristique.
-  const candidates = [
-    "droitgpt_access_token",
-    "droitgpt_token",
-    "token",
-    "authToken",
-    "accessToken",
-    "access_token",
-  ];
-
-  const stores = [];
   try {
-    if (typeof window !== "undefined" && window.localStorage) stores.push(window.localStorage);
-  } catch {}
-  try {
-    if (typeof window !== "undefined" && window.sessionStorage) stores.push(window.sessionStorage);
-  } catch {}
+    if (typeof window === "undefined") return null;
 
-  for (const store of stores) {
+    const candidates = [
+      // most common in DroitGPT
+      "droitgpt_access_token",
+      "access_token",
+      "AUTH_TOKEN",
+      "auth_token",
+      "authToken",
+      "token",
+      "accessToken",
+      "droitgpt_token",
+      "jwt",
+    ];
+
     for (const k of candidates) {
-      try {
-        const v = store.getItem(k);
-        if (v && String(v).trim().length > 10) return String(v).trim();
-      } catch {}
+      const v = (localStorage.getItem(k) || sessionStorage.getItem(k));
+      if (v && String(v).trim().length > 20) return String(v).trim();
     }
-  }
 
-  for (const store of stores) {
-    try {
-      for (let i = 0; i < store.length; i += 1) {
-        const k = store.key(i);
-        if (!k) continue;
-        if (!/token|auth|session/i.test(k)) continue;
-        const v = store.getItem(k);
-        const s = String(v || "").trim();
-        if (s.length < 20) continue;
-        if (s.includes(".") && s.split(".").length === 3) return s;
-        if (s.startsWith("eyJ")) return s;
+    // fallback: JSON session objects
+    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
+    for (const k of sessionKeys) {
+      const raw = (localStorage.getItem(k) || sessionStorage.getItem(k));
+      if (!raw) continue;
+      try {
+        const obj = JSON.parse(raw);
+        const v = obj?.token || obj?.access_token || obj?.accessToken || obj?.jwt || obj?.data?.token || obj?.data?.access_token;
+        if (v && String(v).trim().length > 20) return String(v).trim();
+      } catch {
+        // ignore
       }
-    } catch {}
-  }
+    }
 
-  return "";
+    return null;
+  } catch {
+    return null;
+  }
 }
+
 
 function toFlagsFromAi(ai) {
   const flags = [];
@@ -161,18 +157,16 @@ function toDebriefFromAi(ai) {
 
 async function postJSON(url, body) {
   const token = getAuthToken();
-  // ✅ token optionnel: si le backend exige l'auth, il renverra 401 (géré par l'UI)
+  // token optional (backend will return 401 if required)
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
 
   try {
     const resp = await fetch(url, {
+      credentials: "include",
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token && token.length > 10 ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       signal: controller.signal,
       body: JSON.stringify(body),
     });
@@ -188,12 +182,14 @@ async function postJSON(url, body) {
 
 async function getJSON(url) {
   const token = getAuthToken();
+  // token optional (backend will return 401 if required)
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const resp = await fetch(url, {
+      credentials: "include",
       method: "GET",
-      headers: { ...(token && token.length > 10 ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     });
     if (!resp.ok) {
