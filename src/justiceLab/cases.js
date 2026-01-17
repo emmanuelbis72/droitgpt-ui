@@ -223,89 +223,6 @@ function idPiece(i) {
   return `P${i}`;
 }
 
-
-
-/* =========================
-   ✅ Dossier long (UI) — Faits & parties détaillés (~5 phrases)
-========================= */
-function getPartyName(parties, keys, fallback) {
-  for (const k of keys) {
-    const v = parties?.[k];
-    if (!v) continue;
-    if (typeof v === "string" && v.trim()) return v.trim();
-    const name = v?.nom || v?.name || v?.label;
-    if (typeof name === "string" && name.trim()) return name.trim();
-  }
-  return fallback;
-}
-
-function buildFaitsPartiesDetailed({ rng, domaine, parties, city, tribunal, chambre, facts, promptText }) {
-  const ville = city || DEFAULT_CITY;
-  const dom = String(domaine || "Pénal");
-  const t = tribunal || "Tribunal";
-  const ch = chambre || "Chambre";
-
-  const A = getPartyName(
-    parties,
-    ["demandeur","requérant","contribuable","importateur","societe","prevenu","travailleur","creancier","parent1"],
-    "la partie demanderesse"
-  );
-  const B = getPartyName(
-    parties,
-    ["defendeur","etat","autorite","administration","douane","tiers","victime","employeur","debiteur","parent2"],
-    "la partie défenderesse"
-  );
-
-  const date = pick(rng, ["fin 2023", "janvier 2024", "mars 2024", "juin 2024", "septembre 2024", "début 2025"]) || "récemment";
-  const enjeu = fmtMoney(rng) || "un enjeu notable";
-
-  const pr = String(promptText || "").replace(/\s+/g, " ").trim();
-  const prShort = pr ? pr.slice(0, 220) : "";
-
-  const s1 = `À ${ville}, ${date}, un différend relevant du droit ${dom.toLowerCase()} est né entre ${A} et ${B}.`;
-  const s2 = facts && String(facts).trim()
-    ? `Selon l’exposé initial, ${String(facts).trim().replace(/\s+/g, " ").replace(/^./, (m) => m.toLowerCase())}.`
-    : `Selon les écritures, ${A} reproche à ${B} des faits qu’il estime contraires au droit applicable, tandis que ${B} conteste tant la matérialité des faits que leur qualification juridique.`;
-  const s3 = prShort
-    ? `Le contexte fourni par l’utilisateur mentionne notamment : « ${prShort}… », ce qui oriente la compréhension de la chronologie et des enjeux.`
-    : `Les parties ont tenté des démarches précontentieuses, mais les échanges se sont dégradés et n’ont pas permis de régler le différend à l’amiable.`;
-  const s4 = `Plusieurs pièces ont été évoquées ou produites, certaines étant discutées quant à leur authenticité, leur pertinence ou leur production tardive, ce qui implique un contrôle strict du contradictoire.`;
-  const s5 = `L’affaire a été portée devant ${t} (${ch}), et l’enjeu est significatif (estimé à environ ${enjeu}), appelant une décision motivée garantissant sécurité juridique et équité du procès.`;
-
-  return [s1, s2, s3, s4, s5].join(" ");
-}
-
-function buildDossierLong({ caseData, rng }) {
-  const cd = caseData || {};
-  const meta = cd.meta || {};
-  const pieces = Array.isArray(cd.pieces) ? cd.pieces : [];
-  const issues = Array.isArray(cd.legalIssues) ? cd.legalIssues : [];
-
-  const faitsTxt = buildFaitsPartiesDetailed({
-    rng,
-    domaine: cd.domaine,
-    parties: cd.parties,
-    city: meta.city,
-    tribunal: meta.tribunal,
-    chambre: meta.chambre,
-    facts: cd.__factsShort || "",
-    promptText: meta.userPrompt || "",
-  });
-
-  const piecesLines = pieces.slice(0, 8).map((p) => `- ${p.id} — ${String(p.title || "Pièce").trim()}${p.isLate ? " (tardive)" : ""}`);
-  const issuesLines = issues.slice(0, 8).map((q) => `- ${q}`);
-
-  return [
-    "📌 Faits & parties",
-    faitsTxt,
-    "",
-    "🧾 Pièces (aperçu)",
-    piecesLines.length ? piecesLines.join("\n") : "- (Aucune pièce listée)",
-    "",
-    "⚖️ Questions litigieuses (axe d'analyse)",
-    issuesLines.length ? issuesLines.join("\n") : "- (À déterminer à l'audience)",
-  ].join("\n");
-}
 /* =========================
    Seed + Hash helpers
 ========================= */
@@ -1183,19 +1100,6 @@ function toUiCase(caseData) {
    Local generation (seeded)
    ✅ anti-duplication + seed auto si vide
 ========================= */
-
-function expandFacts(baseFacts, parties = {}, city = "") {
-  if (!baseFacts) return "";
-  const names = Object.values(parties).map(p => p?.nom).filter(Boolean).join(", ");
-  return [
-    baseFacts,
-    `Les faits se déroulent dans la ville de ${city || "la juridiction saisie"}, impliquant notamment ${names || "les parties au procès"}.`,
-    "Les parties présentent des versions divergentes des événements, chacune produisant des éléments de preuve à l’appui de ses prétentions.",
-    "Le différend s’inscrit dans un contexte de tensions persistantes ayant donné lieu à plusieurs échanges précontentieux.",
-    "L’affaire soulève ainsi des enjeux juridiques et factuels nécessitant l’intervention de la juridiction pour une solution équilibrée."
-  ].join(" ");
-}
-
 export function generateCase({ templateId, seed, level, domain, prompt, source = "generated" } = {}) {
   // ✅ Seed auto unique si non fourni, pour éviter dossiers identiques
   let seedNorm = normalizeSeed(seed);
@@ -1220,11 +1124,8 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
   const lvlChoices = Array.isArray(tpl.levels) && tpl.levels.length ? tpl.levels : ["Intermédiaire"];
   const lvl = level || pick(rng, lvlChoices) || "Intermédiaire";
 
-  const city = pick(rng, ["Kinshasa", "Lubumbashi", "Goma", "Kolwezi", "Bukavu", "Matadi", "Mbuji-Mayi"]) || DEFAULT_CITY;
-
   const parties = buildParties(rng, tpl.partiesSchema);
-  const rawFacts = pick(rng, tpl.factsVariants) || "";
-  const facts = expandFacts(rawFacts, parties, city);
+  const facts = pick(rng, tpl.factsVariants) || "";
   const legalIssues = pickN(rng, tpl.legalIssuesPool, 4).filter(Boolean);
   const pieces = buildPieces(rng, tpl.piecesPool, 7);
 
@@ -1254,6 +1155,8 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
   });
 
   const objectionTemplates = objections.map((o) => injectDynamicEffects(o, pieces));
+
+  const city = pick(rng, ["Kinshasa", "Lubumbashi", "Goma", "Kolwezi", "Bukavu", "Matadi", "Mbuji-Mayi"]) || DEFAULT_CITY;
   const { tribunal, chambre, typeAudience } = computeTribunal(tpl.domaine);
 
   const caseId = mkCaseId(tpl.templateId, seedNorm);
@@ -1273,8 +1176,7 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
     niveau: lvl,
     titre,
     resume,
-    __factsShort: rawFacts,
-  parties,
+    parties,
     pieces,
     legalIssues,
     eventsDeck: events,
@@ -1293,19 +1195,6 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
       source, // base | generated | import
     },
   };
-
-  // ✅ Dossier long détaillé (Faits & parties ~5 phrases)
-
-  try {
-
-    caseData.dossierLong = buildDossierLong({ caseData, rng });
-
-  } catch {
-
-    caseData.dossierLong = `📌 Faits & parties\n${caseData.resume || ""}`.trim();
-
-  }
-
 
   saveCaseToCache(caseData);
   return toUiCase(caseData);
@@ -1449,8 +1338,7 @@ function hydrateCaseData(raw, { domaine, level, seed } = {}) {
     niveau: lvl,
     titre,
     resume,
-    __factsShort: String(raw?.__factsShort || raw?.facts || "").trim(),
-  parties,
+    parties,
     pieces,
     legalIssues,
     eventsDeck,
@@ -1458,21 +1346,6 @@ function hydrateCaseData(raw, { domaine, level, seed } = {}) {
     pedagogy,
     meta,
   };
-
-  // ✅ Dossier long détaillé (pour IA/import aussi)
-
-  try {
-
-    const rng2 = rngFromSeed(`DOSSIERLONG:${meta.templateId}:${meta.seed}`);
-
-    hydrated.dossierLong = buildDossierLong({ caseData: hydrated, rng: rng2 });
-
-  } catch {
-
-    hydrated.dossierLong = `📌 Faits & parties\n${hydrated.resume || ""}`.trim();
-
-  }
-
 
   saveCaseToCache(hydrated);
   return toUiCase(hydrated);

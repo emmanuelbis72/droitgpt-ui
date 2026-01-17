@@ -4,8 +4,6 @@
 // + fallback meta robuste + pieces status amélioré
 
 export const STEPS = [
-  "MODE",
-  "ROLE",
   "BRIEFING",
   "QUALIFICATION",
   "PROCEDURE",
@@ -15,6 +13,548 @@ export const STEPS = [
   "APPEAL",
   "RESULT",
 ];
+
+// ================================
+// ✅ PROCÈS COMPLET — V1+ (multi-audiences + calendrier + plaidoirie)
+// NOTE: on conserve le nom TRIAL_V1_STAGES pour compat (runs existants),
+// mais la timeline est enrichie: "mise en état" + "plaidoirie".
+// Le calendrier procédural permet de simuler fixation, renvois et MEE.
+// ================================
+export const TRIAL_V1_STAGES = [
+  {
+    id: "INTRO",
+    title: "Audience d’introduction",
+    objective:
+      "Appel de la cause, identification des parties, vérification des citations/comparutions, police d’audience.",
+    minTurns: 32,
+    minObjections: 4,
+    includeIncidents: true,
+  },
+  {
+    id: "INCIDENTS",
+    title: "Audience des incidents / exceptions",
+    objective:
+      "Traitement des exceptions (incompétence, nullité, irrecevabilité), demandes de renvoi, communication de pièces.",
+    minTurns: 42,
+    minObjections: 8,
+    includeIncidents: true,
+  },
+  {
+    id: "FOND",
+    title: "Audience de fond (preuves & débats)",
+    objective:
+      "Administration de la preuve, interrogatoire/audition, confrontation, discussion structurée des pièces, questions du siège.",
+    minTurns: 60,
+    minObjections: 10,
+    includeIncidents: true,
+  },
+  {
+    id: "MISE_EN_ETAT",
+    title: "Mise en état (calendrier & communication)",
+    objective:
+      "Fixation, renvois, mise en état: communication de pièces, conclusions/observations, mesures d'instruction, calendrier procédural.",
+    minTurns: 34,
+    minObjections: 6,
+    includeIncidents: true,
+  },
+  {
+    id: "PLAIDOIRIE",
+    title: "Audience de plaidoirie (fond & réquisitions)",
+    objective:
+      "Plaidoiries structurées, réquisitions du ministère public, questions finales du siège, clôture des débats.",
+    minTurns: 55,
+    minObjections: 8,
+    includeIncidents: true,
+  },
+  {
+    id: "DELIBERE",
+    title: "Délibéré (note interne)",
+    objective:
+      "Synthèse des faits, questions juridiques, appréciation des preuves, plan de motivation et risques d’appel.",
+    minTurns: 26,
+    minObjections: 2,
+    includeIncidents: false,
+  },
+  {
+    id: "PRONONCE",
+    title: "Prononcé du jugement",
+    objective:
+      "Lecture des motifs essentiels, dispositif, voies de recours, mesures d’exécution/saisie le cas échéant.",
+    minTurns: 28,
+    minObjections: 2,
+    includeIncidents: false,
+  },
+];
+
+export function initTrialV1(run, caseData) {
+  const next = structuredCloneSafe(run);
+  next.state = next.state || {};
+
+  // si déjà initialisé, migrer (V1 -> V1+) sans casser les runs existants
+  if (next.state.trial && next.state.trial.version === "V1") {
+    return migrateTrialV1Plus(next, caseData);
+  }
+
+  const stages = TRIAL_V1_STAGES.map((s, i) => ({
+    id: s.id,
+    title: s.title,
+    objective: s.objective,
+    order: i,
+    status: i === 0 ? "ACTIVE" : "PENDING", // PENDING | ACTIVE | DONE
+    startedAt: i === 0 ? nowISO() : null,
+    finishedAt: null,
+    audienceScene: null,
+    pv: [],
+    score: null,
+    notes: [],
+  }));
+
+  next.state.trial = {
+    version: "V1",
+    createdAt: nowISO(),
+    currentStageId: stages[0]?.id || "INTRO",
+    stages,
+    calendar: buildDefaultProceduralCalendar({ caseData, stages }),
+    incidents: [],
+    // journal global du procès (événements)
+    journal: [{ ts: nowISO(), type: "TRIAL_INIT", text: "Procès complet V1 initialisé." }],
+  };
+
+  pushAudit(next, {
+    type: "TRIAL_INIT",
+    title: "Procès complet V1",
+    detail: (caseData?.titre || "Dossier") + " — timeline multi-audiences initialisée",
+  });
+
+  // calendrier procédural (fixation/renvois/mise en état) — V1+
+  return initProceduralCalendar(next, caseData);
+}
+
+export function getTrialStage(run, stageId) {
+  const stages = run?.state?.trial?.stages;
+  if (!Array.isArray(stages)) return null;
+  return stages.find((s) => s.id === stageId) || null;
+}
+
+export function getCurrentTrialStage(run) {
+  const id = run?.state?.trial?.currentStageId;
+  return id ? getTrialStage(run, id) : null;
+}
+
+export function setCurrentTrialStage(run, stageId) {
+  const next = structuredCloneSafe(run);
+  const t = next?.state?.trial;
+  if (!t || !Array.isArray(t.stages)) return next;
+
+  const target = t.stages.find((s) => s.id === stageId);
+  if (!target) return next;
+
+  // active stage unique
+  t.stages = t.stages.map((s) => {
+    if (s.id === stageId) {
+      const status = s.status === "DONE" ? "DONE" : "ACTIVE";
+      return { ...s, status, startedAt: s.startedAt || nowISO() };
+    }
+    if (s.status === "ACTIVE") return { ...s, status: "PENDING" };
+    return s;
+  });
+
+  t.currentStageId = stageId;
+  t.journal = Array.isArray(t.journal) ? t.journal : [];
+  t.journal.push({ ts: nowISO(), type: "STAGE_SET", text: `Étape active → ${stageId}` });
+
+  pushAudit(next, { type: "TRIAL_STAGE_SET", title: `Étape → ${stageId}`, detail: target.title });
+  return next;
+}
+
+export function attachStageAudienceScene(run, stageId, scene) {
+  const next = structuredCloneSafe(run);
+  const stage = getTrialStage(next, stageId);
+  if (!stage) return next;
+  stage.audienceScene = scene || null;
+
+  next.state.trial.journal.push({
+    ts: nowISO(),
+    type: "STAGE_AUDIENCE",
+    text: `Audience générée pour ${stageId}`,
+  });
+
+  pushAudit(next, {
+    type: "TRIAL_STAGE_AUDIENCE",
+    title: `Audience générée — ${stage.title}`,
+    detail: scene?.sceneMeta?.tribunal ? `${scene.sceneMeta.tribunal}` : "Audience",
+  });
+
+  return next;
+}
+
+export function appendStagePV(run, stageId, payload) {
+  const next = structuredCloneSafe(run);
+  const stage = getTrialStage(next, stageId);
+  if (!stage) return next;
+
+  const by = safeStr(payload?.by || payload?.role || next?.answers?.role || "Greffier", 24);
+  const text = safeStr(payload?.text || payload?.detail || "", 1200).trim();
+  if (!text) return next;
+
+  stage.pv = Array.isArray(stage.pv) ? stage.pv : [];
+  stage.pv.push({ id: uid("pv"), ts: nowISO(), by, text });
+  stage.pv = stage.pv.slice(-120);
+
+  return next;
+}
+
+export function completeStage(run, stageId, summary = {}) {
+  const next = structuredCloneSafe(run);
+  const t = next?.state?.trial;
+  if (!t || !Array.isArray(t.stages)) return next;
+
+  const stage = t.stages.find((s) => s.id === stageId);
+  if (!stage) return next;
+
+  stage.status = "DONE";
+  stage.finishedAt = nowISO();
+  stage.score = Number.isFinite(Number(summary?.score)) ? Number(summary.score) : stage.score;
+
+  if (summary?.note) {
+    stage.notes = Array.isArray(stage.notes) ? stage.notes : [];
+    stage.notes.push(safeStr(summary.note, 800));
+    stage.notes = stage.notes.slice(-50);
+  }
+
+  t.journal = Array.isArray(t.journal) ? t.journal : [];
+  t.journal.push({ ts: nowISO(), type: "STAGE_DONE", text: `Étape terminée → ${stageId}` });
+
+  // active next stage
+  const ordered = [...t.stages].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const idx = ordered.findIndex((s) => s.id === stageId);
+  const nextStage = ordered[idx + 1] || null;
+
+  if (nextStage && nextStage.status !== "DONE") {
+    t.currentStageId = nextStage.id;
+    t.stages = t.stages.map((s) =>
+      s.id === nextStage.id ? { ...s, status: "ACTIVE", startedAt: s.startedAt || nowISO() } : s
+    );
+  }
+
+  pushAudit(next, {
+    type: "TRIAL_STAGE_DONE",
+    title: `Étape terminée — ${stage.title}`,
+    detail: nextStage ? `Prochaine étape: ${nextStage.title}` : "Procès terminé",
+  });
+
+  return next;
+}
+
+/* =========================================================
+   ✅ CALENDRIER PROCEDURAL + MIGRATION V1+
+   - fixation, renvois, mises en état, audiences
+   - incidents automatisés (templates)
+========================================================= */
+
+function addDays(isoOrDate, days) {
+  const d = isoOrDate ? new Date(isoOrDate) : new Date();
+  d.setDate(d.getDate() + Number(days || 0));
+  return d;
+}
+
+export function initProceduralCalendar(run, caseData) {
+  const next = structuredCloneSafe(run);
+  next.state = next.state || {};
+  next.state.trial = next.state.trial || { version: "V1", createdAt: nowISO(), currentStageId: "INTRO", stages: [], journal: [] };
+
+  const t = next.state.trial;
+  t.calendar = t.calendar || { version: 1, events: [], lastUpdatedAt: null };
+  t.calendar.events = Array.isArray(t.calendar.events) ? t.calendar.events : [];
+
+  // si déjà un calendrier avec des événements, on ne réinitialise pas
+  if (t.calendar.events.length > 0) {
+    t.calendar.lastUpdatedAt = nowISO();
+    return next;
+  }
+
+  const start = new Date();
+  const city = safeStr(caseData?.meta?.city || caseData?.meta?.ville || caseData?.city || "RDC", 40);
+  const tribunal = safeStr(caseData?.meta?.tribunal || caseData?.tribunal || "Tribunal", 80);
+
+  // Calendrier par défaut: fixation -> MEE -> audiences
+  const defaults = [
+    { type: "FIXATION", day: 0, label: "Fixation de la cause", detail: `Fixation au ${tribunal} (${city}).` },
+    { type: "MISE_EN_ETAT", day: 7, label: "Mise en état", detail: "Communication de pièces et calendrier des écritures." },
+    { type: "AUDIENCE", day: 14, label: "Audience d’introduction", stageId: "INTRO" },
+    { type: "AUDIENCE", day: 21, label: "Audience des incidents", stageId: "INCIDENTS" },
+    { type: "AUDIENCE", day: 35, label: "Audience de fond", stageId: "FOND" },
+    { type: "AUDIENCE", day: 49, label: "Audience de plaidoirie", stageId: "PLAIDOIRIE" },
+    { type: "DELIBERE", day: 56, label: "Mise en délibéré", stageId: "DELIBERE" },
+    { type: "PRONONCE", day: 70, label: "Prononcé du jugement", stageId: "PRONONCE" },
+  ];
+
+  for (const e of defaults) {
+    t.calendar.events.push({
+      id: uid("cal"),
+      ts: nowISO(),
+      type: e.type,
+      date: addDays(start, e.day).toISOString().slice(0, 10),
+      label: e.label,
+      detail: e.detail || "",
+      stageId: e.stageId || null,
+      status: "PLANNED", // PLANNED | DONE | CANCELLED
+    });
+  }
+
+  t.calendar.lastUpdatedAt = nowISO();
+  t.journal = Array.isArray(t.journal) ? t.journal : [];
+  t.journal.push({ ts: nowISO(), type: "CAL_INIT", text: "Calendrier procédural initialisé." });
+  pushAudit(next, { type: "CAL_INIT", title: "Calendrier procédural", detail: "Fixation, MEE, audiences planifiées" });
+  return next;
+}
+
+export function addCalendarEvent(run, payload) {
+  const next = structuredCloneSafe(run);
+  const t = next?.state?.trial;
+  if (!t) return next;
+  t.calendar = t.calendar || { version: 1, events: [], lastUpdatedAt: null };
+  t.calendar.events = Array.isArray(t.calendar.events) ? t.calendar.events : [];
+
+  const type = safeStr(payload?.type || "RENVOI", 24).toUpperCase();
+  const label = safeStr(payload?.label || payload?.title || type, 120);
+  const detail = safeStr(payload?.detail || payload?.text || "", 600);
+  const date = safeStr(payload?.date || nowISO().slice(0, 10), 20);
+  const stageId = safeStr(payload?.stageId || "", 32) || null;
+
+  t.calendar.events.push({
+    id: uid("cal"),
+    ts: nowISO(),
+    type,
+    date,
+    label,
+    detail,
+    stageId,
+    status: "PLANNED",
+  });
+
+  t.calendar.lastUpdatedAt = nowISO();
+  t.journal = Array.isArray(t.journal) ? t.journal : [];
+  t.journal.push({ ts: nowISO(), type: "CAL_ADD", text: `Événement ajouté: ${type} (${date})` });
+  pushAudit(next, { type: "CAL_ADD", title: `Calendrier: ${type}`, detail: `${label} — ${date}` });
+
+  // renvoi = petit risque d'appel (délais/gestion)
+  if (type === "RENVOI") {
+    next.state = next.state || {};
+    next.state.riskModifiers = next.state.riskModifiers || { appealRiskPenalty: 0, dueProcessBonus: 0 };
+    next.state.riskModifiers.appealRiskPenalty += 1;
+  }
+
+  return next;
+}
+
+export function markCalendarEventDone(run, eventId) {
+  const next = structuredCloneSafe(run);
+  const evts = next?.state?.trial?.calendar?.events;
+  if (!Array.isArray(evts)) return next;
+  const i = evts.findIndex((e) => e.id === eventId);
+  if (i < 0) return next;
+  evts[i] = { ...evts[i], status: "DONE" };
+  next.state.trial.calendar.lastUpdatedAt = nowISO();
+  return next;
+}
+
+function migrateTrialV1Plus(run, caseData) {
+  const next = structuredCloneSafe(run);
+  const t = next?.state?.trial;
+  if (!t || !Array.isArray(t.stages)) return next;
+
+  const existing = new Set(t.stages.map((s) => s.id));
+  const ordered = [...t.stages].sort((a, b) => (a.order || 0) - (b.order || 0));
+  let maxOrder = ordered.length ? ordered[ordered.length - 1].order || 0 : 0;
+
+  // ajouter les nouvelles étapes si absentes
+  for (const s of TRIAL_V1_STAGES) {
+    if (existing.has(s.id)) continue;
+    maxOrder += 1;
+    t.stages.push({
+      id: s.id,
+      title: s.title,
+      objective: s.objective,
+      order: maxOrder,
+      status: "PENDING",
+      startedAt: null,
+      finishedAt: null,
+      audienceScene: null,
+      pv: [],
+      score: null,
+      notes: [],
+    });
+    t.journal = Array.isArray(t.journal) ? t.journal : [];
+    t.journal.push({ ts: nowISO(), type: "MIGRATE", text: `Étape ajoutée (V1+): ${s.id}` });
+  }
+
+  // calendrier procédural (si absent)
+  const withCal = initProceduralCalendar(next, caseData);
+  return withCal;
+}
+
+// ---------- Incidents automatisés ----------
+export function generateAutoIncidents(caseData, stageId, run) {
+  const domain = safeStr(caseData?.domaine || caseData?.matiere || "", 40).toLowerCase();
+  const stage = String(stageId || "").toUpperCase();
+  const pieces = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
+  const hasLate = pieces.some((p) => p?.isLate || p?.late);
+  const hasCitation = pieces.some((p) => /citation|assignation|exploit/i.test(String(p?.title || p?.type || "")));
+
+  const out = [];
+
+  // incidents génériques
+  if (stage === "INTRO") {
+    if (!hasCitation) out.push({ type: "nullite", label: "Nullité pour vice de citation/notification", detail: "Soulever un vice de forme ou absence de preuve de citation régulière." });
+    out.push({ type: "renvoi", label: "Renvoi pour préparation", detail: "Demande de renvoi pour prise de connaissance des pièces et préparation." });
+  }
+
+  if (stage === "INCIDENTS") {
+    out.push({ type: "incompetence", label: "Exception d’incompétence", detail: "Vérifier compétence matérielle/territoriale; soulever si nécessaire." });
+    out.push({ type: "irrecevabilite", label: "Exception d’irrecevabilité", detail: "Qualité/intérêt à agir, délai, défaut de pouvoir." });
+    if (hasLate) out.push({ type: "communication", label: "Communication de pièces tardives", detail: "Demander communication complète et contradictoire (respect des droits de la défense)." });
+    out.push({ type: "jonction", label: "Jonction/Disjonction", detail: "Demander jonction si connexité; disjonction si retard/complexité." });
+  }
+
+  if (stage === "FOND" || stage === "PLAIDOIRIE") {
+    out.push({ type: "mesure_instruction", label: "Mesure d’instruction", detail: "Demander audition, descente sur les lieux, expertise, réquisition de pièces." });
+    if (domain.includes("penal")) out.push({ type: "liberte", label: "Liberté provisoire / contrôle", detail: "Soulever une mesure provisoire selon le dossier et garanties." });
+  }
+
+  if (domain.includes("foncier")) {
+    out.push({ type: "descente", label: "Descente sur les lieux", detail: "Proposer une descente sur les lieux / expertise cadastrale." });
+  }
+  if (domain.includes("travail")) {
+    out.push({ type: "conciliation", label: "Conciliation / tentative préalable", detail: "Vérifier conciliation préalable/inspection du travail si applicable." });
+  }
+
+  // dédup
+  const seen = new Set();
+  const uniqOut = [];
+  for (const i of out) {
+    const k = `${i.type}-${i.label}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    uniqOut.push(i);
+  }
+
+  return uniqOut.slice(0, 6);
+}
+
+export function applyAutoIncidents(run, caseData, stageId, opts = {}) {
+  const next = structuredCloneSafe(run);
+  const incidents = generateAutoIncidents(caseData, stageId, next);
+  if (!incidents.length) return next;
+
+  next.state = next.state || {};
+  next.state.trial = next.state.trial || { version: "V1", createdAt: nowISO(), currentStageId: stageId, stages: [], journal: [] };
+  next.state.trial.incidents = Array.isArray(next.state.trial.incidents) ? next.state.trial.incidents : [];
+
+  const mode = String(opts.mode || "SUGGEST").toUpperCase(); // SUGGEST | APPLY
+  for (const inc of incidents) {
+    const row = { id: uid("inc"), ts: nowISO(), stageId: String(stageId || ""), ...inc, status: mode === "APPLY" ? "RECORDED" : "SUGGESTED" };
+    next.state.trial.incidents.push(row);
+    if (mode === "APPLY") {
+      // enregistrement au journal + ajustement risques
+      const t = inc.type;
+      recordIncident(next, { type: t, detail: `${inc.label}. ${inc.detail || ""}`, by: "System" });
+    }
+  }
+  next.state.trial.incidents = next.state.trial.incidents.slice(-60);
+  return next;
+}
+
+/* =========================================================
+   ✅ Jugement motivé (auto-structuré) + Voie d’appel (draft)
+========================================================= */
+
+export function buildJudgmentDraft({ caseData, run }) {
+  const cd = caseData || {};
+  const r = run || {};
+
+  const parties = cd.parties || {};
+  const facts = safeStr(cd.resume || cd.brief || "", 1200);
+  const domain = safeStr(cd.domaine || "RDC", 40);
+
+  const incidents = (r?.state?.trial?.incidents || []).filter((x) => x.status === "RECORDED" || x.status === "SUGGESTED").slice(-6);
+  const pv = (r?.state?.trial?.stages || []).flatMap((s) => (s.pv || []).map((p) => ({ stage: s.id, ...p })));
+  const pvBullets = pv.slice(-6).map((p) => `- (${p.stage}) ${safeStr(p.text, 180)}`).join("\n");
+
+  const qual = safeStr(r?.answers?.qualification || "", 700);
+  const proc = safeStr(r?.answers?.procedureJustification || "", 700);
+
+  const motivation = [
+    "**I. Faits et procédure**",
+    facts ? `\n${facts}` : "\n(à compléter: faits essentiels)",
+    pvBullets ? `\n\n**Éléments consignés au PV**\n${pvBullets}` : "",
+    "\n\n**II. Questions litigieuses**",
+    "\n1) Recevabilité/compétence et exceptions éventuelles.",
+    "\n2) Bien‑fondé au fond (responsabilité/droits invoqués) et appréciation des preuves.",
+    "\n\n**III. Règles applicables**",
+    `\n(Droit RDC / ${domain}) : textes pertinents à préciser (code, loi spéciale, principes du contradictoire).`,
+    "\n\n**IV. Application au cas**",
+    qual ? `\nQualification/Analyse: ${qual}` : "\nQualification/Analyse: (à compléter)",
+    proc ? `\nProcédure/Contradictoire: ${proc}` : "\nProcédure/Contradictoire: (à compléter)",
+    incidents.length ? `\n\n**Incidents soulevés**\n${incidents.map((i) => `- ${i.label} (${i.type})`).join("\n")}` : "",
+    "\n\n**V. Conclusion**",
+    "\nLe tribunal statue conformément aux motifs ci‑dessus.",
+  ].filter(Boolean).join("\n");
+
+  const dispositif = [
+    "**PAR CES MOTIFS**",
+    "\n- Dit la demande recevable (ou irrecevable) (à adapter).",
+    "\n- Dit l’exception (accueillie/rejetée) (à adapter).",
+    "\n- Dit la demande fondée (ou non fondée) (à adapter).",
+    "\n- Ordonne (le cas échéant) les mesures d’exécution (à adapter).",
+    "\n- Met les frais à charge de (à adapter).",
+  ].join("\n");
+
+  const voiesRecours = [
+    "**Voies de recours (à adapter selon la matière et la juridiction)**",
+    "- Appel: devant la Cour d’appel compétente, selon les délais légaux applicables.",
+    "- Opposition: si jugement par défaut, selon les conditions légales.",
+    "- Pourvoi: selon les voies et conditions prévues par la loi.",
+  ].join("\n");
+
+  return { motivation, dispositif, voiesRecours };
+}
+
+export function buildAppealDraft({ caseData, run }) {
+  const cd = caseData || {};
+  const r = run || {};
+
+  const risk = safeNum(r?.state?.riskModifiers?.appealRiskPenalty);
+  const due = safeNum(r?.state?.riskModifiers?.dueProcessBonus);
+
+  const incidents = (r?.state?.trial?.incidents || []).slice(-10);
+  const flags = Array.isArray(r?.flags) ? r.flags.slice(-8) : [];
+
+  const grounds = [];
+
+  // heuristiques “formation continue” (pas de délais chiffrés)
+  if (risk >= 4) grounds.push("Violation alléguée du contradictoire / gestion des renvois et communications");
+  if (flags.some((f) => /nullit|vice|compétence/i.test(String(f)))) grounds.push("Nullité de procédure (vice de forme ou compétence contestée)");
+  if (incidents.some((i) => /incompetence|irrecev/i.test(String(i.type)))) grounds.push("Exception d’incompétence/irrecevabilité mal tranchée");
+  if (incidents.some((i) => /mesure_instruction|descente|expertise/i.test(String(i.type)))) grounds.push("Refus ou insuffisance de mesure d’instruction (appréciation des preuves)");
+  if (grounds.length === 0) grounds.push("Erreur d’appréciation des faits et des preuves (à préciser)");
+
+  const memo = [
+    "**Projet de requête / déclaration d’appel (formation)**",
+    `\n**Affaire**: ${safeStr(cd?.caseId || "DOSSIER", 40)} — ${safeStr(cd?.titre || "", 140)}`,
+    "\n**Décision attaquée**: (à préciser: date/juridiction).",
+    "\n**Moyens d’appel (exemples)**",
+    grounds.map((g, i) => `${i + 1}) ${g}`).join("\n"),
+    "\n**Demandes à la Cour**",
+    "- Réformer/annuler la décision (en tout ou partie) ;",
+    "- Dire droit conformément aux moyens ;",
+    "- Ordonner, si besoin, une mesure d’instruction complémentaire.",
+    "\n**Observations pédagogiques**",
+    `- Indice de risque d’appel (simulation): ${risk}/10 ; bonus contradictoire: ${due}/10.`,
+  ].join("\n");
+
+  return { memo, grounds, risk, due };
+}
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const safeStr = (v, max = 2000) => String(v ?? "").slice(0, max);
@@ -72,7 +612,7 @@ export function createNewRun(caseData) {
 
     startedAt: nowISO(),
     finishedAt: null,
-    step: "MODE",
+    step: "BRIEFING",
 
     eventCard,
 
@@ -91,16 +631,6 @@ export function createNewRun(caseData) {
 
     // état runtime
     state: {
-      // session multi / solo-ai
-      session: {
-        mode: "SOLO_AI", // "SOLO_AI" | "COOP"
-        roomId: null,
-        participantId: null,
-        displayName: "",
-        isHost: false,
-        version: 0,
-        lastSyncAt: null,
-      },
       excludedPieceIds: [],
       admittedLatePieceIds: [],
       pendingTasks: [],
@@ -170,122 +700,6 @@ export function getPiecesStatusSummary(run, caseData) {
 export function mergeAudienceWithTemplates(caseData, apiData) {
   const templates = Array.isArray(caseData?.objectionTemplates) ? caseData.objectionTemplates : [];
 
-  // ✅ Garantit que chaque objection a des "effects" valides (3 branches)
-  // et que les IDs de pièces cités existent réellement.
-  const piecesArr = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
-  const allowedPieceIds = new Set(piecesArr.map((p, i) => String(p?.id || `P${i + 1}`)));
-  const latePieceIds = new Set(
-    piecesArr
-      .filter((p) => Boolean(p?.isLate || p?.late))
-      .map((p) => String(p?.id))
-      .filter(Boolean)
-  );
-  const lowReliabilityId =
-    piecesArr
-      .map((p, i) => ({ id: String(p?.id || `P${i + 1}`), r: Number(p?.reliability) }))
-      .filter((x) => Number.isFinite(x.r))
-      .sort((a, b) => a.r - b.r)?.[0]?.id ||
-    (piecesArr[0]?.id ? String(piecesArr[0].id) : "P1");
-
-  const cleanPieceIds = (arr) => {
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .map(String)
-      .filter((id) => allowedPieceIds.has(id))
-      .slice(0, 6);
-  };
-
-  const cleanRisk = (risk) => {
-    const r = risk && typeof risk === "object" ? risk : {};
-    return {
-      dueProcessBonus: Number.isFinite(Number(r.dueProcessBonus)) ? Number(r.dueProcessBonus) : 0,
-      appealRiskPenalty: Number.isFinite(Number(r.appealRiskPenalty)) ? Number(r.appealRiskPenalty) : 0,
-    };
-  };
-
-  const normalizeBranch = (raw, fallback) => {
-    const e = raw && typeof raw === "object" ? raw : {};
-    const excludePieceIds = cleanPieceIds(e.excludePieceIds);
-    const admitLatePieceIds = cleanPieceIds(e.admitLatePieceIds);
-
-    const addTask =
-      e.addTask && typeof e.addTask === "object"
-        ? {
-            type: safeStr(e.addTask.type || "instruction", 24),
-            label: safeStr(e.addTask.label || "Mesure", 120),
-            detail: safeStr(e.addTask.detail || "", 260),
-          }
-        : null;
-
-    const clarification =
-      e.clarification && typeof e.clarification === "object"
-        ? {
-            label: safeStr(e.clarification.label || "Clarification", 120),
-            detail: safeStr(e.clarification.detail || "", 260),
-          }
-        : null;
-
-    const out = {
-      excludePieceIds,
-      admitLatePieceIds,
-      ...(addTask ? { addTask } : {}),
-      ...(clarification ? { clarification } : {}),
-      why: safeStr(e.why || "", 220),
-      risk: cleanRisk(e.risk),
-    };
-
-    // si branche vide, appliquer un fallback (toujours valide)
-    const empty =
-      !out.excludePieceIds.length &&
-      !out.admitLatePieceIds.length &&
-      !out.addTask &&
-      !out.clarification &&
-      (!out.why || !out.why.trim());
-    return empty ? fallback : out;
-  };
-
-  const defaultEffects = () => {
-    // Un défaut "réaliste": une objection touchant une pièce et une branche "demander précision".
-    const anyLate = Array.from(latePieceIds)[0];
-    return {
-      onAccueillir: {
-        excludePieceIds: [lowReliabilityId].filter((id) => allowedPieceIds.has(id)),
-        admitLatePieceIds: [],
-        addTask: { type: "note", label: "Motiver la décision", detail: "Faits → règle → application → effet." },
-        why: "Mesure de police d'audience/probatoire pour garantir l'équité.",
-        risk: { dueProcessBonus: 1, appealRiskPenalty: 0 },
-      },
-      onRejeter: {
-        excludePieceIds: [],
-        admitLatePieceIds: [],
-        why: "Rejet : absence de grief suffisant / mesure disproportionnée.",
-        risk: { dueProcessBonus: 0, appealRiskPenalty: 1 },
-      },
-      onDemander: {
-        excludePieceIds: [],
-        admitLatePieceIds: anyLate && allowedPieceIds.has(anyLate) ? [anyLate] : [],
-        clarification: { label: "Précisions exigées", detail: "Identifier l'acte, le grief et la pièce concernée." },
-        why: "Le juge clarifie avant de statuer, au regard du contradictoire.",
-        risk: { dueProcessBonus: 2, appealRiskPenalty: 0 },
-      },
-    };
-  };
-
-  const normalizeEffects = (rawEffects) => {
-    const e = rawEffects && typeof rawEffects === "object" ? rawEffects : {};
-
-    // Si l'IA renvoie des effets non-branchés, on les projette sur les 3 branches.
-    const hasBranches = Boolean(e.onAccueillir || e.onRejeter || e.onDemander);
-    const base = hasBranches ? e : { onAccueillir: e, onRejeter: e, onDemander: e };
-
-    const def = defaultEffects();
-    return {
-      onAccueillir: normalizeBranch(base.onAccueillir, def.onAccueillir),
-      onRejeter: normalizeBranch(base.onRejeter, def.onRejeter),
-      onDemander: normalizeBranch(base.onDemander, def.onDemander),
-    };
-  };
-
   const tribunal = safeStr(caseData?.meta?.tribunal || caseData?.tribunal || "Tribunal", 60);
   const chambre = safeStr(caseData?.meta?.chambre || caseData?.chambre || "Audience", 80);
   const ville = safeStr(caseData?.meta?.city || caseData?.meta?.ville || caseData?.city || "RDC", 40);
@@ -326,7 +740,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
       title: safeStr(o.title || "Objection", 80),
       statement: safeStr(o.statement || "", 600),
       options: ["Accueillir", "Rejeter", "Demander précision"],
-      effects: normalizeEffects(o.effects || o.effect || null),
+      effects: o.effects || o.effect || null,
       bestChoiceByRole: o.bestChoiceByRole || null,
     });
   }
@@ -340,7 +754,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
       title: safeStr(t.title || "Objection", 80),
       statement: safeStr(t.statement || "", 600),
       options: ["Accueillir", "Rejeter", "Demander précision"],
-      effects: normalizeEffects(t.effects || t.effect || null),
+      effects: t.effects || t.effect || null,
       bestChoiceByRole: t.bestChoiceByRole || null,
     });
   }
