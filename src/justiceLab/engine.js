@@ -15,6 +15,47 @@ export const STEPS = [
 ];
 
 // ================================
+// ✅ Rôles réalistes (audience RDC) — base commune
+// NOTE: on normalise pour compat (anciens contenus qui utilisent "Avocat")
+// ================================
+export const REALISTIC_ROLES = [
+  "Juge",
+  "Procureur",
+  "Greffier",
+  "Huissier", // audiencier / huissier d’audience
+  "Avocat Demandeur",
+  "Avocat Défendeur",
+];
+
+function normalizeRoleLabel(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return "Juge";
+  const low = raw.toLowerCase();
+
+  // compat historique
+  if (low === "avocat") return "Avocat Défendeur";
+
+  // variantes fréquentes
+  if (low.includes("greff")) return "Greffier";
+  if (low.includes("huiss") || low.includes("audien")) return "Huissier";
+  if (low.includes("procure")) return "Procureur";
+  if (low.includes("juge") || low.includes("magistr")) return "Juge";
+
+  // avocats (2 parties)
+  if (low.includes("avocat")) {
+    if (low.includes("demande") || low.includes("partie civile") || low.includes("plaign")) {
+      return "Avocat Demandeur";
+    }
+    if (low.includes("défend") || low.includes("defend") || low.includes("prévenu") || low.includes("accus")) {
+      return "Avocat Défendeur";
+    }
+    return "Avocat Défendeur";
+  }
+
+  return raw;
+}
+
+// ================================
 // ✅ PROCÈS COMPLET — V1+ (multi-audiences + calendrier + plaidoirie)
 // NOTE: on conserve le nom TRIAL_V1_STAGES pour compat (runs existants),
 // mais la timeline est enrichie: "mise en état" + "plaidoirie".
@@ -617,7 +658,8 @@ export function createNewRun(caseData) {
     eventCard,
 
     answers: {
-      role: "Juge", // "Juge" | "Procureur" | "Avocat"
+      // ✅ rôles réalistes (RDC) — voir REALISTIC_ROLES
+      role: "Juge",
       qualification: "",
       procedureChoice: null,
       procedureJustification: "",
@@ -711,21 +753,26 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
     date: nowISO().slice(0, 10),
     dossier: safeStr(caseData?.caseId || "DOSSIER", 40),
     audienceType: safeStr(caseData?.typeAudience || "Audience simulée", 60),
+    // ✅ déroulé fidèle
     phases: [
-      { id: "ouverture", title: "Ouverture et vérifications" },
-      { id: "incidents", title: "Incidents / Exceptions / Objections" },
-      { id: "debats", title: "Débats au fond" },
-      { id: "cloture", title: "Clôture et mise en délibéré" },
+      { id: "APPEL_CAUSE", title: "Appel de la cause" },
+      { id: "COMPARUTION", title: "Comparution & vérifications" },
+      { id: "INCIDENTS", title: "Incidents / Exceptions" },
+      { id: "DEBATS", title: "Débats au fond" },
+      { id: "CONCLUSIONS", title: "Plaidoiries / Réquisitions" },
+      { id: "DELIBERE", title: "Mise en délibéré" },
     ],
   };
 
   const turns =
     (Array.isArray(apiData?.turns) && apiData.turns) ||
     [
-      { speaker: "Greffier", text: "Affaire appelée, parties présentes." },
-      { speaker: "Juge", text: "L'audience est ouverte." },
-      { speaker: "Procureur", text: "Le ministère public présente ses réquisitions." },
-      { speaker: "Avocat", text: "La défense soulève des incidents et répond au fond." },
+      { speaker: "Huissier", text: "Silence ! Le Tribunal." },
+      { speaker: "Greffier", text: "Affaire appelée. Vérification des présences et des citations." },
+      { speaker: "Juge", text: "Audience ouverte. La Cour vérifie comparution et contradictoire." },
+      { speaker: "Procureur", text: "Le ministère public annonce ses réquisitions (à intervenir)." },
+      { speaker: "Avocat Défendeur", text: "La défense soulève un incident / exception et répond au fond." },
+      { speaker: "Avocat Demandeur", text: "La partie demanderesse conclut et répond aux moyens." },
     ];
 
   const apiObs = Array.isArray(apiData?.objections) ? apiData.objections : [];
@@ -736,7 +783,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
     const o = apiObs[i] || {};
     merged.push({
       id: safeStr(o.id || `OBJ${i + 1}`, 32),
-      by: safeStr(o.by || "Avocat", 20),
+      by: safeStr(normalizeRoleLabel(o.by || "Avocat"), 24),
       title: safeStr(o.title || "Objection", 80),
       statement: safeStr(o.statement || "", 600),
       options: ["Accueillir", "Rejeter", "Demander précision"],
@@ -750,7 +797,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
     const t = templates[j] || {};
     merged.push({
       id: safeStr(t.id || `OBJ_TPL_${j + 1}`, 32),
-      by: safeStr(t.by || "Avocat", 20),
+      by: safeStr(normalizeRoleLabel(t.by || "Avocat"), 24),
       title: safeStr(t.title || "Objection", 80),
       statement: safeStr(t.statement || "", 600),
       options: ["Accueillir", "Rejeter", "Demander précision"],
@@ -762,7 +809,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
   return {
     sceneMeta,
     turns: turns.slice(0, 12).map((t) => ({
-      speaker: safeStr(t?.speaker || "Juge", 20),
+      speaker: safeStr(normalizeRoleLabel(t?.speaker || "Juge"), 24),
       text: safeStr(t?.text || "", 900),
       ts: nowISO(),
     })),

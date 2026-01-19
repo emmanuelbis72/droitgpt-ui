@@ -1,45 +1,3 @@
-function getAuthToken() {
-  try {
-    if (typeof window === "undefined") return null;
-
-    const candidates = [
-      // most common in DroitGPT
-      "droitgpt_access_token",
-      "access_token",
-      "AUTH_TOKEN",
-      "auth_token",
-      "authToken",
-      "token",
-      "accessToken",
-      "droitgpt_token",
-      "jwt",
-    ];
-
-    for (const k of candidates) {
-      const v = (localStorage.getItem(k) || sessionStorage.getItem(k));
-      if (v && String(v).trim().length > 20) return String(v).trim();
-    }
-
-    // fallback: JSON session objects
-    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
-    for (const k of sessionKeys) {
-      const raw = (localStorage.getItem(k) || sessionStorage.getItem(k));
-      if (!raw) continue;
-      try {
-        const obj = JSON.parse(raw);
-        const v = obj?.token || obj?.access_token || obj?.accessToken || obj?.jwt || obj?.data?.token || obj?.data?.access_token;
-        if (v && String(v).trim().length > 20) return String(v).trim();
-      } catch {
-        // ignore
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 // src/justiceLab/storage.js
 // V5 ULTRA PRO (prod) : runs/stats + activeRunId + helpers session + guard localStorage
 // Compatible JusticeLabPlay / Dashboard / Results / Journal / Audience / Appeal
@@ -497,4 +455,115 @@ export function updateGlobalStats(run) {
 
   writeStats(updated);
   return updated;
+}
+
+// =========================================================
+// ✅ Network helper (token + cookies + retry + timeout)
+// =========================================================
+export function getAuthTokenSafe() {
+  try {
+    const keys = [
+      "droitgpt_access_token",
+      "access_token",
+      "AUTH_TOKEN",
+      "auth_token",
+      "authToken",
+      "token",
+      "accessToken",
+      "droitgpt_token",
+      "jwt",
+    ];
+    for (const k of keys) {
+      const v = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (v && String(v).trim().length > 20) return String(v).trim();
+    }
+    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
+    for (const k of sessionKeys) {
+      const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (!raw) continue;
+      try {
+        const obj = JSON.parse(raw);
+        const v =
+          obj?.token ||
+          obj?.access_token ||
+          obj?.accessToken ||
+          obj?.jwt ||
+          obj?.data?.token ||
+          obj?.data?.access_token;
+        if (v && String(v).trim().length > 20) return String(v).trim();
+      } catch {}
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function apiFetch(url, options = {}, cfg = {}) {
+  const {
+    timeoutMs = 25000,
+    retries = 2,
+    retryBaseDelayMs = 800,
+  } = cfg;
+
+  let lastErr = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const token = getAuthTokenSafe();
+      const headers = { ...(options.headers || {}) };
+
+      if (!headers["Content-Type"] && options.body && typeof options.body === "string") {
+        headers["Content-Type"] = "application/json";
+      }
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const resp = await fetch(url, {
+        ...options,
+        headers,
+        credentials: "include",
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) {
+        if (resp.status >= 500 && attempt < retries) {
+          await sleep(retryBaseDelayMs * Math.pow(2, attempt));
+          continue;
+        }
+      }
+
+      return resp;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries) {
+        await sleep(retryBaseDelayMs * Math.pow(2, attempt));
+        continue;
+      }
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  throw lastErr || new Error("NETWORK_ERROR");
+}
+
+export async function apiFetchJSON(url, options = {}, cfg = {}) {
+  const resp = await apiFetch(url, options, cfg);
+  const text = await resp.text().catch(() => "");
+  if (!resp.ok) {
+    if (resp.status === 401 || resp.status === 403) throw new Error("AUTH_TOKEN_MISSING");
+    throw new Error(`HTTP_${resp.status}:${text.slice(0, 220)}`);
+  }
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {};
+  }
 }

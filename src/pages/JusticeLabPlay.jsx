@@ -31,10 +31,22 @@ const PROCEDURE_CHOICES = [
   { id: "C", title: "Décision immédiate sur base des éléments disponibles", hint: "Risque si garanties faibles" },
 ];
 
+// ✅ Modes de jeu
+// - SOLO : tu joues ton rôle, le système simule les autres intervenants.
+// - MULTIJOUEUR : salle partagée (roomId persisté). La synchro temps réel complète pourra être branchée ensuite.
+const GAME_MODES = [
+  { id: "solo", label: "🧑‍⚖️ Solo", desc: "Tu joues ton rôle, l'IA simule les autres." },
+  { id: "multi", label: "👥 Multijoueur", desc: "Plusieurs joueurs dans une salle (code)." },
+];
+
+// ✅ Rôles jouables (réalistes en audience en RDC)
+// (Autres acteurs réels mais non joués ici : Huissier/Audiencier, Parties, Témoins, Experts...)
 const ROLES = [
-  { id: "Juge", label: "👨🏽‍⚖️ Juge", desc: "Tranche les objections, dirige l’audience, décide." },
-  { id: "Procureur", label: "🟥 Procureur", desc: "Soutient l’accusation / l’ordre public, propose réquisitions." },
-  { id: "Avocat", label: "🟦 Avocat", desc: "Défense / intérêts privés, exceptions & nullités." },
+  { id: "Juge", label: "👨🏽‍⚖️ Juge", desc: "Dirige l’audience, tranche les incidents/objections, rend la décision ou met en délibéré." },
+  { id: "Procureur", label: "🟥 Procureur (Ministère public)", desc: "Réquisitions/avis, veille à l’ordre public (surtout en pénal)." },
+  { id: "Avocat Demandeur", label: "🟦 Avocat Demandeur", desc: "Soutient la demande / partie civile : prétentions, pièces, exceptions." },
+  { id: "Avocat Défendeur", label: "🟪 Avocat Défendeur", desc: "Assure la défense : contestations, exceptions, nullités, plaidoirie." },
+  { id: "Greffier", label: "🟨 Greffier", desc: "Tient le PV : consigne interventions, incidents, décisions, renvois." },
 ];
 
 // ✅ cache local dossiers dynamiques (v2 + fallback v1)
@@ -85,47 +97,20 @@ function saveCaseToCache(caseData) {
 }
 
 function getAuthToken() {
-  try {
-    if (typeof window === "undefined") return null;
-
-    const candidates = [
-      // most common in DroitGPT
-      "droitgpt_access_token",
-      "access_token",
-      "AUTH_TOKEN",
-      "auth_token",
-      "authToken",
-      "token",
-      "accessToken",
-      "droitgpt_token",
-      "jwt",
-    ];
-
-    for (const k of candidates) {
-      const v = (localStorage.getItem(k) || sessionStorage.getItem(k));
-      if (v && String(v).trim().length > 20) return String(v).trim();
-    }
-
-    // fallback: JSON session objects
-    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
-    for (const k of sessionKeys) {
-      const raw = (localStorage.getItem(k) || sessionStorage.getItem(k));
-      if (!raw) continue;
-      try {
-        const obj = JSON.parse(raw);
-        const v = obj?.token || obj?.access_token || obj?.accessToken || obj?.jwt || obj?.data?.token || obj?.data?.access_token;
-        if (v && String(v).trim().length > 20) return String(v).trim();
-      } catch {
-        // ignore
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
+  // ✅ IMPORTANT : compat ton token réel
+  const candidates = [
+    "droitgpt_access_token",
+    "token",
+    "authToken",
+    "accessToken",
+    "droitgpt_token",
+  ];
+  for (const k of candidates) {
+    const v = localStorage.getItem(k);
+    if (v && v.trim().length > 10) return v.trim();
   }
+  return null;
 }
-
 
 function toFlagsFromAi(ai) {
   const flags = [];
@@ -157,40 +142,17 @@ function toDebriefFromAi(ai) {
 
 async function postJSON(url, body) {
   const token = getAuthToken();
-  // token optional (backend will return 401 if required)
+  if (!token) throw new Error("AUTH_TOKEN_MISSING");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
 
   try {
     const resp = await fetch(url, {
-      credentials: "include",
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       signal: controller.signal,
       body: JSON.stringify(body),
-    });
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`HTTP_${resp.status}:${text.slice(0, 200)}`);
-    }
-    return await resp.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function getJSON(url) {
-  const token = getAuthToken();
-  // token optional (backend will return 401 if required)
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
-  try {
-    const resp = await fetch(url, {
-      credentials: "include",
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
@@ -380,28 +342,14 @@ export default function JusticeLabPlay() {
     return { ...r, caseMeta: { ...(r.caseMeta || {}), caseId: caseData.caseId, caseData } };
   });
 
-  const [step, setStep] = useState(() => (run?.step ? run.step : "MODE"));
-
-  // ✅ multi / solo-ai session
-  const session = run?.state?.session || { mode: "SOLO_AI" };
-  const isCoop = session?.mode === "COOP";
-  const roomId = session?.roomId || "";
-  const participantId = session?.participantId || "";
-  const isHost = Boolean(session?.isHost);
-
-  const [sessionError, setSessionError] = useState(null);
-  const [roomCodeInput, setRoomCodeInput] = useState("");
-  const [displayNameInput, setDisplayNameInput] = useState(() => {
-    if (!lsAvailable()) return "";
-    return localStorage.getItem("justicelab_display_name") || "";
-  });
-
-  const [roomInfo, setRoomInfo] = useState(null);
-  const roomPollRef = useRef(null);
+  const [step, setStep] = useState("ROLE");
 
   // Audience
   const [audienceScene, setAudienceScene] = useState(() => run?.answers?.audience?.scene || null);
   const [isLoadingAudience, setIsLoadingAudience] = useState(false);
+  // ✅ Progress bar dynamique (création audience) — 15s minimum
+  const [audienceLoadProgress, setAudienceLoadProgress] = useState(0);
+  const audienceProgressTimerRef = useRef(null);
 
   // Scoring IA + Appeal IA
   const [isScoring, setIsScoring] = useState(false);
@@ -421,9 +369,6 @@ export default function JusticeLabPlay() {
   const [showAudit, setShowAudit] = useState(true);
   const [showPiecesImpact, setShowPiecesImpact] = useState(true);
 
-  // ✅ Audience ultra pro (formation continue)
-  const [ultraPro, setUltraPro] = useState(() => Boolean(run?.state?.settings?.ultraPro));
-
   // ✅ Greffier (nom)
   const [greffierName, setGreffierName] = useState(() => {
     if (!lsAvailable()) return "Le Greffier";
@@ -433,24 +378,6 @@ export default function JusticeLabPlay() {
   // ✅ Chrono UI refresh
   const [chronoUiTick, setChronoUiTick] = useState(0);
   const chronoIntervalRef = useRef(null);
-
-
-  // ✅ persist ultraPro setting in run
-  useEffect(() => {
-    if (!run?.runId) return;
-    const current = Boolean(run?.state?.settings?.ultraPro);
-    if (current === Boolean(ultraPro)) return;
-    const next = {
-      ...run,
-      state: {
-        ...(run.state || {}),
-        settings: { ...(run.state?.settings || {}), ultraPro: Boolean(ultraPro) },
-      },
-    };
-    saveRunState(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ultraPro]);
-
 
   // ✅ persister run en storage comme active
   useEffect(() => {
@@ -598,182 +525,8 @@ export default function JusticeLabPlay() {
     return next;
   };
 
-  // persist display name locally
-  useEffect(() => {
-    try {
-      if (lsAvailable()) localStorage.setItem("justicelab_display_name", displayNameInput || "");
-    } catch {
-      // ignore
-    }
-  }, [displayNameInput]);
-
-  const roomApiCreate = async ({ displayName, role }) => {
-    setSessionError(null);
-    const data = await postJSON(`${API_BASE}/justice-lab/rooms/create`, {
-      caseId: run.caseId || run.caseMeta?.caseId,
-      displayName,
-      role,
-    });
-
-    const next = {
-      ...run,
-      step: "ROLE",
-      answers: { ...(run.answers || {}), role },
-      state: {
-        ...(run.state || {}),
-        session: {
-          ...(run.state?.session || {}),
-          mode: "COOP",
-          roomId: data.roomId,
-          participantId: data.participantId,
-          displayName,
-          isHost: true,
-          version: Number(data.version || 0),
-          lastSyncAt: nowIso(),
-        },
-      },
-    };
-    setRoomInfo(data);
-    saveRunState(next);
-    setStep("ROLE");
-  };
-
-  const roomApiJoin = async ({ roomId, displayName, role }) => {
-    setSessionError(null);
-    const data = await postJSON(`${API_BASE}/justice-lab/rooms/join`, {
-      roomId,
-      displayName,
-      role,
-      caseId: run.caseId || run.caseMeta?.caseId,
-    });
-
-    const next = {
-      ...run,
-      step: "ROLE",
-      answers: { ...(run.answers || {}), role },
-      state: {
-        ...(run.state || {}),
-        session: {
-          ...(run.state?.session || {}),
-          mode: "COOP",
-          roomId: data.roomId,
-          participantId: data.participantId,
-          displayName,
-          isHost: false,
-          version: Number(data.version || 0),
-          lastSyncAt: nowIso(),
-        },
-      },
-    };
-    setRoomInfo(data);
-    // hydrate snapshot if any
-    if (data?.snapshot && typeof data.snapshot === "object") {
-      const snap = data.snapshot;
-      // keep our local session identifiers
-      snap.state = snap.state || {};
-      snap.state.session = next.state.session;
-      setRun(snap);
-      upsertAndSetActive(snap);
-      setActiveRunId(snap.runId);
-    } else {
-      saveRunState(next);
-    }
-    setStep("ROLE");
-  };
-
-  const roomApiAction = async (action) => {
-    if (!roomId) return;
-    try {
-      // ✅ Compat: support anciens formats (type:"SNAPSHOT"/"SUGGESTION") et nouveaux (SYNC_SNAPSHOT payload)
-      let type = String(action?.type || "").trim();
-      const legacySnapshot = action?.snapshot;
-      const legacySuggestion = action?.suggestion;
-
-      if (type === "SNAPSHOT") type = "SYNC_SNAPSHOT";
-
-      const payload =
-        action?.payload ||
-        (legacySnapshot ? { snapshot: legacySnapshot } : null) ||
-        (legacySuggestion ? { suggestion: legacySuggestion } : null) ||
-        null;
-
-      // On envoie un objet action qui contient aussi les champs legacy (backend tolérant)
-      const actionToSend = {
-        type,
-        payload: payload || undefined,
-        snapshot: legacySnapshot || (payload && payload.snapshot) || undefined,
-        suggestion: legacySuggestion || (payload && payload.suggestion) || undefined,
-        text: action?.text || undefined,
-      };
-
-      await postJSON(`${API_BASE}/justice-lab/rooms/action`, {
-        roomId,
-        participantId,
-        action: actionToSend,
-      });
-    } catch (e) {
-      console.warn("room action failed", e);
-    }
-  };
-
-  // poll room state
-  useEffect(() => {
-    if (!isCoop || !roomId) return;
-
-    let stopped = false;
-    const poll = async () => {
-      try {
-        const data = await getJSON(`${API_BASE}/justice-lab/rooms/${roomId}?participantId=${encodeURIComponent(participantId || "")}`);
-        if (stopped) return;
-        setRoomInfo(data);
-
-        const incomingV = Number(data?.version || 0);
-        const localV = Number(run?.state?.session?.version || 0);
-
-        if (data?.snapshot && incomingV > localV) {
-          const snap = data.snapshot;
-          // keep session identifiers
-          snap.state = snap.state || {};
-          snap.state.session = {
-            ...(run?.state?.session || {}),
-            mode: "COOP",
-            roomId,
-            participantId,
-            isHost,
-            displayName: displayNameInput,
-            version: incomingV,
-            lastSyncAt: nowIso(),
-          };
-          setRun(snap);
-          try {
-            upsertAndSetActive(snap);
-            setActiveRunId(snap.runId);
-          } catch {
-            // ignore
-          }
-        }
-      } catch (e) {
-        // ignore transient
-      }
-    };
-
-    poll();
-    if (roomPollRef.current) clearInterval(roomPollRef.current);
-    roomPollRef.current = setInterval(poll, 2000);
-    return () => {
-      stopped = true;
-      if (roomPollRef.current) {
-        clearInterval(roomPollRef.current);
-        roomPollRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCoop, roomId, participantId]);
-
   const goNext = async () => {
     if (isScoring || isLoadingAudience) return;
-
-    if (step === "MODE") return setStep("ROLE");
 
     if (step === "ROLE") return setStep("BRIEFING");
     if (step === "BRIEFING") return setStep("QUALIFICATION");
@@ -788,7 +541,6 @@ export default function JusticeLabPlay() {
 
   const goPrev = () => {
     if (isScoring || isLoadingAudience) return;
-    if (step === "ROLE") return setStep("MODE");
     if (step === "BRIEFING") return setStep("ROLE");
     if (step === "QUALIFICATION") return setStep("BRIEFING");
     if (step === "PROCEDURE") return setStep("QUALIFICATION");
@@ -799,16 +551,31 @@ export default function JusticeLabPlay() {
   const loadAudience = async () => {
     if (audienceScene?.objections?.length) return;
 
+    // --- progress bar : démarre immédiatement, 15s minimum ---
+    const MIN_MS = 15000;
+    const startAt = Date.now();
+    setAudienceLoadProgress(0);
+    if (audienceProgressTimerRef.current) {
+      clearInterval(audienceProgressTimerRef.current);
+      audienceProgressTimerRef.current = null;
+    }
+    audienceProgressTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - startAt;
+      // On monte jusqu'à 95% pendant le chargement.
+      const pct = Math.min(95, Math.round((elapsed / MIN_MS) * 100));
+      setAudienceLoadProgress((prev) => (pct > prev ? pct : prev));
+    }, 120);
+
     setIsLoadingAudience(true);
     try {
+      const gameMode = run?.answers?.gameMode || "solo";
+      const roomId = run?.answers?.roomId || null;
       const payload = {
-        // ✅ Format complet (backend V2) + compat format léger
-        caseData,
-        runData: run,
-
         caseId: run.caseId || run.caseMeta?.caseId,
         role: run.answers?.role || "Juge",
         difficulty: caseData?.niveau || "Intermédiaire",
+        gameMode,
+        roomId,
         facts: caseData?.resume || "",
         parties: caseData?.parties || {},
         pieces: (caseData?.pieces || []).map((p) => ({
@@ -821,14 +588,7 @@ export default function JusticeLabPlay() {
         procedureChoice: run.answers?.procedureChoice || null,
         procedureJustification: run.answers?.procedureJustification || "",
         language: "fr",
-
-        // ✅ Enrichissement "ultra pro"
-        audienceStyle: ultraPro ? "ULTRA_PRO" : "STANDARD",
-        minTurns: ultraPro ? 40 : 22,
-        minObjections: ultraPro ? 8 : 4,
-        includeIncidents: true,
-        includePiecesLinks: true,
-      };;
+      };
 
       const data = await postJSON(`${API_BASE}/justice-lab/audience`, payload);
 
@@ -870,7 +630,19 @@ export default function JusticeLabPlay() {
       const nextRun = setAudienceSceneOnRun(run, merged);
       saveRunState(nextRun);
     } finally {
+      // ✅ On garantit 15s minimum pour que la barre "respire" même si le backend répond vite.
+      const elapsed = Date.now() - startAt;
+      const remain = Math.max(0, MIN_MS - elapsed);
+      if (remain) await new Promise((r) => setTimeout(r, remain));
+
       setIsLoadingAudience(false);
+
+      // stop timer + force 100% (progress vert visible)
+      if (audienceProgressTimerRef.current) {
+        clearInterval(audienceProgressTimerRef.current);
+        audienceProgressTimerRef.current = null;
+      }
+      setAudienceLoadProgress(100);
     }
   };
 
@@ -959,76 +731,8 @@ export default function JusticeLabPlay() {
         // ignore
       }
 
-      // ✅ COOP: l'hôte (souvent le juge) pousse le snapshot aux autres
-      if (isCoop && roomId && participantId && isHost) {
-        void roomApiAction({ type: "SYNC_SNAPSHOT", payload: { snapshot: next }, snapshot: next });
-      }
-
       return next;
     });
-  };
-
-  // ✅ Décision / suggestion selon rôle + mode
-  const handleDecisionClick = async (obj, decision, reasoning) => {
-    const role = (run.answers?.role || "Juge").trim() || "Juge";
-
-    // COOP: seuls les juges valident. Les autres soumettent une suggestion.
-    if (isCoop && role !== "Juge") {
-      await roomApiAction({
-        type: "SUGGESTION",
-        payload: { suggestion: { objectionId: obj?.id, byRole: role, decision, reasoning: (reasoning || "").slice(0, 1200) } },
-        suggestion: { objectionId: obj?.id, byRole: role, decision, reasoning: (reasoning || "").slice(0, 1200) },
-      });
-      setLiveFeedback((arr) =>
-        [
-          {
-            id: `fb_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-            at: nowIso(),
-            objId: obj?.id || "",
-            title: obj?.title || "Objection",
-            decision,
-            role,
-            verdict: "ENVOYÉ",
-            headline: "📨 Suggestion envoyée au juge",
-            suggestion: "Attends la décision finale du juge (synchro de la salle).",
-            impact: [],
-            audit: null,
-          },
-          ...(arr || []),
-        ].slice(0, 4)
-      );
-      return;
-    }
-
-    // SOLO AI: si le joueur n'est pas juge, l'IA joue le juge et tranche.
-    if (!isCoop && role !== "Juge") {
-      const next0 = pushAuditLocal(run, {
-        type: "SUGGESTION",
-        title: `Suggestion du joueur (${role})`,
-        detail: `${decision} — ${(reasoning || "").slice(0, 240)}`,
-        meta: { objectionId: obj?.id },
-      });
-      saveRunState(next0);
-
-      try {
-        const ai = await postJSON(`${API_BASE}/justice-lab/ai-judge`, {
-          caseData,
-          runData: next0,
-          objection: obj,
-          playerSuggestion: { role, decision, reasoning: (reasoning || "").slice(0, 1200) },
-        });
-        const chosen = ai?.choice || "Demander précision";
-        const rr = (ai?.reasoning || "Décision IA.").slice(0, 1200);
-        return applyDecisionHybrid(obj, chosen, rr);
-      } catch (e) {
-        console.warn(e);
-        // fallback: appliquer la suggestion du joueur
-        return applyDecisionHybrid(obj, decision, reasoning);
-      }
-    }
-
-    // JUGE (solo ou coop)
-    return applyDecisionHybrid(obj, decision, reasoning);
   };
 
   /** ✅ Incidents procéduraux (écrit dans auditLog + crée tâche) */
@@ -1236,26 +940,20 @@ export default function JusticeLabPlay() {
     }
   };
 
-  const roleCard = (r, idx) => {
+  const roleCard = (r) => {
     const active = (run.answers?.role || "Juge") === r.id;
     return (
       <button
-        key={`${r.id}-${idx}`}
+        key={r.id}
         type="button"
-        disabled={isCoop}
-        onClick={() => {
-          if (isCoop) return;
+        onClick={() =>
           saveRunState({
             ...run,
             answers: { ...run.answers, role: r.id },
-          });
-        }}
+          })
+        }
         className={`w-full text-left rounded-2xl border p-4 transition ${
-          active
-            ? "border-emerald-500/50 bg-emerald-500/10"
-            : isCoop
-            ? "border-white/10 bg-white/5 opacity-70 cursor-not-allowed"
-            : "border-white/10 bg-white/5 hover:bg-white/10"
+          active ? "border-emerald-500/50 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10"
         }`}
       >
         <div className="text-sm font-semibold text-slate-100">{r.label}</div>
@@ -1264,11 +962,11 @@ export default function JusticeLabPlay() {
     );
   };
 
-  const procedureCard = (c, idx) => {
+  const procedureCard = (c) => {
     const active = run.answers?.procedureChoice === c.id;
     return (
       <button
-        key={`${c.id}-${idx}`}
+        key={c.id}
         type="button"
         onClick={() =>
           saveRunState({
@@ -1404,7 +1102,7 @@ export default function JusticeLabPlay() {
 
           <div className="flex items-center gap-2">
             <button
-              disabled={isScoring || isLoadingAudience || step === "MODE"}
+              disabled={isScoring || isLoadingAudience || step === "ROLE"}
               onClick={goPrev}
               className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition text-sm"
             >
@@ -1423,167 +1121,6 @@ export default function JusticeLabPlay() {
 
         {/* content */}
         <div className="mt-6">
-          {/* MODE */}
-          {step === "MODE" && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Formation continue</div>
-                <h2 className="mt-2 text-lg font-semibold text-slate-100">Justice Lab — Simulateur d’audience</h2>
-                <p className="mt-2 text-sm text-slate-300">
-                  Objectif : professionnaliser le personnel judiciaire par des audiences réalistes, mesurées (scoring),
-                  et documentées (PV / journal). Choisis un mode : solo (IA joue les autres rôles) ou co‑op (2–3 joueurs).
-                </p>
-
-                <div className="mt-4 space-y-3">
-                  <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-emerald-200">🧠 Solo (IA multi‑rôles)</div>
-                        <div className="mt-1 text-xs text-slate-300">
-                          Tu choisis ton rôle. L’IA joue les autres rôles et (si tu n’es pas juge) l’IA‑juge tranche.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 transition text-sm font-semibold"
-                        onClick={() => {
-                          const next = {
-                            ...run,
-                            step: "ROLE",
-                            state: {
-                              ...(run.state || {}),
-                              session: {
-                                ...(run.state?.session || {}),
-                                mode: "SOLO_AI",
-                                roomId: null,
-                                isHost: false,
-                                version: 0,
-                                lastSyncAt: null,
-                              },
-                            },
-                          };
-                          saveRunState(next);
-                          setStep("ROLE");
-                        }}
-                      >
-                        Choisir
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
-                    <div className="text-sm font-semibold text-indigo-200">🤝 Co‑op (2–3 joueurs)</div>
-                    <div className="mt-1 text-xs text-slate-300">
-                      Un joueur crée une salle (code). Les autres rejoignent et choisissent un rôle.
-                      <span className="text-slate-200 font-semibold"> Le juge valide les décisions</span>.
-                    </div>
-
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <input
-                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-slate-100 outline-none focus:border-indigo-400/50"
-                        placeholder="Nom (ex: Me KABONGO)"
-                        value={displayNameInput}
-                        onChange={(e) => setDisplayNameInput(e.target.value)}
-                      />
-                      <input
-                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-slate-100 outline-none focus:border-indigo-400/50"
-                        placeholder="Code salle (pour rejoindre)"
-                        value={roomCodeInput}
-                        onChange={(e) => setRoomCodeInput(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {ROLES.map((r, idx) => (
-                        <button
-                          key={`${r.id}-${idx}`}
-                          type="button"
-                          className={`px-3 py-2 rounded-xl border text-xs transition ${
-                            (run.answers?.role || "Juge") === r.id
-                              ? "border-indigo-500/70 bg-indigo-500/10 text-indigo-100"
-                              : "border-white/10 bg-white/5 hover:bg-white/10 text-slate-100"
-                          }`}
-                          onClick={() => {
-                            // role preview (sera verrouillé à la création/join)
-                            saveRunState({ answers: { ...(run.answers || {}), role: r.id } });
-                          }}
-                        >
-                          {r.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {sessionError ? (
-                      <div className="mt-2 text-xs text-rose-300">⚠️ {String(sessionError)}</div>
-                    ) : null}
-
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 transition text-sm font-semibold"
-                        onClick={async () => {
-                          try {
-                            await roomApiCreate({
-                              displayName: (displayNameInput || "").trim() || "Joueur",
-                              role: (run.answers?.role || "Juge").trim() || "Juge",
-                            });
-                          } catch (e) {
-                            setSessionError(e?.message || "Erreur création salle");
-                          }
-                        }}
-                      >
-                        Créer une salle
-                      </button>
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm font-semibold"
-                        onClick={async () => {
-                          try {
-                            await roomApiJoin({
-                              roomId: (roomCodeInput || "").trim(),
-                              displayName: (displayNameInput || "").trim() || "Joueur",
-                              role: (run.answers?.role || "Juge").trim() || "Juge",
-                            });
-                          } catch (e) {
-                            setSessionError(e?.message || "Erreur join");
-                          }
-                        }}
-                      >
-                        Rejoindre
-                      </button>
-                    </div>
-
-                    {isCoop && roomId ? (
-                      <div className="mt-3 rounded-xl border border-white/10 bg-slate-950/40 p-3 text-xs text-slate-300">
-                        <div>
-                          Salle: <span className="text-slate-100 font-semibold">{roomId}</span> • Rôle: {run.answers?.role}
-                        </div>
-                        <div className="mt-1">
-                          Participants: {(roomInfo?.players || []).map((p) => `${p.role}: ${p.displayName}`).join(" • ") || "-"}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </section>
-
-              <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-300">Innovation institutionnelle</div>
-                <h3 className="mt-2 text-sm font-semibold text-slate-100">Modules proposés (feuille de route)</h3>
-                <ul className="mt-2 text-sm text-slate-300 list-disc pl-5 space-y-1">
-                  <li><b>PV intelligent</b> : le greffier obtient un PV structuré + checklists (incidents, pièces, décisions).</li>
-                  <li><b>Compétences</b> : badges (motivation, contradictoire, gestion d'audience), progression par chambre.</li>
-                  <li><b>Bibliothèque RDC</b> : modèles d'audience, exceptions classiques, erreurs fréquentes par matière.</li>
-                  <li><b>Mode examen</b> : sessions chronométrées + barème, export dossier pédagogique.</li>
-                  <li><b>Audit institutionnel</b> : KPI anonymisés (délais simulés, erreurs récurrentes) pour la formation continue.</li>
-                </ul>
-                <div className="mt-4 text-xs text-slate-400">
-                  Astuce : en co‑op, le juge tranche. Les autres rôles proposent des arguments (synchronisés).
-                </div>
-              </section>
-            </div>
-          )}
-
           {/* ROLE */}
           {step === "ROLE" && (
             <div className="grid gap-4 md:grid-cols-3">
@@ -1591,10 +1128,55 @@ export default function JusticeLabPlay() {
               <div className="md:col-span-3 rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div className="text-sm text-slate-200 font-semibold">🎮 Mode “jeu”</div>
                 <div className="text-xs text-slate-300 mt-1">
-                  {isCoop
-                    ? `Salle active: ${roomId || "-"}. Ton rôle est verrouillé par la salle. Le juge valide les décisions.`
-                    : "Choisis ton rôle. Le moteur adaptera le feedback (contradictoire, recevabilité, proportionnalité)."}
+                  Choisis ton rôle. Le moteur adaptera le feedback (contradictoire, recevabilité, proportionnalité).
                 </div>
+
+                {/* ✅ SOLO / MULTIJOUEUR */}
+                <div className="mt-4 grid gap-2 md:grid-cols-2">
+                  {GAME_MODES.map((m) => {
+                    const active = (run?.answers?.gameMode || "solo") === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          const next = {
+                            ...run,
+                            answers: { ...(run.answers || {}), gameMode: m.id },
+                          };
+                          // roomId persistant en multi
+                          if (m.id === "solo") {
+                            next.answers.roomId = null;
+                          } else {
+                            next.answers.roomId = next.answers.roomId || String(Math.random()).slice(2, 8);
+                          }
+                          saveRunState(next);
+                        }}
+                        className={`text-left rounded-2xl border p-3 transition ${
+                          active
+                            ? "border-emerald-500/40 bg-emerald-500/10"
+                            : "border-white/10 bg-slate-950/30 hover:bg-white/5"
+                        }`}
+                      >
+                        <div className="text-sm font-semibold text-slate-100">{m.label}</div>
+                        <div className="mt-1 text-xs text-slate-300">{m.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {(run?.answers?.gameMode || "solo") === "multi" && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                    <div className="text-xs text-slate-300">
+                      Salle (code) :
+                      <span className="ml-2 font-semibold text-emerald-200">{run?.answers?.roomId || "—"}</span>
+                    </div>
+                    <div className="mt-2 text-[11px] text-slate-400">
+                      Partage ce code aux autres joueurs. (La synchronisation temps réel peut être branchée côté backend
+                      ensuite.)
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1627,8 +1209,8 @@ export default function JusticeLabPlay() {
               <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
                 <h2 className="text-sm font-semibold text-emerald-200">🧾 Pièces au dossier</h2>
                 <div className="mt-3 space-y-2">
-                  {(caseData.pieces || []).map((p, idx) => (
-                    <div key={`${p.id}-${idx}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                  {(caseData.pieces || []).map((p) => (
+                    <div key={p.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-sm font-semibold text-slate-100">
                           {p.id} • {p.title}
@@ -1720,15 +1302,24 @@ export default function JusticeLabPlay() {
                   >
                     {isLoadingAudience ? "Chargement audience..." : "Lancer l’audience →"}
                   </button>
-
-                  <button
-                    type="button"
-                    className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition"
-                    onClick={() => navigate("/justice-lab/audience")}
-                  >
-                    Ouvrir page Audience
-                  </button>
                 </div>
+
+                {/* ✅ Progress bar verte (15s min) pendant la création/chargement d'audience */}
+                {isLoadingAudience && (
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between text-[11px] text-slate-300">
+                      <span>Création de l’audience...</span>
+                      <span>{Math.min(100, Math.max(0, audienceLoadProgress || 0))}%</span>
+                    </div>
+                    <div className="mt-2 h-2 w-full rounded-full bg-slate-900/70 border border-slate-700 overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 transition-all duration-150"
+                        style={{ width: `${Math.min(100, Math.max(0, audienceLoadProgress || 0))}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 text-[11px] text-slate-500">Attente backend (minimum 15s)...</div>
+                  </div>
+                )}
               </section>
             </div>
           )}
@@ -1874,8 +1465,8 @@ export default function JusticeLabPlay() {
                           <div className="text-xs text-slate-300 font-semibold">🧾 Pièces écartées</div>
                           {excludedPieces.length ? (
                             <ul className="mt-2 text-xs text-slate-200 space-y-1">
-                              {excludedPieces.slice(0, 6).map((p, idx) => (
-                                <li key={`${p.id}-${idx}`}>• {p.title}</li>
+                              {excludedPieces.slice(0, 6).map((p) => (
+                                <li key={p.id}>• {p.title}</li>
                               ))}
                             </ul>
                           ) : (
@@ -1887,8 +1478,8 @@ export default function JusticeLabPlay() {
                           <div className="text-xs text-slate-300 font-semibold">📎 Pièces tardives admises</div>
                           {admittedLatePieces.length ? (
                             <ul className="mt-2 text-xs text-slate-200 space-y-1">
-                              {admittedLatePieces.slice(0, 6).map((p, idx) => (
-                                <li key={`${p.id}-${idx}`}>• {p.title}</li>
+                              {admittedLatePieces.slice(0, 6).map((p) => (
+                                <li key={p.id}>• {p.title}</li>
                               ))}
                             </ul>
                           ) : (
@@ -1949,7 +1540,7 @@ export default function JusticeLabPlay() {
                   <div className="text-sm text-slate-300">Aucune objection.</div>
                 ) : (
                   <div className="space-y-3">
-                    {(audienceScene?.objections || []).map((obj, idx) => {
+                    {(audienceScene?.objections || []).map((obj) => {
                       const d = getDecisionForObj(obj.id);
                       const current = { decision: d?.decision || "", reasoning: d?.reasoning || "" };
 
@@ -1958,7 +1549,7 @@ export default function JusticeLabPlay() {
                       const best = bestChoiceForRole(obj, role);
 
                       return (
-                        <div key={`${obj.id}-${idx}`} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
+                        <div key={obj.id} className="rounded-2xl border border-emerald-500/30 bg-slate-950/60 p-4">
                           <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80">
                             {obj.by} • {obj.id}
                           </div>
@@ -1986,7 +1577,7 @@ export default function JusticeLabPlay() {
                                     const rr = isEditing
                                       ? (draftReasoningById[obj.id] ?? current?.reasoning ?? "")
                                       : (current?.reasoning || "");
-                                    handleDecisionClick(obj, opt, rr);
+                                    applyDecisionHybrid(obj, opt, rr);
                                   }}
                                 >
                                   {opt}
@@ -2020,7 +1611,7 @@ export default function JusticeLabPlay() {
                                     onClick={() => {
                                       const val = (draftReasoningById[obj.id] ?? current?.reasoning ?? "").trim();
                                       const chosen = (current?.decision || "").trim() || "Demander précision";
-                                      handleDecisionClick(obj, chosen, val);
+                                      applyDecisionHybrid(obj, chosen, val);
                                       setEditReasoningById((mm) => ({ ...(mm || {}), [obj.id]: false }));
                                     }}
                                   >

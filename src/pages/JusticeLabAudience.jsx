@@ -31,47 +31,20 @@ const formatTime = (iso) => {
 };
 
 function getAuthToken() {
-  try {
-    if (typeof window === "undefined") return null;
-
-    const candidates = [
-      // most common in DroitGPT
-      "droitgpt_access_token",
-      "access_token",
-      "AUTH_TOKEN",
-      "auth_token",
-      "authToken",
-      "token",
-      "accessToken",
-      "droitgpt_token",
-      "jwt",
-    ];
-
-    for (const k of candidates) {
-      const v = (localStorage.getItem(k) || sessionStorage.getItem(k));
-      if (v && String(v).trim().length > 20) return String(v).trim();
-    }
-
-    // fallback: JSON session objects
-    const sessionKeys = ["session", "user", "auth", "droitgpt_session"];
-    for (const k of sessionKeys) {
-      const raw = (localStorage.getItem(k) || sessionStorage.getItem(k));
-      if (!raw) continue;
-      try {
-        const obj = JSON.parse(raw);
-        const v = obj?.token || obj?.access_token || obj?.accessToken || obj?.jwt || obj?.data?.token || obj?.data?.access_token;
-        if (v && String(v).trim().length > 20) return String(v).trim();
-      } catch {
-        // ignore
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
+  // ✅ IMPORTANT: tu as un token sous 'droitgpt_access_token'
+  const candidates = [
+    "token",
+    "authToken",
+    "accessToken",
+    "droitgpt_token",
+    "droitgpt_access_token",
+  ];
+  for (const k of candidates) {
+    const v = localStorage.getItem(k);
+    if (v && v.trim().length > 10) return v.trim();
   }
+  return "";
 }
-
 
 function getActiveRunLocal() {
   try {
@@ -125,7 +98,6 @@ async function postJSON(url, body) {
 
   try {
     const r = await fetch(url, {
-      credentials: "include",
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
@@ -140,58 +112,6 @@ async function postJSON(url, body) {
     clearTimeout(t);
   }
 }
-
-async function getJSON(url) {
-  const token = getAuthToken();
-  if (!token || token.length < 10) throw new Error("AUTH_TOKEN_MISSING");
-
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 25000);
-
-  try {
-    const r = await fetch(url, {
-      credentials: "include",
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) {
-      const txt = await r.text();
-      throw new Error(`HTTP_${r.status}: ${txt.slice(0, 200)}`);
-    }
-    return await r.json();
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-  async function getRoomStateSafe(rid, pid) {
-    const room = String(rid || "").trim();
-    if (!room) return null;
-    const participant = pid ? String(pid) : "";
-    const url = `${API_BASE}/justice-lab/rooms/${encodeURIComponent(room)}${participant ? `?participantId=${encodeURIComponent(participant)}` : ""}`;
-    try {
-      return await getJSON(url);
-    } catch (e) {
-      const msg = String(e?.message || "");
-      if (msg.includes("HTTP_404") || msg.includes("HTTP_405")) {
-        const candidates = [
-          `${API_BASE}/justice-lab/rooms/state`,
-          `${API_BASE}/justice-lab/rooms/snapshot`,
-          `${API_BASE}/justice-lab/rooms/get`,
-        ];
-        for (const endpoint of candidates) {
-          try {
-            const st = await postJSON(endpoint, { roomId: room, participantId: participant });
-            if (st) return st;
-          } catch (_) {}
-        }
-        return null;
-      }
-      throw e;
-    }
-  }
-
 
 function computePiecesBoard(run, caseData) {
   const base = Array.isArray(caseData?.pieces) ? caseData.pieces : [];
@@ -238,11 +158,6 @@ export default function JusticeLabAudience() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // ✅ COOP (optionnel)
-  const [roomId, setRoomId] = useState(() => run?.state?.session?.roomId || null);
-  const [participantId, setParticipantId] = useState(() => run?.state?.session?.participantId || null);
-  const [roomState, setRoomState] = useState(null);
-
   // ✅ Greffier tools
   const [incidentType, setIncidentType] = useState("communication");
   const [incidentDetail, setIncidentDetail] = useState("");
@@ -256,50 +171,6 @@ export default function JusticeLabAudience() {
       upsertRunInHistory(nextRun);
     } catch {
       // ignore
-    }
-  };
-
-  const role = run?.answers?.role || "Juge";
-  const mode = run?.state?.session?.mode || "SOLO_AI"; // SOLO_AI | COOP | SOLO_MANUAL
-  const ultraPro = Boolean(run?.state?.settings?.ultraPro);
-  const audit = run?.state?.auditLog || [];
-  const piecesBoard = useMemo(
-    () => (run && caseData ? computePiecesBoard(run, caseData) : null),
-    [run, caseData]
-  );
-
-  const selectedObj = objections.find((o) => o.id === selectedId) || null;
-
-  const roomApiAction = async (action) => {
-    if (!roomId) return;
-    try {
-      let type = String(action?.type || "").trim();
-      if (type === "SNAPSHOT") type = "SYNC_SNAPSHOT";
-
-      const legacySnapshot = action?.snapshot;
-      const legacySuggestion = action?.suggestion;
-
-      const payload =
-        action?.payload ||
-        (legacySnapshot ? { snapshot: legacySnapshot } : null) ||
-        (legacySuggestion ? { suggestion: legacySuggestion } : null) ||
-        null;
-
-      const actionToSend = {
-        type,
-        payload: payload || undefined,
-        snapshot: legacySnapshot || (payload && payload.snapshot) || undefined,
-        suggestion: legacySuggestion || (payload && payload.suggestion) || undefined,
-        text: action?.text || undefined,
-      };
-
-      await postJSON(`${API_BASE}/justice-lab/rooms/action`, {
-        roomId,
-        participantId,
-        action: actionToSend,
-      });
-    } catch (e) {
-      console.warn("room action failed", e);
     }
   };
 
@@ -323,10 +194,12 @@ export default function JusticeLabAudience() {
     }
   }, [location?.state]);
 
+  // ✅ sync elapsed from run
   useEffect(() => {
     setElapsedMs(run?.state?.chrono?.elapsedMs || 0);
   }, [run?.state?.chrono?.elapsedMs]);
 
+  // ✅ tick chrono when running
   useEffect(() => {
     if (!run?.state?.chrono?.running) return;
     const id = setInterval(() => {
@@ -342,13 +215,18 @@ export default function JusticeLabAudience() {
   }, [run?.state?.chrono?.running, run?.runId]);
 
   useEffect(() => {
-    if (run) {
-      setCaseData(resolveCaseDataFromRun(run));
-      setRoomId(run?.state?.session?.roomId || null);
-      setParticipantId(run?.state?.session?.participantId || null);
-    }
+    if (run) setCaseData(resolveCaseDataFromRun(run));
   }, [run]);
 
+  const role = run?.answers?.role || "Juge";
+  const canJudgeDecide = role === "Juge";
+  const canGreffierAct = role === "Greffier";
+  const audit = run?.state?.auditLog || [];
+  const piecesBoard = useMemo(() => (run && caseData ? computePiecesBoard(run, caseData) : null), [run, caseData]);
+
+  const selectedObj = objections.find((o) => o.id === selectedId) || null;
+
+  // ✅ si déjà décidé, verrouiller automatiquement
   useEffect(() => {
     if (!run || !selectedObj) return;
     const exists = (run?.answers?.audience?.decisions || []).some((d) => d.objectionId === selectedObj.id);
@@ -363,53 +241,28 @@ export default function JusticeLabAudience() {
     setError("");
 
     try {
-      const payloadV2 = {
-        caseData,
-        runData: run,
-        caseId: caseData.caseId,
-        role,
-        difficulty: caseData.niveau,
-        facts: caseData.resume,
-        parties: caseData.parties,
-        pieces: caseData.pieces,
-        legalIssues: caseData.legalIssues,
-        procedureChoice: run?.answers?.procedureChoice || null,
-        procedureJustification: run?.answers?.procedureJustification || "",
-        language: "fr",
-        audienceStyle: ultraPro ? "ULTRA_PRO" : "STANDARD",
-        minTurns: ultraPro ? 40 : 22,
-        minObjections: ultraPro ? 8 : 4,
-        includeIncidents: true,
-        includePiecesLinks: true,
+      const payload = {
+        type: "justicelab_audience_scene",
+        data: {
+          caseId: caseData.caseId,
+          domaine: caseData.domaine,
+          niveau: caseData.niveau,
+          resume: caseData.resume,
+          pieces: caseData.pieces,
+          legalIssues: caseData.legalIssues,
+          role,
+        },
       };
 
-      let scene = null;
-      try {
-        const data2 = await postJSON(`${API_BASE}/justice-lab/audience`, payloadV2);
-        scene = data2?.audience || data2?.scene || data2?.result?.audience || data2?.result || null;
-      } catch (e) {
-        const payloadLegacy = {
-          type: "justicelab_audience_scene",
-          data: {
-            caseId: caseData.caseId,
-            domaine: caseData.domaine,
-            niveau: caseData.niveau,
-            resume: caseData.resume,
-            pieces: caseData.pieces,
-            legalIssues: caseData.legalIssues,
-            role,
-            audienceStyle: ultraPro ? "ULTRA_PRO" : "STANDARD",
-          },
-        };
-        const data = await postJSON(`${API_BASE}/ask`, payloadLegacy);
-        scene = data?.audience || data?.scene || data?.result?.audience || null;
-      }
+      const data = await postJSON(`${API_BASE}/ask`, payload);
+      const scene = data?.audience || data?.scene || data?.result?.audience || null;
 
       const merged = mergeAudienceWithTemplates(caseData, scene);
       const next = setAudienceSceneOnRun(run, merged);
 
       commitRun(next);
 
+      // ✅ FIX: mergeAudienceWithTemplates renvoie "turns" (pas "transcript")
       setTurns(merged.turns || []);
       setObjections(merged.objections || []);
       setSelectedId(merged.objections?.[0]?.id || null);
@@ -420,35 +273,6 @@ export default function JusticeLabAudience() {
     }
   }
 
-  // ✅ COOP: poll room state (snapshot)
-  useEffect(() => {
-    if (mode !== "COOP" || !roomId) return;
-    let alive = true;
-
-    const tick = async () => {
-      try {
-        const data = await getJSON(
-          `${API_BASE}/justice-lab/rooms/${roomId}?participantId=${encodeURIComponent(participantId || "")}`
-        );
-        if (!alive) return;
-        setRoomState(data);
-        if (data?.snapshot && run?.runId) {
-          commitRun(data.snapshot);
-        }
-      } catch (e) {
-        // ignore
-      }
-    };
-
-    tick();
-    const id = setInterval(tick, 2000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, roomId, participantId, run?.runId]);
-
   useEffect(() => {
     if (run && caseData && !run?.answers?.audience?.scene) loadAudience();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,28 +281,13 @@ export default function JusticeLabAudience() {
   async function saveDecision() {
     if (!run || !selectedObj) return;
 
-    if (mode === "COOP" && role !== "Juge") {
-      await roomApiAction({
-        type: "SUGGESTION",
-        payload: {
-          suggestion: {
-            objectionId: selectedObj.id,
-            byRole: role,
-            decision: choice,
-            reasoning: (reasoning || "").slice(0, 1200),
-          },
-        },
-        suggestion: {
-          objectionId: selectedObj.id,
-          byRole: role,
-          decision: choice,
-          reasoning: (reasoning || "").slice(0, 1200),
-        },
-      });
-      setFeedback({ ok: true, note: "Suggestion envoyée au juge." });
+    // ✅ Contrôle strict : seul le Juge peut enregistrer une décision
+    if (!canJudgeDecide) {
+      setFeedback({ ok: false, msg: `Action bloquée : vous jouez le rôle “${role}”. Seul le Juge peut trancher.` });
       return;
     }
 
+    // ✅ IMPORTANT: transmettre les "effects" de l’objection, sinon les pièces ne changent pas
     const next = applyAudienceDecision(run, {
       objectionId: selectedObj.id,
       decision: choice,
@@ -488,11 +297,6 @@ export default function JusticeLabAudience() {
     });
 
     commitRun(next);
-
-    if (mode === "COOP" && role === "Juge") {
-      await roomApiAction({ type: "SYNC_SNAPSHOT", payload: { snapshot: next }, snapshot: next });
-    }
-
     setLocked(true);
     setFeedback({ ok: true });
   }
@@ -524,8 +328,7 @@ export default function JusticeLabAudience() {
             </Link>
             <h1 className="text-2xl font-bold mt-1">🏛️ Audience simulée</h1>
             <div className="mt-2 text-xs text-slate-400">
-              {caseData.domaine} • Niveau {caseData.niveau} • Rôle {role} • Mode {mode}
-              {ultraPro ? " • Ultra Pro" : ""}
+              {caseData.domaine} • Niveau {caseData.niveau} • Rôle {role}
             </div>
           </div>
           <button
@@ -595,20 +398,6 @@ export default function JusticeLabAudience() {
                 ))}
               </div>
             </div>
-
-            {mode === "COOP" && roomState?.players?.length > 0 && (
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <h2 className="text-sm font-semibold mb-2">👥 Salle</h2>
-                <div className="grid md:grid-cols-2 gap-2">
-                  {roomState.players.map((p) => (
-                    <div key={p.participantId} className="rounded-xl border border-white/10 bg-slate-950/40 p-3 text-xs">
-                      <div className="font-semibold">{p.displayName}</div>
-                      <div className="text-slate-400">{p.role}{p.isHost ? " • Host" : ""}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="space-y-4">
@@ -617,7 +406,9 @@ export default function JusticeLabAudience() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold">📝 Mode Greffier</h2>
-                  <div className="mt-1 text-xs text-slate-400">Chrono + incidents procéduraux → journal.</div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    Chrono + incidents procéduraux → journal.
+                  </div>
                 </div>
 
                 <div className="text-right">
@@ -632,25 +423,41 @@ export default function JusticeLabAudience() {
               <div className="mt-3 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => commitRun(startChrono(run))}
-                  className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs"
+                  disabled={!canGreffierAct}
+                  onClick={() => {
+                    if (!canGreffierAct) return;
+                    commitRun(startChrono(run));
+                  }}
+                  className={`px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-xs ${
+                    canGreffierAct ? "hover:bg-white/10" : "opacity-50 cursor-not-allowed"
+                  }`}
                 >
                   ▶️ Démarrer
                 </button>
                 <button
                   type="button"
-                  onClick={() => commitRun(stopChrono(run))}
-                  className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs"
+                  disabled={!canGreffierAct}
+                  onClick={() => {
+                    if (!canGreffierAct) return;
+                    commitRun(stopChrono(run));
+                  }}
+                  className={`px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-xs ${
+                    canGreffierAct ? "hover:bg-white/10" : "opacity-50 cursor-not-allowed"
+                  }`}
                 >
                   ⏸️ Pause
                 </button>
                 <button
                   type="button"
+                  disabled={!canGreffierAct}
                   onClick={() => {
+                    if (!canGreffierAct) return;
                     setElapsedMs(0);
                     commitRun(setChronoElapsed(run, 0));
                   }}
-                  className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs"
+                  className={`px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-xs ${
+                    canGreffierAct ? "hover:bg-white/10" : "opacity-50 cursor-not-allowed"
+                  }`}
                 >
                   🔄 Reset
                 </button>
@@ -660,6 +467,7 @@ export default function JusticeLabAudience() {
                 <select
                   value={incidentType}
                   onChange={(e) => setIncidentType(e.target.value)}
+                  disabled={!canGreffierAct}
                   className="w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs outline-none"
                 >
                   <option value="nullite">Nullité</option>
@@ -672,13 +480,22 @@ export default function JusticeLabAudience() {
                 <textarea
                   value={incidentDetail}
                   onChange={(e) => setIncidentDetail(e.target.value)}
+                  disabled={!canGreffierAct}
                   placeholder="Détail / motif (1–3 lignes)"
                   className="w-full min-h-[72px] rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs outline-none"
                 />
 
                 <button
                   type="button"
+                  disabled={!canGreffierAct}
                   onClick={() => {
+                    if (!canGreffierAct) {
+                      setFeedback({
+                        ok: false,
+                        msg: `Action bloquée : vous jouez le rôle “${role}”. Seul le Greffier gère le journal.`,
+                      });
+                      return;
+                    }
                     const labelMap = {
                       nullite: "Incident: nullité",
                       renvoi: "Incident: renvoi",
@@ -695,7 +512,9 @@ export default function JusticeLabAudience() {
                     commitRun(next);
                     setIncidentDetail("");
                   }}
-                  className="w-full px-3 py-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15 text-xs font-semibold"
+                  className={`w-full px-3 py-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-xs font-semibold ${
+                    canGreffierAct ? "hover:bg-emerald-500/15" : "opacity-50 cursor-not-allowed"
+                  }`}
                 >
                   ➕ Ajouter au journal
                 </button>
@@ -738,9 +557,20 @@ export default function JusticeLabAudience() {
                   {["Accueillir", "Rejeter", "Demander précision"].map((opt) => (
                     <button
                       key={opt}
-                      onClick={() => setChoice(opt)}
+                      disabled={!canJudgeDecide}
+                      onClick={() => {
+                        if (!canJudgeDecide) {
+                          setFeedback({
+                            ok: false,
+                            msg: `Action bloquée : vous jouez le rôle “${role}”. Seul le Juge décide.`,
+                          });
+                          return;
+                        }
+                        setChoice(opt);
+                      }}
                       className={cls(
                         "px-3 py-2 rounded-xl border text-xs",
+                        !canJudgeDecide && "opacity-50 cursor-not-allowed",
                         choice === opt
                           ? "border-emerald-500/40 bg-emerald-500/10"
                           : "border-white/10 bg-white/5"
@@ -756,57 +586,27 @@ export default function JusticeLabAudience() {
                   onChange={(e) => setReasoning(e.target.value)}
                   placeholder="Motivation courte (2–5 phrases)…"
                   className="w-full min-h-[120px] rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs outline-none"
-                  disabled={locked}
+                  disabled={locked || !canJudgeDecide}
                 />
 
                 <div className="mt-3 flex items-center justify-between gap-2">
-                  {role !== "Juge" && mode !== "COOP" && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          if (!selectedObj) return;
-                          const resp = await postJSON(`${API_BASE}/justice-lab/ai-judge`, {
-                            caseData,
-                            runData: run,
-                            objection: {
-                              id: selectedObj.id,
-                              title: selectedObj.title,
-                              statement: selectedObj.statement || selectedObj.text || "",
-                              options: ["Accueillir", "Rejeter", "Demander précision"],
-                            },
-                            playerSuggestion: { role, decision: choice, reasoning },
-                          });
-                          if (resp?.choice) setChoice(resp.choice);
-                          if (resp?.reasoning) setReasoning(resp.reasoning);
-                        } catch (e) {
-                          // ignore
-                        }
-                      }}
-                      className="px-4 py-2 rounded-xl text-xs font-semibold border border-white/10 bg-white/5 hover:bg-white/10"
-                    >
-                      🤖 Décision IA
-                    </button>
-                  )}
-
                   <button
                     onClick={saveDecision}
-                    disabled={locked}
+                    disabled={locked || !canJudgeDecide}
                     className={cls(
                       "px-4 py-2 rounded-xl text-xs font-semibold",
-                      locked
+                      locked || !canJudgeDecide
                         ? "bg-slate-700 text-slate-400 cursor-not-allowed"
                         : "bg-emerald-500 hover:bg-emerald-600 text-white"
                     )}
                   >
                     Enregistrer
                   </button>
-
-                  {feedback?.ok && (
-                    <div className="text-xs text-emerald-300">
-                      ✅ {feedback?.note || "Décision enregistrée"}
-                    </div>
-                  )}
+                  {feedback?.ok ? (
+                    <div className="text-xs text-emerald-300">✅ Décision enregistrée</div>
+                  ) : feedback?.msg ? (
+                    <div className="text-xs text-rose-200">{feedback.msg}</div>
+                  ) : null}
                 </div>
               </div>
             )}

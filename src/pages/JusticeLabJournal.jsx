@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { readRuns, setActiveRunId, upsertAndSetActive } from "../justiceLab/storage.js";
+import { readRuns, setActiveRunId, upsertAndSetActive } from "../justicelab/storage.js";
 import { CASES, buildGreffierPV, gradeMagistratureExam } from "../justiceLab/cases.js";
 import { getPiecesStatusSummary } from "../justiceLab/engine.js";
 
@@ -13,75 +13,18 @@ const API_BASE =
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
 
 function getAuthToken() {
-  const candidates = [
-    "droitgpt_access_token",
-    "droitgpt_token",
-    "token",
-    "authToken",
-    "accessToken",
-    "access_token",
-  ];
-
-  const stores = [];
-  try {
-    if (typeof window !== "undefined" && window.localStorage) stores.push(window.localStorage);
-  } catch {}
-  try {
-    if (typeof window !== "undefined" && window.sessionStorage) stores.push(window.sessionStorage);
-  } catch {}
-
-  // 1) cles connues
-  for (const store of stores) {
-    for (const k of candidates) {
-      try {
-        const v = store.getItem(k);
-        if (v && String(v).trim().length > 10) return String(v).trim();
-      } catch {}
-    }
+  // ✅ FIX: inclure la clé réelle observée chez toi
+  const candidates = ["token", "authToken", "accessToken", "droitgpt_token", "droitgpt_access_token"];
+  for (const k of candidates) {
+    const v = localStorage.getItem(k);
+    if (v && v.trim().length > 10) return v.trim();
   }
-
-  // 2) heuristic: scanne toutes les cles qui contiennent token/auth/session
-  for (const store of stores) {
-    try {
-      for (let i = 0; i < store.length; i += 1) {
-        const k = store.key(i);
-        if (!k) continue;
-        if (!/token|auth|session/i.test(k)) continue;
-        const v = store.getItem(k);
-        const s = String(v || "").trim();
-        if (s.length < 20) continue;
-        // prefere un JWT
-        if (s.includes(".") && s.split(".").length === 3) return s;
-        if (s.startsWith("eyJ")) return s;
-      }
-    } catch {}
-  }
-
-  // 3) cookies
-  try {
-    const parts = String(document.cookie || "").split(";").map((p) => p.trim());
-    for (const p of parts) {
-      const idx = p.indexOf("=");
-      if (idx === -1) continue;
-      const name = p.slice(0, idx).trim().toLowerCase();
-      const val = decodeURIComponent(p.slice(idx + 1));
-      if (!/token|auth/i.test(name)) continue;
-      const s = String(val || "").trim();
-      if (s.length < 20) continue;
-      if (s.includes(".") && s.split(".").length === 3) return s;
-      if (s.startsWith("eyJ")) return s;
-    }
-  } catch {}
-
   return null;
 }
 
-
-
-
-
 async function postJSON(url, body) {
   const token = getAuthToken();
+  if (!token) throw new Error("AUTH_TOKEN_MISSING");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
@@ -89,16 +32,11 @@ async function postJSON(url, body) {
   try {
     const resp = await fetch(url, {
       method: "POST",
-      headers: (() => {
-        const h = { "Content-Type": "application/json" };
-        if (token) h.Authorization = `Bearer ${token}`;
-        return h;
-      })(),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       signal: controller.signal,
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
-      if (resp.status === 401) throw new Error("AUTH_TOKEN_MISSING");
       const text = await resp.text().catch(() => "");
       throw new Error(`HTTP_${resp.status}:${text.slice(0, 200)}`);
     }

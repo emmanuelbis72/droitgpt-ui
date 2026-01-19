@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { readRuns, setActiveRunId, upsertAndSetActive } from "../justiceLab/storage.js";
+import { readRuns, setActiveRunId, upsertAndSetActive } from "../justicelab/storage.js";
 
 function ScorePill({ label, value }) {
   const v = Number.isFinite(value) ? value : 0;

@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { readRuns, readStats } from "../justiceLab/storage.js";
+import { readRuns, readStats } from "../justicelab/storage.js";
 
 function Badge({ score }) {
   if (!score) return { label: "Début", color: "bg-slate-800 border-slate-600 text-slate-100" };
