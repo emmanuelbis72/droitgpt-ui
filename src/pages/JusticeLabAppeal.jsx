@@ -5,7 +5,7 @@ import {
   ensureActiveRunValid,
   upsertAndSetActive,
   patchActiveRun,
-} from "../justicelab/storage.js";
+} from "../justiceLab/storage.js";
 
 const API_BASE =
   (import.meta?.env?.VITE_API_URL || "https://droitgpt-indexer.onrender.com").replace(/\/$/, "");
