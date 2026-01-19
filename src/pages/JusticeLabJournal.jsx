@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { readRuns, setActiveRunId, upsertAndSetActive } from "../justicelab/storage.js";
+import { readRuns, setActiveRunId, upsertAndSetActive } from "../justiceLab/storage.js";
 import { CASES, buildGreffierPV, gradeMagistratureExam } from "../justiceLab/cases.js";
 import { getPiecesStatusSummary } from "../justiceLab/engine.js";
 
