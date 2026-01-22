@@ -1,7 +1,7 @@
 // src/pages/JusticeLab.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { CASES, generateCase, generateCaseAIByDomain, listGeneratedCases } from "../justiceLab/cases";
+import { CASES, generateCase, generateCaseAIByDomain, listGeneratedCases, importCaseFromDocumentText } from "../justiceLab/cases";
 
 const MAX_DYNAMIC_VISIBLE = 24;
 
@@ -69,6 +69,10 @@ export default function JusticeLab() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
 
+  // ✅ Progress bar (Importer dossier PDF/Word) — 12s minimum + remplissage vert
+  const [importProgress, setImportProgress] = useState(0);
+  const importProgressTimerRef = useRef(null);
+
   // Mode Examen
   const [examMode, setExamMode] = useState(() => {
     try {
@@ -107,7 +111,22 @@ export default function JusticeLab() {
 
   const allCases = useMemo(() => {
     // IA d’abord (plus récent), puis locaux
-    return [...(dynamicCases || []), ...(baseCases || [])];
+    // ✅ Dédoublonnage par id/caseId pour éviter les warnings React (keys dupliquées)
+    const merged = [...(dynamicCases || []), ...(baseCases || [])];
+
+    const seen = new Set();
+    const out = [];
+    for (const c of merged) {
+      const id = c?.id || c?.caseId;
+      if (!id) {
+        out.push(c);
+        continue;
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(c);
+    }
+    return out;
   }, [dynamicCases, baseCases]);
 
   const domains = useMemo(() => {
@@ -249,41 +268,81 @@ export default function JusticeLab() {
   // - On crée un “dossier importé” (source: import) + prompt basé sur le nom du fichier
   // - Optionnel: si tu ajoutes plus tard un endpoint backend d’extraction PDF, on pourra l’utiliser
   async function handleImportPdf(file) {
-    setImportError("");
-    if (!file) return;
+  setImportError("");
+  if (!file) return;
 
-    setImporting(true);
-    try {
-      // 1) Création d’un dossier “import” local (stable)
-      const prompt = `Dossier importé (PDF): ${file.name}. Résume, identifie les parties, les faits, les pièces et prépare une audience réaliste.`;
-      const imported = await Promise.resolve(
-        generateCase({
-          level: selectedLevel,
-          domain: selectedDomain || "",
-          prompt,
-          source: "import",
-        })
-      );
+  setImporting(true);
 
-      // 2) (Optionnel futur) upload vers backend — désactivé par défaut pour éviter erreurs
-      // const base = getApiBase();
-      // const url = `${base}/justice-lab/import-pdf`;
-      // const fd = new FormData();
-      // fd.append("file", file);
-      // fd.append("caseId", imported.id);
-      // await fetch(url, { method: "POST", body: fd });
-
-      const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
-      setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
-
-      openCase(imported.id);
-    } catch (e) {
-      setImportError(e?.message || "Impossible d’importer le PDF.");
-    } finally {
-      setImporting(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
+  // ✅ progress bar : démarre immédiatement (12s minimum)
+  const MIN_MS = 12000;
+  const startAt = Date.now();
+  setImportProgress(0);
+  if (importProgressTimerRef.current) {
+    clearInterval(importProgressTimerRef.current);
+    importProgressTimerRef.current = null;
   }
+  importProgressTimerRef.current = setInterval(() => {
+    const elapsed = Date.now() - startAt;
+    const pct = Math.min(95, Math.round((elapsed / MIN_MS) * 100));
+    setImportProgress((prev) => (pct > prev ? pct : prev));
+  }, 120);
+
+  try {
+    // 1) Extraire le texte du document (PDF/DOCX) via analyse-service
+    const ANALYSE_BASE =
+      (typeof import.meta !== "undefined" ? import.meta.env?.VITE_ANALYSE_BASE : "") ||
+      "https://droitgpt-analysepdf.onrender.com";
+    const analyseUrl = `${String(ANALYSE_BASE).replace(/\/$/, "")}/analyse/extract`;
+
+    const fd = new FormData();
+    fd.append("file", file);
+
+    const r1 = await fetch(analyseUrl, { method: "POST", body: fd });
+    if (!r1.ok) {
+      const t = await r1.text().catch(() => "");
+      throw new Error(`Erreur extraction (analyse-service): ${r1.status} ${t}`.slice(0, 300));
+    }
+    const j1 = await r1.json().catch(() => ({}));
+    const documentText =
+      j1?.documentText ||
+      j1?.text ||
+      j1?.content ||
+      j1?.result?.text ||
+      "";
+
+    if (!String(documentText || "").trim() || String(documentText).trim().length < 120) {
+      throw new Error("Texte extrait vide ou trop court. Vérifie que le PDF/Word contient du texte lisible (sinon, active OCR).");
+    }
+
+    // 2) Générer un dossier *basé sur ce texte* via backend (avec Authorization via apiFetch)
+    const importedCase = await importCaseFromDocumentText({
+      documentText,
+      filename: file.name,
+      domain: selectedDomain || "",
+      level: selectedLevel,
+      ai: true,
+      lang: "fr",
+    });
+
+    // 3) Refresh cache UI + ouvrir le dossier
+    const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
+    setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
+
+    // ✅ terminer la barre à 100%
+    setImportProgress(100);
+
+    openCase(importedCase?.id || importedCase?.caseId);
+  } catch (e) {
+    setImportError(e?.message || "Impossible d’importer le document.");
+  } finally {
+    if (importProgressTimerRef.current) {
+      clearInterval(importProgressTimerRef.current);
+      importProgressTimerRef.current = null;
+    }
+    setImporting(false);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+}
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-100">
@@ -422,7 +481,7 @@ export default function JusticeLab() {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept="application/pdf"
+                  accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,.pdf,.doc,.docx"
                   className="hidden"
                   onChange={(e) => handleImportPdf(e.target.files?.[0])}
                 />
@@ -431,13 +490,26 @@ export default function JusticeLab() {
                   disabled={importing}
                   className="rounded-xl border border-slate-700 bg-slate-900/40 hover:bg-white/5 px-3 py-2 text-xs"
                 >
-                  {importing ? "Import..." : "Choisir un PDF"}
+                  {importing ? "Import..." : "Choisir un PDF/Word"}
                 </button>
 
-                <span className="text-[11px] text-slate-500">
-                  (Extraction avancée backend = option future)
-                </span>
+                <span className="text-[11px] text-slate-500">(PDF ou Word)</span>
               </div>
+
+              {importing ? (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Import en cours (backend)...</span>
+                    <span>{Math.min(100, Math.max(0, importProgress || 0))}%</span>
+                  </div>
+                  <div className="mt-2 h-2 w-full rounded-full bg-slate-900/70 border border-slate-700 overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-150"
+                      style={{ width: `${Math.min(100, Math.max(0, importProgress || 0))}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
 
               {importError ? (
                 <div className="mt-3 text-xs text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">
@@ -524,7 +596,7 @@ export default function JusticeLab() {
                 const isAI = Boolean(c?.isDynamic);
                 return (
                   <button
-                    key={id}
+                    key={`${id}-${c?.meta?.seed || c?.seed || c?.meta?.generatedAt || idx}`}
                     onClick={() => openCase(id)}
                     className="text-left rounded-2xl border border-white/10 bg-slate-950/40 hover:bg-white/5 transition p-4"
                   >

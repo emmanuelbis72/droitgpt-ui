@@ -23,6 +23,10 @@
 
 const DEFAULT_CITY = "Lubumbashi";
 
+// ✅ Auth + retry helpers (centralisés)
+// NOTE: ce fichier vit dans src/justicelab/cases.js -> import relatif vers storage.js (même dossier)
+import { apiFetch } from "./storage.js";
+
 // ✅ Persisted case cache (compatible with JusticeLabPlay.jsx)
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
 
@@ -223,6 +227,89 @@ function idPiece(i) {
   return `P${i}`;
 }
 
+
+
+/* =========================
+   ✅ Dossier long (UI) — Faits & parties détaillés (~5 phrases)
+========================= */
+function getPartyName(parties, keys, fallback) {
+  for (const k of keys) {
+    const v = parties?.[k];
+    if (!v) continue;
+    if (typeof v === "string" && v.trim()) return v.trim();
+    const name = v?.nom || v?.name || v?.label;
+    if (typeof name === "string" && name.trim()) return name.trim();
+  }
+  return fallback;
+}
+
+function buildFaitsPartiesDetailed({ rng, domaine, parties, city, tribunal, chambre, facts, promptText }) {
+  const ville = city || DEFAULT_CITY;
+  const dom = String(domaine || "Pénal");
+  const t = tribunal || "Tribunal";
+  const ch = chambre || "Chambre";
+
+  const A = getPartyName(
+    parties,
+    ["demandeur","requérant","contribuable","importateur","societe","prevenu","travailleur","creancier","parent1"],
+    "la partie demanderesse"
+  );
+  const B = getPartyName(
+    parties,
+    ["defendeur","etat","autorite","administration","douane","tiers","victime","employeur","debiteur","parent2"],
+    "la partie défenderesse"
+  );
+
+  const date = pick(rng, ["fin 2023", "janvier 2024", "mars 2024", "juin 2024", "septembre 2024", "début 2025"]) || "récemment";
+  const enjeu = fmtMoney(rng) || "un enjeu notable";
+
+  const pr = String(promptText || "").replace(/\s+/g, " ").trim();
+  const prShort = pr ? pr.slice(0, 220) : "";
+
+  const s1 = `À ${ville}, ${date}, un différend relevant du droit ${dom.toLowerCase()} est né entre ${A} et ${B}.`;
+  const s2 = facts && String(facts).trim()
+    ? `Selon l’exposé initial, ${String(facts).trim().replace(/\s+/g, " ").replace(/^./, (m) => m.toLowerCase())}.`
+    : `Selon les écritures, ${A} reproche à ${B} des faits qu’il estime contraires au droit applicable, tandis que ${B} conteste tant la matérialité des faits que leur qualification juridique.`;
+  const s3 = prShort
+    ? `Le contexte fourni par l’utilisateur mentionne notamment : « ${prShort}… », ce qui oriente la compréhension de la chronologie et des enjeux.`
+    : `Les parties ont tenté des démarches précontentieuses, mais les échanges se sont dégradés et n’ont pas permis de régler le différend à l’amiable.`;
+  const s4 = `Plusieurs pièces ont été évoquées ou produites, certaines étant discutées quant à leur authenticité, leur pertinence ou leur production tardive, ce qui implique un contrôle strict du contradictoire.`;
+  const s5 = `L’affaire a été portée devant ${t} (${ch}), et l’enjeu est significatif (estimé à environ ${enjeu}), appelant une décision motivée garantissant sécurité juridique et équité du procès.`;
+
+  return [s1, s2, s3, s4, s5].join(" ");
+}
+
+function buildDossierLong({ caseData, rng }) {
+  const cd = caseData || {};
+  const meta = cd.meta || {};
+  const pieces = Array.isArray(cd.pieces) ? cd.pieces : [];
+  const issues = Array.isArray(cd.legalIssues) ? cd.legalIssues : [];
+
+  const faitsTxt = buildFaitsPartiesDetailed({
+    rng,
+    domaine: cd.domaine,
+    parties: cd.parties,
+    city: meta.city,
+    tribunal: meta.tribunal,
+    chambre: meta.chambre,
+    facts: cd.__factsShort || "",
+    promptText: meta.userPrompt || "",
+  });
+
+  const piecesLines = pieces.slice(0, 8).map((p) => `- ${p.id} — ${String(p.title || "Pièce").trim()}${p.isLate ? " (tardive)" : ""}`);
+  const issuesLines = issues.slice(0, 8).map((q) => `- ${q}`);
+
+  return [
+    "📌 Faits & parties",
+    faitsTxt,
+    "",
+    "🧾 Pièces (aperçu)",
+    piecesLines.length ? piecesLines.join("\n") : "- (Aucune pièce listée)",
+    "",
+    "⚖️ Questions litigieuses (axe d'analyse)",
+    issuesLines.length ? issuesLines.join("\n") : "- (À déterminer à l'audience)",
+  ].join("\n");
+}
 /* =========================
    Seed + Hash helpers
 ========================= */
@@ -1100,6 +1187,19 @@ function toUiCase(caseData) {
    Local generation (seeded)
    ✅ anti-duplication + seed auto si vide
 ========================= */
+
+function expandFacts(baseFacts, parties = {}, city = "") {
+  if (!baseFacts) return "";
+  const names = Object.values(parties).map(p => p?.nom).filter(Boolean).join(", ");
+  return [
+    baseFacts,
+    `Les faits se déroulent dans la ville de ${city || "la juridiction saisie"}, impliquant notamment ${names || "les parties au procès"}.`,
+    "Les parties présentent des versions divergentes des événements, chacune produisant des éléments de preuve à l’appui de ses prétentions.",
+    "Le différend s’inscrit dans un contexte de tensions persistantes ayant donné lieu à plusieurs échanges précontentieux.",
+    "L’affaire soulève ainsi des enjeux juridiques et factuels nécessitant l’intervention de la juridiction pour une solution équilibrée."
+  ].join(" ");
+}
+
 export function generateCase({ templateId, seed, level, domain, prompt, source = "generated" } = {}) {
   // ✅ Seed auto unique si non fourni, pour éviter dossiers identiques
   let seedNorm = normalizeSeed(seed);
@@ -1124,8 +1224,11 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
   const lvlChoices = Array.isArray(tpl.levels) && tpl.levels.length ? tpl.levels : ["Intermédiaire"];
   const lvl = level || pick(rng, lvlChoices) || "Intermédiaire";
 
+  const city = pick(rng, ["Kinshasa", "Lubumbashi", "Goma", "Kolwezi", "Bukavu", "Matadi", "Mbuji-Mayi"]) || DEFAULT_CITY;
+
   const parties = buildParties(rng, tpl.partiesSchema);
-  const facts = pick(rng, tpl.factsVariants) || "";
+  const rawFacts = pick(rng, tpl.factsVariants) || "";
+  const facts = expandFacts(rawFacts, parties, city);
   const legalIssues = pickN(rng, tpl.legalIssuesPool, 4).filter(Boolean);
   const pieces = buildPieces(rng, tpl.piecesPool, 7);
 
@@ -1155,8 +1258,6 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
   });
 
   const objectionTemplates = objections.map((o) => injectDynamicEffects(o, pieces));
-
-  const city = pick(rng, ["Kinshasa", "Lubumbashi", "Goma", "Kolwezi", "Bukavu", "Matadi", "Mbuji-Mayi"]) || DEFAULT_CITY;
   const { tribunal, chambre, typeAudience } = computeTribunal(tpl.domaine);
 
   const caseId = mkCaseId(tpl.templateId, seedNorm);
@@ -1176,7 +1277,8 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
     niveau: lvl,
     titre,
     resume,
-    parties,
+    __factsShort: rawFacts,
+  parties,
     pieces,
     legalIssues,
     eventsDeck: events,
@@ -1195,6 +1297,19 @@ export function generateCase({ templateId, seed, level, domain, prompt, source =
       source, // base | generated | import
     },
   };
+
+  // ✅ Dossier long détaillé (Faits & parties ~5 phrases)
+
+  try {
+
+    caseData.dossierLong = buildDossierLong({ caseData, rng });
+
+  } catch {
+
+    caseData.dossierLong = `📌 Faits & parties\n${caseData.resume || ""}`.trim();
+
+  }
+
 
   saveCaseToCache(caseData);
   return toUiCase(caseData);
@@ -1338,7 +1453,8 @@ function hydrateCaseData(raw, { domaine, level, seed } = {}) {
     niveau: lvl,
     titre,
     resume,
-    parties,
+    __factsShort: String(raw?.__factsShort || raw?.facts || "").trim(),
+  parties,
     pieces,
     legalIssues,
     eventsDeck,
@@ -1347,6 +1463,21 @@ function hydrateCaseData(raw, { domaine, level, seed } = {}) {
     meta,
   };
 
+  // ✅ Dossier long détaillé (pour IA/import aussi)
+
+  try {
+
+    const rng2 = rngFromSeed(`DOSSIERLONG:${meta.templateId}:${meta.seed}`);
+
+    hydrated.dossierLong = buildDossierLong({ caseData: hydrated, rng: rng2 });
+
+  } catch {
+
+    hydrated.dossierLong = `📌 Faits & parties\n${hydrated.resume || ""}`.trim();
+
+  }
+
+
   saveCaseToCache(hydrated);
   return toUiCase(hydrated);
 }
@@ -1354,18 +1485,30 @@ function hydrateCaseData(raw, { domaine, level, seed } = {}) {
 /* =========================
    HYBRID: IA enrichissement (optionnel)
 ========================= */
-export async function generateCaseHybrid({ templateId, seed, level, ai = false, apiBase, timeoutMs = 12000, lang = "fr" } = {}) {
-  const local = generateCase({ templateId, seed, level, source: "generated" });
+export async function generateCaseHybrid({
+  templateId,
+  seed,
+  level,
+  domain,
+  prompt,
+  ai = false,
+  apiBase,
+  timeoutMs = 12000,
+  lang = "fr",
+} = {}) {
+  // ✅ Draft local unique + influencé par le prompt + difficulté
+  const local = generateCase({ templateId, seed, level, domain, prompt, source: "generated" });
   if (!ai) return local;
 
   const base = getApiBase(apiBase);
   const url = `${base}/justice-lab/generate-case`;
 
   try {
-    const res = await withTimeout(
-      fetch(url, {
+    // ✅ apiFetch ajoute automatiquement Authorization (Bearer token) + retries + timeout
+    const res = await apiFetch(
+      url,
+      {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "enrich",
           lang,
@@ -1378,8 +1521,8 @@ export async function generateCaseHybrid({ templateId, seed, level, ai = false, 
           chambre: local.meta?.chambre,
           draft: local,
         }),
-      }),
-      timeoutMs
+      },
+      { timeoutMs, retries: 2 }
     );
 
     if (!res.ok) return local;
@@ -1387,7 +1530,12 @@ export async function generateCaseHybrid({ templateId, seed, level, ai = false, 
     const enrichedRaw = data?.caseData || data?.case || null;
     if (!enrichedRaw || typeof enrichedRaw !== "object") return local;
 
-    return hydrateCaseData({ ...local, ...enrichedRaw }, { domaine: local.domaine, level: local.niveau, seed: local.meta?.seed });
+    const merged = hydrateCaseData(
+      { ...(local?.caseData || local), ...enrichedRaw },
+      { domaine: local.domaine, level: local.niveau, seed: local.meta?.seed }
+    );
+    saveCaseToCache(merged);
+    return toUiCase(merged);
   } catch {
     return local;
   }
@@ -1400,28 +1548,6 @@ export async function generateCaseAIByDomain({ domaine = "Pénal", level = "Inte
   const base = getApiBase(apiBase);
   const url = `${base}/justice-lab/generate-case`;
 
-  // ✅ Auth: le backend Render protège /justice-lab/generate-case (requireAuth).
-  // On récupère un token depuis le localStorage si disponible.
-  function getAuthTokenFromStorage() {
-    try {
-      if (typeof window === "undefined" || !window.localStorage) return null;
-      const keys = [
-        "droitgpt_access_token",
-        "token",
-        "authToken",
-        "accessToken",
-        "droitgpt_token",
-      ];
-      for (const k of keys) {
-        const v = window.localStorage.getItem(k);
-        if (v && String(v).trim().length > 10) return String(v).trim();
-      }
-    } catch {
-      // ignore
-    }
-    return null;
-  }
-
   const dom = normalizeDomainLabel(domaine);
 
   // ✅ seed auto unique si absent
@@ -1429,14 +1555,8 @@ export async function generateCaseAIByDomain({ domaine = "Pénal", level = "Inte
   const payload = { mode: "full", domaine: dom, level, seed: String(theSeed), lang };
 
   try {
-    const token = getAuthTokenFromStorage();
-    const headers = { "Content-Type": "application/json" };
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    const res = await withTimeout(
-      fetch(url, { method: "POST", headers, body: JSON.stringify(payload) }),
-      timeoutMs
-    );
+    // ✅ apiFetch ajoute automatiquement Authorization (Bearer token) + retries + timeout
+    const res = await apiFetch(url, { method: "POST", body: JSON.stringify(payload) }, { timeoutMs, retries: 2 });
 
     if (!res.ok) {
       const tplId = mapDomainToTemplateId(dom);
@@ -1478,7 +1598,7 @@ export async function importCaseFromDocumentText({
   lang = "fr",
 } = {}) {
   const text = String(documentText || "").trim();
-  const textShort = text.replace(/\s+/g, " ").slice(0, 1500);
+  const textShort = text.replace(/\s+/g, " ").slice(0, 9000);
 
   const inferredSlug = domain ? slugDomain(domain) : inferDomainFromPrompt(text);
   const inferredLabel = normalizeDomainLabel(inferredSlug);
@@ -1486,30 +1606,40 @@ export async function importCaseFromDocumentText({
   const theSeed = seed ?? `DOC:${shortHash(filename)}:${Date.now()}`;
 
   if (ai) {
-    const caseData = await generateCaseAIByDomain({
+    const base = getApiBase(apiBase);
+    const url = `${base}/justice-lab/generate-case`;
+    const payload = {
+      mode: "from_document",
       domaine: inferredLabel,
       level,
       seed: String(theSeed),
-      apiBase,
-      timeoutMs: 25000,
       lang,
-    });
-
-    const merged = {
-      ...caseData,
-      resume: `📄 Import (${filename}) — extrait: ${textShort}\n\n${caseData.resume || ""}`.trim(),
-      summary: `📄 Import (${filename}) — extrait: ${textShort}`.trim(),
-      meta: {
-        ...(caseData.meta || {}),
-        source: "import",
-        inferredDomain: inferredSlug,
-        filename,
-        excerpt: textShort,
-      },
+      filename,
+      documentText: textShort,
     };
 
-    saveCaseToCache(merged);
-    return toUiCase(merged);
+    const res = await apiFetch(url, { method: "POST", body: JSON.stringify(payload) }, { timeoutMs: 45000, retries: 1 });
+    if (!res.ok) {
+      // fallback: génération full sans document
+      const caseData = await generateCaseAIByDomain({ domaine: inferredLabel, level, seed: String(theSeed), apiBase, timeoutMs: 25000, lang });
+      const merged = {
+        ...caseData,
+        resume: `📄 Import (${filename}) — extrait: ${textShort}\n\n${caseData.resume || ""}`.trim(),
+        summary: `📄 Import (${filename}) — extrait: ${textShort}`.trim(),
+        meta: { ...(caseData.meta || {}), source: "import", inferredDomain: inferredSlug, filename, excerpt: textShort },
+      };
+      saveCaseToCache(merged);
+      return toUiCase(merged);
+    }
+
+    const data = await res.json();
+    const raw = data?.caseData || data?.case;
+    if (!raw || typeof raw !== "object") throw new Error("BAD_CASEDATA");
+
+    const hydrated = hydrateCaseData(raw, { domaine: inferredLabel, level, seed: payload.seed });
+    hydrated.meta = { ...(hydrated.meta || {}), source: "import", inferredDomain: inferredSlug, filename, excerpt: textShort };
+    saveCaseToCache(hydrated);
+    return toUiCase(hydrated);
   }
 
   const local = generateCase({
@@ -1779,4 +1909,21 @@ function buildBaseCases24() {
   );
 }
 
-export const CASES = buildBaseCases24();
+function ensureUniqueCaseIds(list) {
+  const seen = new Set();
+  return (list || []).map((c, idx) => {
+    const id = c?.id || c?.caseId;
+    if (!id) return c;
+    if (!seen.has(id)) {
+      seen.add(id);
+      return c;
+    }
+    // Collision improbable (hash) mais on sécurise : on suffixe de façon stable
+    const patchedId = `${id}-${idx + 1}`;
+    const out = { ...c, id: patchedId, caseId: patchedId };
+    seen.add(patchedId);
+    return out;
+  });
+}
+
+export const CASES = ensureUniqueCaseIds(buildBaseCases24());
