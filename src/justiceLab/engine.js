@@ -793,7 +793,7 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
   }
 
   // 2) compléter avec templates si IA insuffisant
-  for (let j = 0; j < templates.length && merged.length < 4; j++) {
+  for (let j = 0; j < templates.length && merged.length < 6; j++) {
     const t = templates[j] || {};
     merged.push({
       id: safeStr(t.id || `OBJ_TPL_${j + 1}`, 32),
@@ -806,6 +806,56 @@ export function mergeAudienceWithTemplates(caseData, apiData) {
     });
   }
 
+
+
+  // 3) compléter avec un pack 'incidents' standard RDC si toujours insuffisant
+  if (merged.length < 6) {
+    const builtin = [
+      {
+        id: `OBJ_STD_COMPETENCE_${merged.length + 1}`,
+        by: "Avocat Défendeur",
+        title: "Exception d’incompétence (ratione loci / materiae)",
+        statement: "La défense soulève l’incompétence du tribunal saisi (territoriale ou matérielle) et sollicite le renvoi devant la juridiction compétente.",
+      },
+      {
+        id: `OBJ_STD_RECEV_${merged.length + 2}`,
+        by: "Procureur",
+        title: "Fin de non-recevoir / Irrecevabilité",
+        statement: "Le ministère public requiert sur la recevabilité : défaut de qualité/intérêt, prescription, ou défaut de tentative préalable obligatoire (selon le cas).",
+      },
+      {
+        id: `OBJ_STD_NULL_${merged.length + 3}`,
+        by: "Avocat Défendeur",
+        title: "Nullité de l’acte / vice de procédure",
+        statement: "La défense invoque un vice affectant une citation, une notification, ou une pièce de procédure, et demande la nullité ou l’écartement.",
+      },
+      {
+        id: `OBJ_STD_PIECES_${merged.length + 4}`,
+        by: "Avocat Demandeur",
+        title: "Communication tardive de pièces",
+        statement: "La partie demanderesse sollicite l’admission de pièces communiquées tardivement, en soutenant l’absence de surprise et le respect du contradictoire.",
+      },
+      {
+        id: `OBJ_STD_RENVOI_${merged.length + 5}`,
+        by: "Greffier",
+        title: "Demande de renvoi pour mise en état",
+        statement: "Une partie sollicite un renvoi pour compléter le dossier (pièces manquantes, expertise, convocation d’un témoin). Le juge doit encadrer et motiver.",
+      },
+    ];
+
+    for (const b of builtin) {
+      if (merged.length >= 6) break;
+      merged.push({
+        id: safeStr(b.id, 32),
+        by: safeStr(normalizeRoleLabel(b.by), 24),
+        title: safeStr(b.title, 80),
+        statement: safeStr(b.statement, 600),
+        options: ["Accueillir", "Rejeter", "Demander précision"],
+        effects: null,
+        bestChoiceByRole: null,
+      });
+    }
+  }
   return {
     sceneMeta,
     turns: turns.slice(0, 12).map((t) => ({

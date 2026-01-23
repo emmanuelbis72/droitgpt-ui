@@ -49,6 +49,47 @@ const ROLES = [
   { id: "Greffier", label: "🟨 Greffier", desc: "Tient le PV : consigne interventions, incidents, décisions, renvois." },
 ];
 
+// ✅ rôles autorisés (strict)
+const ROLE_IDS = ROLES.map((r) => r.id);
+
+function getUserDisplayNameFallback() {
+  // best-effort: username/email stocké par ton auth, sinon "Joueur"
+  const candidates = [
+    "droitgpt_user_name",
+    "userName",
+    "username",
+    "displayName",
+    "email",
+  ];
+  for (const k of candidates) {
+    const v = localStorage.getItem(k);
+    if (v && v.trim()) return v.trim().slice(0, 40);
+  }
+  return "Joueur";
+}
+
+async function getJSON(url) {
+  const token = getAuthToken();
+  if (!token) throw new Error("AUTH_TOKEN_MISSING");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`HTTP_${resp.status}:${text.slice(0, 200)}`);
+    }
+    return await resp.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ✅ cache local dossiers dynamiques (v2 + fallback v1)
 const CASE_CACHE_KEY_V2 = "justicelab_caseCache_v2";
 const CASE_CACHE_KEY_V1 = "justicelab_caseCache_v1";
@@ -364,6 +405,9 @@ export default function JusticeLabPlay() {
   // ✅ verrouillage motivation (objections)
   const [editReasoningById, setEditReasoningById] = useState({});
   const [draftReasoningById, setDraftReasoningById] = useState({});
+  // ✅ MP: choix local (non-juge) + autosync drafts
+  const [suggestChoiceById, setSuggestChoiceById] = useState({});
+  const draftSyncTimersRef = useRef({});
 
   // UI toggles
   const [showAudit, setShowAudit] = useState(true);
@@ -374,6 +418,32 @@ export default function JusticeLabPlay() {
     if (!lsAvailable()) return "Le Greffier";
     return localStorage.getItem("justicelab_greffier_name") || "Le Greffier";
   });
+
+  /* ---------------- Multiplayer (Lobby) ----------------
+     Objectif: salle d'attente + démarrage par le créateur.
+     La synchro fine des actions (temps réel) s'appuie ensuite sur /rooms/action.
+  ------------------------------------------------------ */
+  const [multiKind, setMultiKind] = useState("host"); // host | join
+  const [multiName, setMultiName] = useState(getUserDisplayNameFallback());
+  const [multiAiRole, setMultiAiRole] = useState("Juge"); // par défaut
+  const [multiOpenRoles, setMultiOpenRoles] = useState(["Procureur", "Greffier", "Avocat Demandeur", "Avocat Défendeur"]);
+  const [multiRoomInput, setMultiRoomInput] = useState("");
+  const [roomState, setRoomState] = useState(null);
+  const [roomBusy, setRoomBusy] = useState(false);
+  const [roomErr, setRoomErr] = useState("");
+
+  // ✅ Multiplayer runtime flags (must be defined before any useEffect uses them)
+  const mpEnabled = useMemo(() => {
+    const gm = run?.answers?.gameMode || "solo";
+    return gm === "multi" && !!run?.answers?.roomId && !!run?.answers?.participantId;
+  }, [run?.answers?.gameMode, run?.answers?.roomId, run?.answers?.participantId]);
+
+  const myRole = useMemo(() => {
+    return (run?.answers?.role || "Juge").trim() || "Juge";
+  }, [run?.answers?.role]);
+
+  const isJudge = myRole === "Juge";
+
 
   // ✅ Chrono UI refresh
   const [chronoUiTick, setChronoUiTick] = useState(0);
@@ -396,6 +466,80 @@ export default function JusticeLabPlay() {
     if (sc && sc !== audienceScene) setAudienceScene(sc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run?.answers?.audience?.scene]);
+
+  // ✅ MULTI: poll room state (salle d'attente + démarrage)
+  useEffect(() => {
+    const mode = run?.answers?.gameMode || "solo";
+    if (mode !== "multi") {
+      setRoomState(null);
+      setRoomErr("");
+      return;
+    }
+
+    const roomId = String(run?.answers?.roomId || "").trim().toUpperCase();
+    const participantId = String(run?.answers?.participantId || "").trim();
+    if (!roomId || !participantId) return;
+
+    let stop = false;
+    let timer = null;
+
+    const tick = async () => {
+      try {
+        const data = await getJSON(`${API_BASE}/justice-lab/rooms/${encodeURIComponent(roomId)}?participantId=${encodeURIComponent(participantId)}`);
+        if (stop) return;
+        setRoomState(data);
+
+        // si la room démarre, on autorise la progression
+        const st = String(data?.meta?.status || "WAITING");
+        if (st === "STARTED") {
+          // rien à faire ici, le bouton Continuer sera activé
+        }
+      } catch (e) {
+        if (stop) return;
+        setRoomErr(String(e?.message || e));
+      }
+    };
+
+    tick();
+    timer = setInterval(tick, 1000);
+    return () => {
+      stop = true;
+      if (timer) clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.answers?.gameMode, run?.answers?.roomId, run?.answers?.participantId]);
+
+  // ✅ MP: appliquer les décisions du juge depuis l'état partagé (roomState.decisions)
+  useEffect(() => {
+    if (!mpEnabled) return;
+    if (!roomState || !Array.isArray(roomState.decisions) || !roomState.decisions.length) return;
+
+    // on applique seulement les décisions qui ne sont pas encore présentes localement
+    setRun((prev) => {
+      let next = prev;
+      const local = Array.isArray(prev?.answers?.audience?.decisions) ? prev.answers.audience.decisions : [];
+      for (const d of roomState.decisions) {
+        const oid = String(d?.objectionId || "");
+        const dec = String(d?.decision || "");
+        if (!oid || !dec) continue;
+
+        const exists = local.find((x) => String(x?.objectionId || x?.objId || "") === oid && String(x?.decision || "") === dec);
+        if (exists) continue;
+
+        next = applyAudienceDecision(next, {
+          objectionId: oid,
+          decision: dec,
+          reasoning: String(d?.reasoning || ""),
+          role: "Juge",
+          effects: d?.effects || null,
+        });
+      }
+      // si rien n'a changé, renvoyer prev
+      return next === prev ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mpEnabled, roomState?.version]);
+
 
   // ✅ start chrono auto quand on arrive en AUDIENCE
   useEffect(() => {
@@ -525,10 +669,50 @@ export default function JusticeLabPlay() {
     return next;
   };
 
+  const roomAction = async (type, payload) => {
+    if (!mpEnabled) return null;
+    const roomId = String(run?.answers?.roomId || "").trim().toUpperCase();
+    const participantId = String(run?.answers?.participantId || "").trim();
+    if (!roomId || !participantId) return null;
+    return await postJSON(`${API_BASE}/justice-lab/rooms/action`, {
+      roomId,
+      participantId,
+      action: { type, payload },
+    });
+  };
+
+  const scheduleDraftUpdate = (objectionId, patch) => {
+    if (!mpEnabled) return;
+    const key = String(objectionId || "");
+    if (!key) return;
+
+    const timers = draftSyncTimersRef.current || {};
+    if (timers[key]) clearTimeout(timers[key]);
+
+    timers[key] = setTimeout(() => {
+      roomAction("DRAFT_UPDATE", { objectionId: key, ...patch }).catch(() => {});
+      timers[key] = null;
+    }, 350);
+
+    draftSyncTimersRef.current = timers;
+  };
+
+
+
   const goNext = async () => {
     if (isScoring || isLoadingAudience) return;
 
-    if (step === "ROLE") return setStep("BRIEFING");
+    if (step === "ROLE") {
+      const mode = run?.answers?.gameMode || "solo";
+      if (mode === "multi") {
+        const st = String(roomState?.meta?.status || "WAITING");
+        if (st !== "STARTED") {
+          setRoomErr("Multijoueur: attends la salle d'attente puis démarre l'audience (créateur) avant de continuer.");
+          return;
+        }
+      }
+      return setStep("BRIEFING");
+    }
     if (step === "BRIEFING") return setStep("QUALIFICATION");
     if (step === "QUALIFICATION") return setStep("PROCEDURE");
     if (step === "PROCEDURE") {
@@ -940,6 +1124,111 @@ export default function JusticeLabPlay() {
     }
   };
 
+  // ---------------- MULTI helpers ----------------
+  const ensureRole = (role) => {
+    const r = String(role || "").trim();
+    return ROLE_IDS.includes(r) ? r : "Juge";
+  };
+
+  const createRoom = async () => {
+    setRoomErr("");
+    setRoomBusy(true);
+    try {
+      const hostRole = ensureRole(run?.answers?.role || "Avocat Demandeur");
+      const aiRole = ensureRole(multiAiRole || "Juge");
+      // openRoles: on enlève role hôte + role IA + invalide
+      const openRoles = Array.from(
+        new Set(
+          (Array.isArray(multiOpenRoles) ? multiOpenRoles : [])
+            .map(ensureRole)
+            .filter((x) => x && x !== hostRole && x !== aiRole)
+        )
+      );
+
+      const resp = await postJSON(`${API_BASE}/justice-lab/rooms/create`, {
+        caseId: caseData?.caseId || decodedCaseId,
+        displayName: multiName || getUserDisplayNameFallback(),
+        role: hostRole,
+        aiRole,
+        openRoles,
+        title: `Audience – ${caseData?.titre || caseData?.title || "Dossier"}`,
+      });
+
+      const next = {
+        ...run,
+        answers: {
+          ...(run.answers || {}),
+          gameMode: "multi",
+          roomId: resp?.roomId || null,
+          participantId: resp?.participantId || null,
+          multiKind: "host",
+          multiAiRole: resp?.meta?.aiRole || aiRole,
+          multiOpenRoles: resp?.meta?.openRoles || openRoles,
+        },
+      };
+      saveRunState(next);
+      setRoomState(null);
+    } catch (e) {
+      setRoomErr(`Création room impossible: ${String(e?.message || e)}`);
+    } finally {
+      setRoomBusy(false);
+    }
+  };
+
+  const joinRoom = async () => {
+    setRoomErr("");
+    setRoomBusy(true);
+    try {
+      const rid = String(multiRoomInput || run?.answers?.roomId || "")
+        .trim()
+        .toUpperCase();
+      if (!rid) throw new Error("ROOM_ID_MISSING");
+
+      const joinRole = ensureRole(run?.answers?.role || "Procureur");
+      const resp = await postJSON(`${API_BASE}/justice-lab/rooms/join`, {
+        roomId: rid,
+        caseId: caseData?.caseId || decodedCaseId,
+        displayName: multiName || getUserDisplayNameFallback(),
+        role: joinRole,
+      });
+
+      const next = {
+        ...run,
+        answers: {
+          ...(run.answers || {}),
+          gameMode: "multi",
+          roomId: resp?.roomId || rid,
+          participantId: resp?.participantId || null,
+          multiKind: "join",
+          multiAiRole: resp?.meta?.aiRole || "Juge",
+          multiOpenRoles: resp?.meta?.openRoles || [],
+        },
+      };
+      saveRunState(next);
+      setRoomState(null);
+    } catch (e) {
+      setRoomErr(`Join room impossible: ${String(e?.message || e)}`);
+    } finally {
+      setRoomBusy(false);
+    }
+  };
+
+  const startRoom = async () => {
+    setRoomErr("");
+    setRoomBusy(true);
+    try {
+      const roomId = String(run?.answers?.roomId || "").trim().toUpperCase();
+      const participantId = String(run?.answers?.participantId || "").trim();
+      if (!roomId || !participantId) throw new Error("ROOM_NOT_READY");
+      await postJSON(`${API_BASE}/justice-lab/rooms/start`, { roomId, participantId });
+      // le poll va récupérer status STARTED
+    } catch (e) {
+      setRoomErr(`Démarrage impossible: ${String(e?.message || e)}`);
+    } finally {
+      setRoomBusy(false);
+    }
+  };
+
   const roleCard = (r) => {
     const active = (run.answers?.role || "Juge") === r.id;
     return (
@@ -1144,11 +1433,10 @@ export default function JusticeLabPlay() {
                             ...run,
                             answers: { ...(run.answers || {}), gameMode: m.id },
                           };
-                          // roomId persistant en multi
                           if (m.id === "solo") {
                             next.answers.roomId = null;
-                          } else {
-                            next.answers.roomId = next.answers.roomId || String(Math.random()).slice(2, 8);
+                            next.answers.participantId = null;
+                            next.answers.multiKind = null;
                           }
                           saveRunState(next);
                         }}
@@ -1166,15 +1454,204 @@ export default function JusticeLabPlay() {
                 </div>
 
                 {(run?.answers?.gameMode || "solo") === "multi" && (
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
-                    <div className="text-xs text-slate-300">
-                      Salle (code) :
-                      <span className="ml-2 font-semibold text-emerald-200">{run?.answers?.roomId || "—"}</span>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-100">👥 Multijoueur synchronisé</div>
+                        <div className="text-xs text-slate-300 mt-1">
+                          Le créateur choisit les rôles ouverts. Par défaut, <b>le Juge est l'IA</b>. Ensuite : salle d'attente → démarrage par le créateur.
+                        </div>
+                      </div>
+                      {run?.answers?.roomId ? (
+                        <div className="text-xs text-slate-300">
+                          Code salle : <span className="ml-2 font-semibold text-emerald-200">{String(run.answers.roomId).toUpperCase()}</span>
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="mt-2 text-[11px] text-slate-400">
-                      Partage ce code aux autres joueurs. (La synchronisation temps réel peut être branchée côté backend
-                      ensuite.)
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                        <div className="text-xs text-slate-300 font-semibold">1) Choisir</div>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setMultiKind("host")}
+                            className={`flex-1 h-10 rounded-xl border text-sm transition ${
+                              multiKind === "host" ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-slate-950/30 hover:bg-white/5"
+                            }`}
+                          >
+                            Créer une salle
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMultiKind("join")}
+                            className={`flex-1 h-10 rounded-xl border text-sm transition ${
+                              multiKind === "join" ? "border-emerald-500/40 bg-emerald-500/10" : "border-white/10 bg-slate-950/30 hover:bg-white/5"
+                            }`}
+                          >
+                            Rejoindre
+                          </button>
+                        </div>
+
+                        <div className="mt-3">
+                          <div className="text-[11px] text-slate-400">Nom affiché</div>
+                          <input
+                            value={multiName}
+                            onChange={(e) => setMultiName(e.target.value)}
+                            className="mt-1 h-10 w-full rounded-xl border border-white/10 bg-slate-950/30 px-3 text-sm outline-none focus:border-emerald-400/50"
+                            placeholder="Votre nom"
+                          />
+                        </div>
+
+                        {multiKind === "join" ? (
+                          <div className="mt-3">
+                            <div className="text-[11px] text-slate-400">Code salle</div>
+                            <input
+                              value={multiRoomInput}
+                              onChange={(e) => setMultiRoomInput(e.target.value)}
+                              className="mt-1 h-10 w-full rounded-xl border border-white/10 bg-slate-950/30 px-3 text-sm outline-none focus:border-emerald-400/50"
+                              placeholder="Ex: A1B2C3"
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                        <div className="text-xs text-slate-300 font-semibold">2) Paramètres</div>
+
+                        <div className="mt-2">
+                          <div className="text-[11px] text-slate-400">Rôle IA (par défaut : Juge)</div>
+                          <select
+                            value={multiAiRole}
+                            onChange={(e) => setMultiAiRole(e.target.value)}
+                            className="mt-1 h-10 w-full rounded-xl border border-white/10 bg-slate-950/30 px-3 text-sm outline-none focus:border-emerald-400/50"
+                          >
+                            {ROLES.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.id}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {multiKind === "host" ? (
+                          <div className="mt-3">
+                            <div className="text-[11px] text-slate-400">Rôles ouverts aux autres utilisateurs</div>
+                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                              {ROLES.filter((rr) => rr.id !== (run?.answers?.role || "") && rr.id !== multiAiRole).map((rr) => {
+                                const checked = (multiOpenRoles || []).includes(rr.id);
+                                return (
+                                  <label key={rr.id} className="flex items-center gap-2 text-xs text-slate-200">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {
+                                        setMultiOpenRoles((prev) => {
+                                          const p = Array.isArray(prev) ? prev : [];
+                                          return checked ? p.filter((x) => x !== rr.id) : [...p, rr.id];
+                                        });
+                                      }}
+                                    />
+                                    {rr.id}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-[11px] text-slate-400">
+                            Ton rôle (ci-dessus) doit correspondre à un rôle ouvert.
+                          </div>
+                        )}
+                      </div>
                     </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      {multiKind === "host" ? (
+                        <button
+                          type="button"
+                          disabled={roomBusy}
+                          onClick={createRoom}
+                          className="h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 transition text-sm font-semibold"
+                        >
+                          {roomBusy ? "Création..." : "Créer la salle"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={roomBusy}
+                          onClick={joinRoom}
+                          className="h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 transition text-sm font-semibold"
+                        >
+                          {roomBusy ? "Connexion..." : "Rejoindre"}
+                        </button>
+                      )}
+
+                      {roomErr ? <div className="text-xs text-rose-300">{roomErr}</div> : null}
+                      {roomState?.roomId ? (
+                        <div className="ml-auto text-xs text-slate-300">
+                          État : <span className="font-semibold">{String(roomState?.meta?.status || "WAITING")}</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* Salle d'attente */}
+                    {roomState?.roomId ? (
+                      <div className="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-semibold text-slate-100">⏳ Salle d'attente</div>
+                          <div className="text-[11px] text-slate-300">
+                            Code : <span className="font-semibold text-emerald-200">{String(roomState.roomId).toUpperCase()}</span>
+                          </div>
+                        </div>
+
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {(Array.isArray(roomState?.meta?.openRoles) ? roomState.meta.openRoles : []).map((rr) => {
+                            const holder = (roomState.players || []).find((p) => p.role === rr);
+                            return (
+                              <div key={rr} className="rounded-xl border border-white/10 bg-slate-950/30 p-2">
+                                <div className="text-xs text-slate-200 font-semibold">{rr}</div>
+                                <div className="text-[11px] text-slate-400 mt-1">
+                                  {holder ? `✅ ${holder.displayName}` : "En attente..."}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-3 text-[11px] text-slate-300">
+                          IA : <span className="font-semibold">{roomState?.meta?.aiRole || "Aucune"}</span>
+                          <span className="mx-2 opacity-60">•</span>
+                          Participants : <span className="font-semibold">{(roomState?.players || []).length}</span>
+                        </div>
+
+                        {roomState?.meta?.status !== "STARTED" ? (
+                          <div className="mt-3 flex items-center gap-2">
+                            <div className="text-xs text-slate-300">
+                              Le créateur ne joue pas tant que les rôles ouverts ne sont pas tous connectés.
+                            </div>
+                            {(roomState?.players || []).some((p) => p.isHost && p.participantId === run?.answers?.participantId) ? (
+                              <button
+                                type="button"
+                                disabled={roomBusy}
+                                onClick={startRoom}
+                                className="ml-auto h-10 px-4 rounded-xl bg-slate-900/80 border border-white/10 hover:bg-slate-900 disabled:opacity-60 transition text-sm"
+                              >
+                                Démarrer l'audience
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-xs text-emerald-200 font-semibold">✅ Audience démarrée. Tu peux continuer.</div>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {roomErr ? (
+                      <div className="mt-2 text-[11px] text-rose-300">
+                        {roomErr.includes("ROLE_NOT_OPEN") ? "Ton rôle n'est pas ouvert par le créateur. Change de rôle ou demande un autre rôle." : roomErr}
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -1563,7 +2040,7 @@ export default function JusticeLabPlay() {
 
                           <div className="mt-3 flex flex-wrap gap-2">
                             {(obj.options || ["Accueillir", "Rejeter", "Demander précision"]).map((opt) => {
-                              const active = (current?.decision || "") === opt;
+                              const active = (mpEnabled && !isJudge) ? ((suggestChoiceById[obj.id] || "") === opt) : ((current?.decision || "") === opt);
                               return (
                                 <button
                                   key={opt}
@@ -1577,7 +2054,21 @@ export default function JusticeLabPlay() {
                                     const rr = isEditing
                                       ? (draftReasoningById[obj.id] ?? current?.reasoning ?? "")
                                       : (current?.reasoning || "");
+
+                                    // MULTI:
+                                    // - Juge: décide (état partagé)
+                                    // - Autres rôles: proposent une suggestion (sans modifier la décision officielle)
+                                    if (mpEnabled && !isJudge) {
+                                      setSuggestChoiceById((mm) => ({ ...(mm || {}), [obj.id]: opt }));
+                                      scheduleDraftUpdate(obj.id, { decision: opt, reasoning: rr });
+                                      roomAction("SUGGESTION", { objectionId: obj.id, decision: opt, reasoning: rr }).catch(() => {});
+                                      return;
+                                    }
+
                                     applyDecisionHybrid(obj, opt, rr);
+                                    if (mpEnabled && isJudge) {
+                                      roomAction("JUDGE_DECISION", { objectionId: obj.id, decision: opt, reasoning: rr, effects: obj?.effects || obj?.effect || null }).catch(() => {});
+                                    }
                                   }}
                                 >
                                   {opt}
@@ -1586,13 +2077,47 @@ export default function JusticeLabPlay() {
                             })}
                           </div>
 
+                          {/* ✅ MULTI: suggestions des autres rôles */}
+                          {mpEnabled && isJudge && Array.isArray(roomState?.suggestions) && roomState.suggestions.some((s) => String(s.objectionId) === String(obj.id)) && (
+                            <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Suggestions des autres rôles</div>
+                              <div className="mt-2 space-y-2">
+                                {roomState.suggestions
+                                  .filter((s) => String(s.objectionId) === String(obj.id))
+                                  .slice(0, 4)
+                                  .map((s, idx) => (
+                                    <button
+                                      key={`${s.participantId || "p"}-${idx}`}
+                                      type="button"
+                                      className="w-full text-left rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition p-3"
+                                      onClick={() => {
+                                        const rr = String(s.reasoning || "");
+                                        applyDecisionHybrid(obj, String(s.decision || ""), rr);
+                                        roomAction("JUDGE_DECISION", { objectionId: obj.id, decision: String(s.decision || ""), reasoning: rr, effects: obj?.effects || obj?.effect || null }).catch(() => {});
+                                      }}
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="text-xs text-slate-200 font-semibold">{String(s.role || "Rôle")}</div>
+                                        <div className="text-xs text-emerald-200">{String(s.decision || "")}</div>
+                                      </div>
+                                      <div className="mt-1 text-xs text-slate-300 line-clamp-3">{String(s.reasoning || "")}</div>
+                                    </button>
+                                  ))}
+                              </div>
+                            </div>
+                          )}
+
                           <div className="mt-3">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-[11px] text-slate-400">
                                 Motivation (2–5 phrases). {isEditing ? "✍️ édition" : "🔒 verrouillé"}
                               </div>
 
-                              {!isEditing ? (
+                              {(mpEnabled && !isJudge) ? (
+                                <span className="text-[11px] text-slate-400">
+                                  Proposition (autosync) — tu peux suggérer une décision + motivation.
+                                </span>
+                              ) : (!isEditing ? (
                                 <button
                                   type="button"
                                   className="text-[11px] px-2 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition"
@@ -1610,8 +2135,12 @@ export default function JusticeLabPlay() {
                                     className="text-[11px] px-2 py-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/15 transition text-emerald-100"
                                     onClick={() => {
                                       const val = (draftReasoningById[obj.id] ?? current?.reasoning ?? "").trim();
-                                      const chosen = (current?.decision || "").trim() || "Demander précision";
+                                      const chosen = ((current?.decision || "").trim() || "Demander précision");
+
                                       applyDecisionHybrid(obj, chosen, val);
+                                      if (mpEnabled && isJudge) {
+                                        roomAction("JUDGE_DECISION", { objectionId: obj.id, decision: chosen, reasoning: val, effects: obj?.effects || obj?.effect || null }).catch(() => {});
+                                      }
                                       setEditReasoningById((mm) => ({ ...(mm || {}), [obj.id]: false }));
                                     }}
                                   >
@@ -1632,21 +2161,37 @@ export default function JusticeLabPlay() {
                                     Annuler
                                   </button>
                                 </div>
-                              )}
+                              ))}
                             </div>
 
                             <textarea
                               value={
-                                isEditing
-                                  ? (draftReasoningById[obj.id] ?? current?.reasoning ?? "")
-                                  : (current?.reasoning || "")
+                                (mpEnabled && !isJudge)
+                                  ? (draftReasoningById[obj.id] ?? "")
+                                  : (isEditing
+                                      ? (draftReasoningById[obj.id] ?? current?.reasoning ?? "")
+                                      : (current?.reasoning || ""))
                               }
                               onChange={(e) => {
+                                // MULTI: non-juge peut saisir directement (autosync)
+                                if (mpEnabled && !isJudge) {
+                                  const v = e.target.value;
+                                  setDraftReasoningById((mm) => ({ ...(mm || {}), [obj.id]: v }));
+                                  const choice = suggestChoiceById[obj.id] || "";
+                                  scheduleDraftUpdate(obj.id, { decision: choice, reasoning: v });
+                                  return;
+                                }
                                 if (!isEditing) return;
-                                setDraftReasoningById((mm) => ({ ...(mm || {}), [obj.id]: e.target.value }));
+                                const v = e.target.value;
+                                setDraftReasoningById((mm) => ({ ...(mm || {}), [obj.id]: v }));
+                                if (mpEnabled && isJudge) {
+                                  // le juge en édition garde un draft partagé (utile si déconnexion)
+                                  const chosen = (current?.decision || "").trim() || "Demander précision";
+                                  scheduleDraftUpdate(obj.id, { decision: chosen, reasoning: v });
+                                }
                               }}
                               rows={3}
-                              disabled={!isEditing}
+                              disabled={!(isEditing || (mpEnabled && !isJudge))}
                               className={`mt-2 w-full rounded-xl border px-3 py-2 text-sm text-slate-100 outline-none ${
                                 isEditing
                                   ? "border-emerald-500/30 bg-slate-950/70 focus:border-emerald-400"
