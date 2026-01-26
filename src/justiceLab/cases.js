@@ -1544,7 +1544,16 @@ export async function generateCaseHybrid({
 /* =========================
    IA FULL: génère un dossier complet par domaine (fallback local si échec)
 ========================= */
-export async function generateCaseAIByDomain({ domaine = "Pénal", level = "Intermédiaire", seed = undefined, apiBase, timeoutMs = 20000, lang = "fr" } = {}) {
+export async function generateCaseAIByDomain({
+  domaine = "Pénal",
+  level = "Intermédiaire",
+  seed = undefined,
+  // ✅ contenu libre saisi par l'utilisateur (doit influencer le dossier)
+  prompt = "",
+  apiBase,
+  timeoutMs = 20000,
+  lang = "fr",
+} = {}) {
   const base = getApiBase(apiBase);
   const url = `${base}/justice-lab/generate-case`;
 
@@ -1552,7 +1561,15 @@ export async function generateCaseAIByDomain({ domaine = "Pénal", level = "Inte
 
   // ✅ seed auto unique si absent
   const theSeed = seed ?? `AI:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
-  const payload = { mode: "full", domaine: dom, level, seed: String(theSeed), lang };
+  const payload = {
+    mode: "full",
+    domaine: dom,
+    level,
+    seed: String(theSeed),
+    lang,
+    // ✅ envoyé au backend (s'il est présent)
+    prompt: String(prompt || "").trim() || undefined,
+  };
 
   try {
     // ✅ apiFetch ajoute automatiquement Authorization (Bearer token) + retries + timeout
@@ -1596,9 +1613,14 @@ export async function importCaseFromDocumentText({
   ai = true,
   apiBase,
   lang = "fr",
+  documentTitleHint = "",
+  resumeHint = "",
+  structuredSummary = null,
 } = {}) {
   const text = String(documentText || "").trim();
-  const textShort = text.replace(/\s+/g, " ").slice(0, 9000);
+  // ⚡️ On travaille sur un résumé court (déjà structuré par analyse-service)
+  // -> on limite à ~4k pour accélérer les prompts backend.
+  const textShort = text.replace(/\s+/g, " ").slice(0, 4200);
 
   const inferredSlug = domain ? slugDomain(domain) : inferDomainFromPrompt(text);
   const inferredLabel = normalizeDomainLabel(inferredSlug);
@@ -1609,13 +1631,16 @@ export async function importCaseFromDocumentText({
     const base = getApiBase(apiBase);
     const url = `${base}/justice-lab/generate-case`;
     const payload = {
-      mode: "from_document",
+      mode: "from_summary",
       domaine: inferredLabel,
       level,
       seed: String(theSeed),
       lang,
       filename,
-      documentText: textShort,
+      summaryText: textShort,
+      documentTitleHint: String(documentTitleHint || "").slice(0, 220),
+      resumeHint: String(resumeHint || "").slice(0, 600),
+      structuredSummary,
     };
 
     const res = await apiFetch(url, { method: "POST", body: JSON.stringify(payload) }, { timeoutMs: 45000, retries: 1 });
@@ -1624,9 +1649,10 @@ export async function importCaseFromDocumentText({
       const caseData = await generateCaseAIByDomain({ domaine: inferredLabel, level, seed: String(theSeed), apiBase, timeoutMs: 25000, lang });
       const merged = {
         ...caseData,
-        resume: `📄 Import (${filename}) — extrait: ${textShort}\n\n${caseData.resume || ""}`.trim(),
-        summary: `📄 Import (${filename}) — extrait: ${textShort}`.trim(),
-        meta: { ...(caseData.meta || {}), source: "import", inferredDomain: inferredSlug, filename, excerpt: textShort },
+        titre: documentTitleHint || caseData.titre,
+        resume: (resumeHint || caseData.resume || `📄 Import (${filename})`).trim(),
+        summary: (resumeHint || `📄 Import (${filename})`).trim(),
+        meta: { ...(caseData.meta || {}), source: "import", inferredDomain: inferredSlug, filename, summaryUsed: true },
       };
       saveCaseToCache(merged);
       return toUiCase(merged);
@@ -1637,7 +1663,13 @@ export async function importCaseFromDocumentText({
     if (!raw || typeof raw !== "object") throw new Error("BAD_CASEDATA");
 
     const hydrated = hydrateCaseData(raw, { domaine: inferredLabel, level, seed: payload.seed });
-    hydrated.meta = { ...(hydrated.meta || {}), source: "import", inferredDomain: inferredSlug, filename, excerpt: textShort };
+    hydrated.meta = {
+      ...(hydrated.meta || {}),
+      source: "import",
+      inferredDomain: inferredSlug,
+      filename,
+      summaryUsed: true,
+    };
     saveCaseToCache(hydrated);
     return toUiCase(hydrated);
   }
@@ -1909,21 +1941,4 @@ function buildBaseCases24() {
   );
 }
 
-function ensureUniqueCaseIds(list) {
-  const seen = new Set();
-  return (list || []).map((c, idx) => {
-    const id = c?.id || c?.caseId;
-    if (!id) return c;
-    if (!seen.has(id)) {
-      seen.add(id);
-      return c;
-    }
-    // Collision improbable (hash) mais on sécurise : on suffixe de façon stable
-    const patchedId = `${id}-${idx + 1}`;
-    const out = { ...c, id: patchedId, caseId: patchedId };
-    seen.add(patchedId);
-    return out;
-  });
-}
-
-export const CASES = ensureUniqueCaseIds(buildBaseCases24());
+export const CASES = buildBaseCases24();

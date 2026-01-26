@@ -916,6 +916,56 @@ export function applyAudienceDecision(run, payload) {
 
   if (effects && typeof effects === "object") {
     applyEffectsByDecision(next, effects, decision);
+  // ✅ Garantir plusieurs objections à trancher (jusqu’à 10) pour enrichir l’étape AUDIENCE.
+  // Objectif: éviter les audiences “trop courtes” et offrir plusieurs décisions procédurales.
+  if (merged.length < 10) {
+    const extra = [
+      {
+        by: "Avocat Demandeur",
+        title: "Demande d’expertise",
+        statement:
+          "La partie demanderesse sollicite une expertise (technique/financière) et propose les points à expertiser. Le juge doit apprécier l’utilité, le coût, et les délais.",
+      },
+      {
+        by: "Avocat Défendeur",
+        title: "Demande d’audition de témoin",
+        statement:
+          "La défense sollicite l’audition d’un témoin clé. Le juge doit vérifier la pertinence, le contradictoire, et fixer les modalités (convocation, calendrier).",
+      },
+      {
+        by: "Procureur",
+        title: "Incident sur l’ordre public",
+        statement:
+          "Le ministère public soulève un point d’ordre public (compétence, ordre public économique, protection des mineurs, etc.) nécessitant une clarification avant le fond.",
+      },
+      {
+        by: "Greffier",
+        title: "Demande de jonction / disjonction",
+        statement:
+          "Une partie sollicite la jonction (ou disjonction) d’instances connexes. Le juge doit motiver selon la bonne administration de la justice et la cohérence du dossier.",
+      },
+      {
+        by: "Avocat Demandeur",
+        title: "Demande de mesures provisoires",
+        statement:
+          "Une partie sollicite une mesure provisoire/conservatoire (selon la matière) pour éviter un préjudice imminent. Le juge doit encadrer strictement et motiver.",
+      },
+    ];
+
+    for (const e of extra) {
+      if (merged.length >= 10) break;
+      const n = merged.length + 1;
+      merged.push({
+        id: safeStr(`OBJ_STD_EXTRA_${n}`, 32),
+        by: safeStr(normalizeRoleLabel(e.by), 24),
+        title: safeStr(e.title, 80),
+        statement: safeStr(e.statement, 600),
+        options: ["Accueillir", "Rejeter", "Demander précision"],
+        effects: null,
+      });
+    }
+  }
+
   }
 
   pushAudit(next, {
