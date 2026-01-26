@@ -226,6 +226,68 @@ function normalizePartyValue(v) {
   }
   return { title: String(v), sub: "" };
 }
+function dedupeRepeats(text) {
+  const t = String(text || "").trim();
+  if (!t) return "";
+  // Normalize whitespace
+  const norm = t.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/[ \t]+/g, " ").trim();
+
+  // 1) Remove consecutive duplicate paragraphs
+  const paras = norm.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const out = [];
+  for (const p of paras) {
+    const last = out[out.length - 1];
+    if (last && last === p) continue;
+    out.push(p);
+  }
+  let joined = out.join("\n\n").trim();
+
+  // 2) Remove obvious "A + A" duplication (same second half)
+  // Only if it's a near exact half repeat
+  const half = Math.floor(joined.length / 2);
+  if (joined.length > 200) {
+    const a = joined.slice(0, half).trim();
+    const b = joined.slice(half).trim();
+    if (a && b && (a === b || b.startsWith(a.slice(0, Math.min(200, a.length))))) {
+      // keep the longer coherent part (usually a)
+      joined = a.length >= b.length ? a : b;
+    }
+  }
+
+  return joined;
+}
+
+function getCaseSummaryOnce(caseData) {
+  // Prefer explicit fields, but always dedupe
+  const raw =
+    caseData?.resume ||
+    caseData?.summary ||
+    caseData?.description ||
+    "";
+  return dedupeRepeats(raw);
+}
+
+function getCaseFactsFromData(caseData) {
+  // If backend provides facts arrays, use them
+  const candidates = [
+    caseData?.faits,
+    caseData?.faitsEssentiels,
+    caseData?.facts,
+    caseData?.keyFacts,
+  ];
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.filter(Boolean).length) return c.filter(Boolean).slice(0, 10);
+  }
+  // Fallback: derive 6 sentences from summary
+  const s = getCaseSummaryOnce(caseData);
+  if (!s) return [];
+  const sentences = s
+    .split(/(?<=[\.!?])\s+/)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 20);
+  return sentences.slice(0, 6);
+}
+
 
 /** ========== ✅ Audit helper compatible engine ========== */
 function pushAuditLocal(runObj, evt) {
@@ -1019,14 +1081,7 @@ export default function JusticeLabPlay() {
               ) : null}
             </div>
             <h1 className="text-2xl font-bold mt-2">{caseData.titre}</h1>
-              {caseData?.resume || caseData?.summary ? (
-                <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-                  <div className="text-xs font-semibold text-slate-200">Résumé du dossier</div>
-                  <div className="mt-1 text-sm text-slate-300 whitespace-pre-wrap">{caseData.resume || caseData.summary}</div>
-                </div>
-              ) : null}
-
-            <p className="text-sm text-slate-300 mt-1">{caseData.resume}</p>
+            <p className="text-sm text-slate-300 mt-1">{getCaseSummaryOnce(caseData)}</p>
 
             {/* ✅ Greffier inline */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1193,7 +1248,16 @@ export default function JusticeLabPlay() {
             <div className="grid gap-4 md:grid-cols-2">
               <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <h2 className="text-sm font-semibold text-slate-100">📌 Faits & parties</h2>
-                <p className="text-sm text-slate-300 mt-2">{caseData.resume}</p>
+                
+                {getCaseFactsFromData(caseData)?.length ? (
+                  <ul className="mt-2 text-sm text-slate-300 list-disc pl-5 space-y-1">
+                    {getCaseFactsFromData(caseData).map((f, i) => (
+                      <li key={`fact-${i}`}>{f}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-slate-400 mt-2">Aucun fait disponible.</p>
+                )}
 
                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
                   {Object.entries(caseData.parties || {}).map(([k, v]) => {
