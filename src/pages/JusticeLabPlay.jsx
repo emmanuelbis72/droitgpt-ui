@@ -614,7 +614,7 @@ export default function JusticeLabPlay() {
     if (audienceScene?.objections?.length) return;
 
     // --- progress bar : démarre immédiatement, 15s minimum ---
-    const MIN_MS = 15000;
+    const MIN_MS = 20000;
     const startAt = Date.now();
     setAudienceLoadProgress(0);
     if (audienceProgressTimerRef.current) {

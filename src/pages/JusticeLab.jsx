@@ -3,13 +3,16 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   CASES,
-  generateCase,
+  generateCase, // (laissé pour compat si utilisé ailleurs / futur)
   generateCaseAIByDomain,
   importCaseFromDocumentText,
   listGeneratedCases,
 } from "../justiceLab/cases";
 
 const MAX_DYNAMIC_VISIBLE = 24;
+
+// ✅ Base Render analyse par défaut (si VITE_ANALYSE_BASE absent)
+const DEFAULT_ANALYSE_BASE = "https://droitgpt-analysepdf.onrender.com";
 
 function formatDomainLabel(d) {
   const map = {
@@ -53,21 +56,28 @@ function getApiBase() {
   return String(base).replace(/\/$/, "");
 }
 
-// ✅ analyse-service Render (fallback) — utilisé pour résumer rapidement les PDF/DOCX
-const DEFAULT_ANALYSE_BASE = "https://droitgpt-analysepdf.onrender.com";
-
 function getAnalyseBase() {
-  // Priorité: variable d'env. Sinon: service Render officiel.
+  /**
+   * ✅ FIX CRITIQUE:
+   * - si VITE_ANALYSE_BASE est défini => on l’utilise
+   * - sinon => on force le service Render officiel (DEFAULT_ANALYSE_BASE)
+   * (évite les 404 si Vercel ne charge pas les envs)
+   */
   const base =
-    (typeof import.meta !== "undefined" && (import.meta.env?.VITE_ANALYSE_BASE || import.meta.env?.VITE_ANALYSE_URL)) ||
+    (typeof import.meta !== "undefined" &&
+      (import.meta.env?.VITE_ANALYSE_BASE || import.meta.env?.VITE_ANALYSE_URL)) ||
     "";
-  const resolved = base && String(base).trim() ? base : DEFAULT_ANALYSE_BASE;
+
+  const resolved = base && String(base).trim() !== "" ? base : DEFAULT_ANALYSE_BASE;
   return String(resolved).replace(/\/$/, "");
 }
 
 export default function JusticeLab() {
   const navigate = useNavigate();
   const fileRef = useRef(null);
+
+  // ✅ AbortController import (évite "signal is aborted without reason")
+  const importAbortRef = useRef(null);
 
   const baseCases = Array.isArray(CASES) ? CASES : [];
 
@@ -90,7 +100,6 @@ export default function JusticeLab() {
   // Import PDF
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
-  const [importPreview, setImportPreview] = useState(null); // { title, summary }
 
   // Mode Examen
   const [examMode, setExamMode] = useState(() => {
@@ -133,6 +142,7 @@ export default function JusticeLab() {
     return [...(dynamicCases || []), ...(baseCases || [])];
   }, [dynamicCases, baseCases]);
 
+  // ✅ FIX: enlever doublon -> plus de warning keys React
   const domains = useMemo(() => {
     return [
       "",
@@ -163,7 +173,8 @@ export default function JusticeLab() {
     return allCases
       .filter((c) => {
         const domOk = filterDomain === "all" ? true : c?.domain === filterDomain;
-        const lvlOk = filterLevel === "all" ? true : (c?.level || "débutant") === filterLevel;
+        const lvlOk =
+          filterLevel === "all" ? true : (c?.level || "débutant") === filterLevel;
 
         const text = [
           c?.title,
@@ -196,7 +207,7 @@ export default function JusticeLab() {
     setCreating(true);
 
     // ✅ progress bar : démarre immédiatement (12s minimum)
-    const MIN_MS = 12000;
+    const MIN_MS = 20000;
     const startAt = Date.now();
     setCreateProgress(0);
     if (createProgressTimerRef.current) {
@@ -215,14 +226,43 @@ export default function JusticeLab() {
       // Domaine: si "Auto", on infère grossièrement depuis le texte (fallback sûr)
       const inferDomainFromPrompt = (text) => {
         const t = String(text || "").toLowerCase();
-        if (t.includes("parcelle") || t.includes("terrain") || t.includes("concession") || t.includes("titre foncier")) return "foncier";
-        if (t.includes("licenci") || t.includes("salaire") || t.includes("contrat de travail") || t.includes("employ")) return "travail";
-        if (t.includes("societ") || t.includes("ohada") || t.includes("commerce") || t.includes("registre") || t.includes("rc")) return "ohada";
-        if (t.includes("impot") || t.includes("tax") || t.includes("dgi") || t.includes("fiscal")) return "fiscal";
-        if (t.includes("douane") || t.includes("dgda") || t.includes("déclaration") || t.includes("import")) return "douanier";
-        if (t.includes("minier") || t.includes("cobalt") || t.includes("cuivre") || t.includes("permis")) return "minier";
-        if (t.includes("divorce") || t.includes("succession") || t.includes("mariage") || t.includes("pension")) return "famille";
-        if (t.includes("accident") || t.includes("dommages") || t.includes("responsabilit")) return "civil";
+        if (
+          t.includes("parcelle") ||
+          t.includes("terrain") ||
+          t.includes("concession") ||
+          t.includes("titre foncier")
+        )
+          return "foncier";
+        if (
+          t.includes("licenci") ||
+          t.includes("salaire") ||
+          t.includes("contrat de travail") ||
+          t.includes("employ")
+        )
+          return "travail";
+        if (
+          t.includes("societ") ||
+          t.includes("ohada") ||
+          t.includes("commerce") ||
+          t.includes("registre") ||
+          t.includes("rc")
+        )
+          return "ohada";
+        if (t.includes("impot") || t.includes("tax") || t.includes("dgi") || t.includes("fiscal"))
+          return "fiscal";
+        if (
+          t.includes("douane") ||
+          t.includes("dgda") ||
+          t.includes("déclaration") ||
+          t.includes("import")
+        )
+          return "douanier";
+        if (t.includes("minier") || t.includes("cobalt") || t.includes("cuivre") || t.includes("permis"))
+          return "minier";
+        if (t.includes("divorce") || t.includes("succession") || t.includes("mariage") || t.includes("pension"))
+          return "famille";
+        if (t.includes("accident") || t.includes("dommages") || t.includes("responsabilit"))
+          return "civil";
         return "penal";
       };
 
@@ -232,13 +272,20 @@ export default function JusticeLab() {
       // ✅ génération via backend (dossier unique + difficulté choisie)
       const newCase = await generateCaseAIByDomain({
         domaine: domaineLabel,
-        level: selectedLevel === "débutant" ? "Débutant" : selectedLevel === "avancé" ? "Avancé" : "Intermédiaire",
+        level:
+          selectedLevel === "débutant"
+            ? "Débutant"
+            : selectedLevel === "avancé"
+            ? "Avancé"
+            : "Intermédiaire",
         apiBase: getApiBase(),
         timeoutMs: 25000,
         lang: "fr",
+        prompt,
       });
 
-      if (!newCase?.caseId) throw new Error("Le backend a renvoyé un dossier invalide (caseId manquant)." );
+      if (!newCase?.caseId)
+        throw new Error("Le backend a renvoyé un dossier invalide (caseId manquant).");
 
       // Rafraîchit le cache IA visible
       const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
@@ -258,7 +305,8 @@ export default function JusticeLab() {
 
       openCase(newCase.caseId);
     } catch (e) {
-      setCreateError(e?.message || "Erreur lors de la génération du dossier (backend)." );
+      setCreateError(e?.message || "Erreur lors de la génération du dossier (backend).");
+      setCreateProgress(0);
     } finally {
       if (createProgressTimerRef.current) {
         clearInterval(createProgressTimerRef.current);
@@ -268,13 +316,17 @@ export default function JusticeLab() {
     }
   }
 
-  // ✅ Import PDF (version stable sans dépendances lourdes)
-  // - On crée un “dossier importé” (source: import) + prompt basé sur le nom du fichier
-  // - Optionnel: si tu ajoutes plus tard un endpoint backend d’extraction PDF, on pourra l’utiliser
+  // ✅ Import dossier réel (PDF/DOCX)
   async function handleImportPdf(file) {
     setImportError("");
-    setImportPreview(null);
     if (!file) return;
+
+    // Annule l’import précédent si l’utilisateur relance (évite abort “sans raison”)
+    try {
+      if (importAbortRef.current) importAbortRef.current.abort();
+    } catch {}
+    importAbortRef.current = new AbortController();
+    const { signal } = importAbortRef.current;
 
     const ext = String(file.name || "").toLowerCase();
     const isPdf = ext.endsWith(".pdf");
@@ -288,7 +340,7 @@ export default function JusticeLab() {
     setImporting(true);
 
     // ✅ progress bar : démarre immédiatement (12s minimum)
-    const MIN_MS = 12000;
+    const MIN_MS = 20000;
     const startAt = Date.now();
     setImportProgress(0);
     if (importProgressTimerRef.current) {
@@ -302,39 +354,46 @@ export default function JusticeLab() {
     }, 120);
 
     try {
-      // 1) Résumé structuré côté analyse-service (léger)
+      // 1) Extraction (analyse-service)
       const analyseBase = getAnalyseBase();
+
       const candidates = [
-        `${analyseBase}/analyse/extract-summary`,
-        `${analyseBase}/extract-summary`,
-        `${analyseBase}/analyse-document/extract-summary`,
+        `${analyseBase}/analyse/extract`,
+        `${analyseBase}/extract`,
+        `${analyseBase}/analyse-document/extract`,
       ];
 
-      async function tryExtractSummary(url) {
-        const fd = new FormData();
-        fd.append("file", file);
+      async function tryExtract(url) {
+  // ✅ nouveau FormData pour chaque tentative (body consommable)
+  const fd = new FormData();
+  fd.append("file", file);
 
-        // timeout client (évite blocages / HMR)
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort("timeout"), 35000);
-        const r = await fetch(url, { method: "POST", body: fd, signal: controller.signal });
-        clearTimeout(t);
+  // ✅ timeout dur (sinon progress reste bloqué si service ne répond pas)
+  const TIMEOUT_MS = 45000;
+  const fetchPromise = fetch(url, { method: "POST", body: fd, signal });
 
-        if (!r.ok) {
-          const txt = await r.text().catch(() => "");
-          const err = new Error(`EXTRACT_HTTP_${r.status}: ${txt.slice(0, 200)}`);
-          err.status = r.status;
-          err.body = txt;
-          throw err;
-        }
-        return r.json();
-      }
+  const r = await Promise.race([
+    fetchPromise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`EXTRACT_TIMEOUT_${TIMEOUT_MS}`)), TIMEOUT_MS)
+    ),
+  ]);
+
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    const err = new Error(`EXTRACT_HTTP_${r.status}: ${txt.slice(0, 200)}`);
+    err.status = r.status;
+    err.body = txt;
+    throw err;
+  }
+  return r.json();
+}
 
       let extracted = null;
       let lastErr = null;
       for (const url of candidates) {
         try {
-          extracted = await tryExtractSummary(url);
+          extracted = await tryExtract(url);
           lastErr = null;
           break;
         } catch (e) {
@@ -343,56 +402,74 @@ export default function JusticeLab() {
       }
       if (!extracted) throw lastErr || new Error("EXTRACT_FAILED");
 
-      const summaryText = extracted?.summaryText || extracted?.documentText || "";
-      const titleHint = extracted?.title || extracted?.documentTitle || "";
-      const resumeHint = extracted?.summary || extracted?.resume || "";
-      const structured = extracted?.structuredSummary || extracted?.structured || null;
-
-      if (!summaryText || String(summaryText).trim().length < 80) {
-        throw new Error("Résumé extrait trop court ou vide.");
+      const documentText = extracted?.documentText || extracted?.text || extracted?.content || extracted?.data?.documentText || "";
+      if (!documentText || String(documentText).trim().length < 20) {
+        throw new Error("Texte extrait trop court ou vide.");
       }
 
-      // 2) Génération du dossier jouable (backend indexer) à partir du résumé (pas du PDF complet)
-      const imported = await importCaseFromDocumentText({
-        documentText: summaryText,
+      // 2) Génération du dossier jouable (backend JusticeLab)
+let imported = null;
+
+// 2) Génération du dossier jouable (backend JusticeLab) + fallback local si indisponible
+try {
+  imported = await importCaseFromDocumentText({
+        documentText,
         filename: file.name,
         domain: selectedDomain || "",
         level:
-          selectedLevel === "débutant" ? "Débutant" : selectedLevel === "avancé" ? "Avancé" : "Intermédiaire",
+          selectedLevel === "débutant"
+            ? "Débutant"
+            : selectedLevel === "avancé"
+            ? "Avancé"
+            : "Intermédiaire",
         apiBase: getApiBase(),
         lang: "fr",
-        documentTitleHint: titleHint,
-        resumeHint,
-        structuredSummary: structured,
       });
+} catch (err) {
+  // fallback local: construit un dossier jouable uniquement depuis le texte extrait
+  imported = await importCaseFromDocumentText({
+    documentText,
+    filename: file.name,
+    domain: selectedDomain || "",
+    level:
+      selectedLevel === "débutant"
+        ? "Débutant"
+        : selectedLevel === "avancé"
+        ? "Avancé"
+        : "Intermédiaire",
+    ai: false,
+    apiBase: getApiBase(),
+    lang: "fr",
+  });
+}
 
-      // ✅ garantit 12s minimum (UX)
+
       const elapsed = Date.now() - startAt;
       const remain = Math.max(0, MIN_MS - elapsed);
-      if (remain) await new Promise((r) => setTimeout(r, remain));
+      if (remain) await new Promise((res) => setTimeout(res, remain));
 
+      // stop timer + force 100%
       if (importProgressTimerRef.current) {
         clearInterval(importProgressTimerRef.current);
         importProgressTimerRef.current = null;
       }
       setImportProgress(100);
 
-      // Preview UI immédiat (avant navigation)
-      setImportPreview({
-        title: imported?.titre || imported?.title || titleHint || file.name,
-        summary: imported?.resume || imported?.summary || resumeHint || "",
-      });
-
       // Rafraîchit le cache IA visible
       const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
       setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
 
       const caseId = imported?.caseId || imported?.id;
-      if (!caseId) throw new Error("Dossier importé invalide (caseId manquant)." );
+      if (!caseId) throw new Error("Dossier importé invalide (caseId manquant).");
       openCase(caseId);
     } catch (e) {
-      setImportError(e?.message || "Impossible d’importer le PDF.");
+      // ✅ Si abort: on ignore (nouveau fichier / navigation / relance)
+      if (e?.name === "AbortError") return;
+      setImportError(e?.message || "Impossible d’importer le dossier.");
+      setImportProgress(0);
     } finally {
+      importAbortRef.current = null;
+
       if (importProgressTimerRef.current) {
         clearInterval(importProgressTimerRef.current);
         importProgressTimerRef.current = null;
@@ -408,7 +485,9 @@ export default function JusticeLab() {
       <div className="border-b border-slate-800/70 bg-slate-950/70 backdrop-blur sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-5 md:px-8 py-4 flex items-center justify-between gap-3">
           <div>
-            <div className="text-[11px] tracking-[0.25em] uppercase text-slate-400">DROITGPT • JUSTICE LAB</div>
+            <div className="text-[11px] tracking-[0.25em] uppercase text-slate-400">
+              DROITGPT • JUSTICE LAB
+            </div>
             <div className="text-lg md:text-xl font-semibold">Simulateur judiciaire intelligent</div>
             <div className="text-xs text-slate-400 mt-1">Gameplay • Réalisme • Pédagogie • Évaluation</div>
 
@@ -509,7 +588,7 @@ export default function JusticeLab() {
                   {creating ? "Génération..." : "Générer un dossier"}
                 </button>
 
-                {/* ✅ Progress bar (remplissage vert animé) pendant la génération backend */}
+                {/* ✅ Progress bar pendant la génération backend */}
                 {creating ? (
                   <div className="mt-3">
                     <div className="flex items-center justify-between text-[11px] text-slate-300">
@@ -578,17 +657,6 @@ export default function JusticeLab() {
                   <div className="mt-2 text-[11px] text-slate-500">Attente backend (minimum 12s)...</div>
                 </div>
               ) : null}
-
-              {/* ✅ Aperçu du dossier généré à partir du fichier */}
-              {!importing && importPreview ? (
-                <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
-                  <div className="text-xs text-emerald-200 font-semibold">Dossier généré</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-100">{importPreview.title}</div>
-                  {importPreview.summary ? (
-                    <div className="mt-2 text-xs text-slate-200">{importPreview.summary}</div>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
 
             {/* ✅ Mode Examen */}
@@ -597,7 +665,8 @@ export default function JusticeLab() {
                 <div>
                   <div className="text-sm font-semibold">🎓 Mode Examen ENM / Magistrature</div>
                   <div className="text-xs text-slate-400 mt-1">
-                    Notation “officielle” (plus stricte). Ouvre les audiences avec <code className="text-slate-200">?mode=exam</code>.
+                    Notation “officielle” (plus stricte). Ouvre les audiences avec{" "}
+                    <code className="text-slate-200">?mode=exam</code>.
                   </div>
                 </div>
 
@@ -676,14 +745,21 @@ export default function JusticeLab() {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="text-xs text-slate-400">
-                          {formatDomainLabel(c?.domain)} • {c?.city || "—"} • {c?.jurisdiction || "—"}
+                          {formatDomainLabel(c?.domain)} • {c?.city || "—"} •{" "}
+                          {c?.jurisdiction || "—"}
                         </div>
                         <div className="mt-1 font-semibold">{c?.title || "Dossier"}</div>
-                        <div className="mt-2 text-xs text-slate-300 line-clamp-2">{c?.summary || ""}</div>
+                        <div className="mt-2 text-xs text-slate-300 line-clamp-2">
+                          {c?.summary || ""}
+                        </div>
                       </div>
 
                       <div className="flex flex-col items-end gap-2">
-                        <span className={`text-[11px] px-2 py-1 rounded-full border ${badgeForLevel(c?.level || "débutant")}`}>
+                        <span
+                          className={`text-[11px] px-2 py-1 rounded-full border ${badgeForLevel(
+                            c?.level || "débutant"
+                          )}`}
+                        >
                           {safeUpper(c?.level || "débutant")}
                         </span>
 
@@ -699,14 +775,18 @@ export default function JusticeLab() {
                       </div>
                     </div>
 
-                    <div className="mt-3 text-[11px] text-slate-400">N° {c?.caseNumber || id}</div>
+                    <div className="mt-3 text-[11px] text-slate-400">
+                      N° {c?.caseNumber || id}
+                    </div>
                   </button>
                 );
               })}
             </div>
 
             {!filteredCases.length ? (
-              <div className="mt-6 text-sm text-slate-400">Aucun dossier ne correspond aux filtres.</div>
+              <div className="mt-6 text-sm text-slate-400">
+                Aucun dossier ne correspond aux filtres.
+              </div>
             ) : null}
           </div>
         </div>
