@@ -43,6 +43,9 @@ import JusticeLabJournal from "./pages/JusticeLabJournal.jsx";
 // ✅ Redirect helper (fallback “dernier run”)
 import { readRuns } from "./justiceLab/storage.js";
 
+// ✅ Business Plan Premium (page)
+import BusinessPlanPremiumPage from "./pages/BusinessPlanPremiumPage.jsx";
+
 function JusticeLabResultsFallback() {
   try {
     const runs = readRuns();
@@ -63,6 +66,16 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+
+          {/* ✅ Business Plan Premium (protégé) */}
+          <Route
+            path="/business-plan-premium"
+            element={
+              <ProtectedRoute>
+                <BusinessPlanPremiumPage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* ✅ Admin (invisible pour les autres) */}
           <Route
@@ -149,16 +162,11 @@ function App() {
             }
           />
 
-          {/* ✅ Results (robuste) :
-              - /justice-lab/results (state-run ou fallback dernier run)
-              - /justice-lab/results/:runId (URL classique)
-          */}
+          {/* ✅ Results (robuste) */}
           <Route
             path="/justice-lab/results"
             element={
               <ProtectedRoute>
-                {/* JusticeLabResults sait lire location.state.runData / runId,
-                    sinon on redirige vers le dernier run */}
                 <JusticeLabResultsFallback />
               </ProtectedRoute>
             }
@@ -202,7 +210,7 @@ function App() {
             }
           />
 
-          {/* Académie (protégé, même si le lien est en pause côté Home) */}
+          {/* Académie (protégé) */}
           <Route
             path="/academie"
             element={

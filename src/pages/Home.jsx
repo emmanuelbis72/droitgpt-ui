@@ -61,6 +61,39 @@ export default function Home() {
         {/* Options */}
         <div className="px-6 py-8 bg-slate-950/60">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* 0) 🧾 Business Plan Premium (EN PREMIER) */}
+            <Link
+              to="/business-plan-premium"
+              className="group rounded-2xl border border-emerald-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-emerald-300 hover:bg-slate-900 transition shadow-lg shadow-emerald-500/10"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">🧾</span>
+                <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-emerald-200">
+                  Premium
+                </span>
+              </div>
+
+              <h2 className="text-lg font-semibold">
+                REDACTION BUSINESS PLAN <span className="text-xs">(professionnel)</span>
+              </h2>
+
+              <p className="text-xs text-slate-300">
+                Génération automatique de business plans complets (banque / investisseur / incubateur) en PDF ou Word.
+              </p>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  🏦 Banque
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  💼 Investisseur
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  🧠 Incubateur
+                </span>
+              </div>
+            </Link>
+
             {/* 1) Chatbot juridique */}
             <Link
               to="/chat"
