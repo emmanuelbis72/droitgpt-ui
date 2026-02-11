@@ -45,6 +45,7 @@ import { readRuns } from "./justiceLab/storage.js";
 
 // ✅ Business Plan Premium (page)
 import BusinessPlanPremiumPage from "./pages/BusinessPlanPremiumPage.jsx";
+import LicenceMemoirePage from "./pages/LicenceMemoirePage.jsx";
 
 function JusticeLabResultsFallback() {
   try {
@@ -69,10 +70,20 @@ function App() {
 
           {/* ✅ Business Plan Premium (protégé) */}
           <Route
-            path="/business-plan-premium"
+            path="/bp"
             element={
               <ProtectedRoute>
                 <BusinessPlanPremiumPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* ✅ Mémoire Licence (protégé) */}
+          <Route
+            path="/memoire"
+            element={
+              <ProtectedRoute>
+                <LicenceMemoirePage />
               </ProtectedRoute>
             }
           />

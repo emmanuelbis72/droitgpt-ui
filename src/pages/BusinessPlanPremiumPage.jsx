@@ -93,6 +93,27 @@ function buildMultiline(label, value) {
   return `- ${label} : ${v}\n`;
 }
 
+async function readResponseBodyOnce(res) {
+  // Read body only once; avoids "body stream already read" when JSON parse fails.
+  const text = await res.text().catch(() => "");
+  if (!text) return { text: "", json: null };
+  try {
+    return { text, json: JSON.parse(text) };
+  } catch {
+    return { text, json: null };
+  }
+}
+
+function extractErrorDetails(parsed) {
+  if (!parsed) return "";
+  const j = parsed.json;
+  if (j && typeof j === "object") {
+    return j.details || j.error || (j.message ? String(j.message) : "") || JSON.stringify(j);
+  }
+  return parsed.text || "";
+}
+
+
 export default function BusinessPlanPremiumPage() {
   const API_BASE = import.meta.env.VITE_BP_API_BASE || DEFAULT_API_BASE;
 
@@ -415,16 +436,12 @@ export default function BusinessPlanPremiumPage() {
         signal: controller.signal,
       });
 
-      if (!res.ok) {
-        let details = "";
-        try {
-          const j = await res.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await res.text();
-        }
-        throw new Error(details || `HTTP ${res.status}`);
-      }
+      
+if (!res.ok) {
+  const parsed = await readResponseBodyOnce(res);
+  const details = extractErrorDetails(parsed);
+  throw new Error(details || `HTTP ${res.status}`);
+}
 
       const blob = await res.blob();
       const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
@@ -498,25 +515,21 @@ export default function BusinessPlanPremiumPage() {
         signal: controller.signal,
       });
 
-      if (!res.ok) {
-        let details = "";
-        try {
-          const j = await res.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await res.text();
-        }
+      
+if (!res.ok) {
+  const parsed = await readResponseBodyOnce(res);
+  const details = extractErrorDetails(parsed);
 
-        // Cas fréquent : endpoint pas encore créé
-        if (res.status === 404) {
-          throw new Error(
-            "Le mode 'Corriger un brouillon' n’est pas encore activé côté backend (endpoint /premium/rewrite). " +
-              "Dis-moi et je te fournis le handler Express prêt-à-coller (upload + extraction + génération PDF)."
-          );
-        }
+  // Cas fréquent : endpoint pas encore créé
+  if (res.status === 404) {
+    throw new Error(
+      "Le mode 'Corriger un brouillon' n’est pas encore activé côté backend (endpoint /premium/rewrite). " +
+        "Dis-moi et je te fournis le handler Express prêt-à-coller (upload + extraction + génération PDF)."
+    );
+  }
 
-        throw new Error(details || `HTTP ${res.status}`);
-      }
+  throw new Error(details || `HTTP ${res.status}`);
+}
 
       const blob = await res.blob();
       const fname = `${safeFilename(form.companyName)}_BusinessPlan_CORRIGE_${prettyDate()}.pdf`;

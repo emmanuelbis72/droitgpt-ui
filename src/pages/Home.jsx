@@ -63,7 +63,7 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* 0) 🧾 Business Plan Premium (EN PREMIER) */}
             <Link
-              to="/business-plan-premium"
+              to="/bp"
               className="group rounded-2xl border border-emerald-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-emerald-300 hover:bg-slate-900 transition shadow-lg shadow-emerald-500/10"
             >
               <div className="flex items-center justify-between">
@@ -94,7 +94,42 @@ export default function Home() {
               </div>
             </Link>
 
-            {/* 1) Chatbot juridique */}
+            
+
+{/* 🎓 Rédaction Mémoire de Licence */}
+<Link
+  to="/memoire"
+  className="group rounded-2xl border border-fuchsia-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-fuchsia-300 hover:bg-slate-900 transition shadow-lg shadow-fuchsia-500/10"
+>
+  <div className="flex items-center justify-between">
+    <span className="text-xl">🎓</span>
+    <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-fuchsia-200">
+      Licence
+    </span>
+  </div>
+
+  <h2 className="text-lg font-semibold">
+    REDACTION MEMOIRE <span className="text-xs">(Licence)</span>
+  </h2>
+
+  <p className="text-xs text-slate-300">
+    Rédaction automatique d’un mémoire complet en PDF. Option spéciale “Droit congolais” avec sources listées.
+  </p>
+
+  <div className="flex flex-wrap gap-2 pt-1">
+    <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+      📚 Plan & chapitres
+    </span>
+    <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+      🔎 Sources
+    </span>
+    <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+      🧾 PDF
+    </span>
+  </div>
+</Link>
+
+{/* 1) Chatbot juridique */}
             <Link
               to="/chat"
               className="group rounded-2xl border border-white/10 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-emerald-400/70 hover:bg-slate-900 transition"
