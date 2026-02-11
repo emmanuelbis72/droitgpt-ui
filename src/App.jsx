@@ -6,6 +6,7 @@ import Home from "./pages/Home.jsx";
 
 import { AuthProvider } from "./auth/AuthContext.jsx";
 import ProtectedRoute from "./auth/ProtectedRoute.jsx";
+import Layout from "./components/Layout.jsx";
 
 // ✅ Admin (protégé par rôle)
 import AdminRoute from "./auth/AdminRoute.jsx";
@@ -63,6 +64,8 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
+          <Route element={<Layout />}>
+
           {/* Public */}
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
@@ -260,6 +263,7 @@ function App() {
 
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
         </Routes>
       </AuthProvider>
     </BrowserRouter>
