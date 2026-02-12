@@ -402,31 +402,67 @@ export default function BusinessPlanPremiumPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Timeout 15 min
-    const timeoutId = setTimeout(() => controller.abort(), 900000);
+    // ✅ Mode JOB (anti-timeout / anti-veille). On garde un timeout large côté client.
+    const timeoutId = setTimeout(() => controller.abort(), 1800000); // 30 min
 
     try {
       const payload = buildPayloadForGenerate();
 
-      const res = await fetch(endpointGenerate, {
+      // 1) Start JOB
+      const startRes = await fetch(`${endpointGenerate}?async=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
 
-      if (!res.ok) {
+      if (!startRes.ok) {
         let details = "";
         try {
-          const j = await res.json();
+          const j = await startRes.json();
           details = j?.details || j?.error || JSON.stringify(j);
         } catch {
-          details = await res.text();
+          details = await startRes.text();
         }
-        throw new Error(details || `HTTP ${res.status}`);
+        throw new Error(details || `HTTP ${startRes.status}`);
       }
 
-      const blob = await res.blob();
+      const started = await startRes.json();
+      const jobId = started?.jobId;
+      if (!jobId) throw new Error("JOB_ID manquant (backend ?async=1 non actif)." );
+
+      setStatusText("Génération en cours… (mode job)");
+
+      const statusUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}`;
+      const resultUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}/result`;
+
+      // 2) Poll status (léger, 4s)
+      while (true) {
+        const stRes = await fetch(statusUrl, { signal: controller.signal });
+        if (!stRes.ok) {
+          const t = await stRes.text();
+          throw new Error(t || `HTTP ${stRes.status}`);
+        }
+        const st = await stRes.json();
+        if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
+        if (st.status === "done") break;
+        await new Promise((r) => setTimeout(r, 4000));
+      }
+
+      // 3) Download PDF
+      const pdfRes = await fetch(resultUrl, { signal: controller.signal });
+      if (!pdfRes.ok) {
+        let details = "";
+        try {
+          const j = await pdfRes.json();
+          details = j?.details || j?.error || JSON.stringify(j);
+        } catch {
+          details = await pdfRes.text();
+        }
+        throw new Error(details || `HTTP ${pdfRes.status}`);
+      }
+
+      const blob = await pdfRes.blob();
       const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
       setPersistentDownload("generate", blob, fname);
 
@@ -435,7 +471,7 @@ export default function BusinessPlanPremiumPage() {
     } catch (err) {
       const msg =
         err?.name === "AbortError"
-          ? "La génération a dépassé le délai (15 min). Réessaie ou active le mode Lite."
+          ? "Opération interrompue (timeout local). Réessaie."
           : String(err?.message || err);
       setError(msg);
       setStatusText("Erreur.");
