@@ -133,36 +133,84 @@ if (elapsed >= totalSec) {
         faculty: mode === "droit_congolais" ? "Droit" : form.faculty,
       };
 
-const endpoint = `${API_BASE}/generate-academic/licence-memoire`;
-console.log("[Memoire] POST", endpoint);
+      const endpoint = `${API_BASE}/generate-academic/licence-memoire`;
+      console.log("[Memoire] POST", endpoint);
 
-// ✅ Timeout (mémoire ~70 pages peut être long). 45 minutes par défaut.
-const controller = new AbortController();
-const timeoutMs = Number(import.meta.env.VITE_ACADEMIC_TIMEOUT_MS || 45 * 60 * 1000);
-const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      // ✅ Timeout global (mémoire ~70 pages peut être long). 45 minutes par défaut.
+      const controller = new AbortController();
+      const timeoutMs = Number(import.meta.env.VITE_ACADEMIC_TIMEOUT_MS || 45 * 60 * 1000);
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
-let r;
-try {
-  r = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal: controller.signal,
-  });
-} finally {
-  window.clearTimeout(timeoutId);
-}
+      let r;
+      try {
+        // 1) Mode JOB (optionnel) — anti-veille / anti-timeout réseau.
+        // Si le backend ne supporte pas ?async=1, on retombe automatiquement sur le mode direct.
+        const startRes = await fetch(`${endpoint}?async=1`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        }).catch(() => null);
 
-if (!r.ok) {
-  const txt = await r.text().catch(() => "");
-  throw new Error(txt || `Erreur serveur (${r.status})`);
-}
+        const startCt = String(startRes?.headers?.get("content-type") || "").toLowerCase();
 
-const ct = (r.headers.get("content-type") || "").toLowerCase();
-if (!ct.includes("application/pdf")) {
-  const txt = await r.text().catch(() => "");
-  throw new Error(txt || `Réponse inattendue (Content-Type: ${ct || "inconnu"})`);
-}
+        if (startRes && startRes.ok && startCt.includes("application/json")) {
+          const started = await startRes.json().catch(() => ({}));
+          const jobId = started?.jobId;
+
+          if (jobId) {
+            // 2) Poll status
+            const statusUrl = `${endpoint}/jobs/${jobId}`;
+            const resultUrl = `${endpoint}/jobs/${jobId}/result`;
+
+            setStatus("Génération en cours… (mode job)");
+
+            while (true) {
+              const stRes = await fetch(statusUrl, { signal: controller.signal });
+              if (!stRes.ok) {
+                const t = await stRes.text().catch(() => "");
+                throw new Error(t || `Erreur job (${stRes.status})`);
+              }
+              const st = await stRes.json().catch(() => ({}));
+              if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
+              if (st.status === "done") break;
+              await new Promise((rr) => setTimeout(rr, 4000));
+            }
+
+            // 3) Download result (PDF)
+            r = await fetch(resultUrl, { signal: controller.signal });
+          } else {
+            // Pas de jobId => fallback direct
+            r = await fetch(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+              signal: controller.signal,
+            });
+          }
+        } else {
+          // startRes non supporté => fallback direct
+          r = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+
+      if (!r || !r.ok) {
+        const txt = await r?.text?.().catch(() => "");
+        throw new Error(txt || `Erreur serveur (${r?.status || "?"})`);
+      }
+
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (!ct.includes("application/pdf")) {
+        const txt = await r.text().catch(() => "");
+        throw new Error(txt || `Réponse inattendue (Content-Type: ${ct || "inconnu"})`);
+      }
 
       const hdr = r.headers.get("x-sources-used");
       if (hdr) {
