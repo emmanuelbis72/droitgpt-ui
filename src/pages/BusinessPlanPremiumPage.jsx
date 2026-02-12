@@ -213,8 +213,8 @@ export default function BusinessPlanPremiumPage() {
   }
 
   function startFakeProgress(kind = "generate") {
-    // 10 minutes fake progress (600s) that caps at 95% until backend responds
-    const DURATION_MS = 600000;
+    // 14 minutes fake progress (840s) that caps at 95% until backend responds
+    const DURATION_MS = 840000;
     const CAP = 95;
 
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
@@ -656,9 +656,6 @@ strategicPartnerships:
             </h1>
             <p className="text-slate-300 mt-2">
               Remplis simplement — le système génère un document premium (niveau banque / investisseur).
-              <span className="ml-2 text-slate-400">
-                API: <span className="font-mono">{API_BASE}</span>
-              </span>
             </p>
           </div>
 
@@ -1134,7 +1131,7 @@ strategicPartnerships:
                     {loading ? "Génération…" : "Générer & Télécharger"}
                   </button>
 
-                  {/* Progress bar (10 minutes fake progress) */}
+                  {/* Progress bar (14 minutes fake progress) */}
                   {loading ? (
                     <div className="mt-3 w-[260px] max-w-full">
                       <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
@@ -1290,7 +1287,7 @@ strategicPartnerships:
                     {loading ? "Correction…" : "Corriger & Télécharger"}
                   </button>
 
-                  {/* Progress bar (10 minutes fake progress) */}
+                  {/* Progress bar (14 minutes fake progress) */}
                   {loading ? (
                     <div className="mt-3 w-[260px] max-w-full">
                       <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">

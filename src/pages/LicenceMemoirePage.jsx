@@ -7,10 +7,6 @@ const METHODS = [
   { value: "comparative", label: "Comparative (RDC vs autres)" },
   { value: "jurisprudence", label: "Analyse de jurisprudence" },
   { value: "case_study", label: "Étude de cas" },
-  { value: "qualitative", label: "Qualitative (entretiens/observations)" },
-  { value: "quantitative", label: "Quantitative (enquête/statistiques)" },
-  { value: "mixed", label: "Mixte (qualitatif + quantitatif)" },
-  { value: "ethnography", label: "Ethnographie / terrain" },
 ];
 
 const INPUT =
@@ -33,7 +29,6 @@ const [mode, setMode] = useState("standard"); // standard | droit_congolais
     university: "",
     faculty: "",
     department: "",
-    discipline: "",
     academicYear: "",
     problemStatement: "",
     objectives: "",
@@ -76,10 +71,10 @@ useEffect(() => {
       return;
     }
 
-    // ✅ Fake progress bar 30 minutes (1800s)
+    // ✅ Fake progress bar 20 minutes (1200s)
     setProgress(0);
     setProgressElapsed(0);
-    const totalSec = 1800;
+    const totalSec = 1200;
     let elapsed = 0;
 
     progressTimerRef.current = setInterval(() => {
@@ -130,15 +125,10 @@ if (elapsed >= totalSec) {
         // ✅ footnotes always on (no UI field)
         citationStyle: "footnotes",
         ...form,
-        // ✅ pages target: default 55 (>=50) to keep performance stable; backend enforces >=50
-        lengthPagesTarget: Number(import.meta.env.VITE_ACADEMIC_PAGES_TARGET || 55),
-        // ✅ always send methodology (non-law disciplines need it)
-        methodology: String(form.methodology || "").trim(),
-        // ✅ discipline: steers prompts in standard mode (ex: Sociologie)
-        discipline:
-          mode === "droit_congolais"
-            ? "Droit"
-            : String(form.discipline || form.department || form.faculty || "").trim(),
+        // ✅ fixed: always 70 pages
+        lengthPagesTarget: 70,
+        // ✅ standard mode: no methodology field sent
+        methodology: mode === "standard" ? undefined : form.methodology,
         // ✅ droit congolais: faculty implicit
         faculty: mode === "droit_congolais" ? "Droit" : form.faculty,
       };
@@ -208,7 +198,7 @@ if (!ct.includes("application/pdf")) {
     if (mode === "droit_congolais") {
       return "Droit congolais (avec sources). Les sources utilisées seront listées ci-dessous.";
     }
-    return "Standard (DeepSeek uniquement).";
+    return "Standard.";
   }, [mode]);
 
   return (
@@ -274,22 +264,21 @@ if (!ct.includes("application/pdf")) {
                 <input name="faculty" value={form.faculty} onChange={onChange} className={INPUT} placeholder="Ex: Droit" />
               </Field>
             )}
-            <Field label="Département (optionnel)">
-              <input name="department" value={form.department} onChange={onChange} className={INPUT} placeholder="Ex: Sociologie / Gestion" />
+<Field label="Département (optionnel)">
+              <input name="department" value={form.department} onChange={onChange} className={INPUT} placeholder="Ex: Droit privé" />
             </Field>
-            <Field label="Discipline / Filière (important)">
-              <input name="discipline" value={form.discipline} onChange={onChange} className={INPUT} placeholder="Ex: Sociologie" />
-            </Field>
-            <Field label="Méthodologie">
-              <select name="methodology" value={form.methodology} onChange={onChange} className={INPUT}>
-                {METHODS.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Étudiant (optionnel)">
+            {mode !== "standard" && (
+              <Field label="Méthodologie">
+                <select name="methodology" value={form.methodology} onChange={onChange} className={INPUT}>
+                  {METHODS.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+<Field label="Étudiant (optionnel)">
               <input name="studentName" value={form.studentName} onChange={onChange} className={INPUT} placeholder="Nom de l’étudiant" />
             </Field>
             <Field label="Encadreur (optionnel)">
@@ -320,12 +309,12 @@ if (!ct.includes("application/pdf")) {
 
           {/* Actions */}
 
-          {/* ✅ Progress bar 30 minutes */}
+          {/* ✅ Progress bar 20 minutes */}
           {isGenerating && (
             <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-              <div className="text-xs text-slate-300">Génération du mémoire (~30 minutes)</div>
+              <div className="text-xs text-slate-300">Génération du mémoire (~20 minutes)</div>
               <div className="mt-1 text-[11px] text-slate-400">
-                Temps restant estimé : {formatTime(Math.max(0, 1800 - progressElapsed))} / 30:00
+                Temps restant estimé : {formatTime(Math.max(0, 1200 - progressElapsed))} / 20:00
               </div>
               <div className="mt-2 h-3 w-full rounded-full bg-white/10 overflow-hidden">
                 <div className="h-full bg-emerald-400/80" style={{ width: `${progress}%`, transition: "width 1s linear" }} />
