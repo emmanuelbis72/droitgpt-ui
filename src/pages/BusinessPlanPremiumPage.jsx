@@ -138,6 +138,8 @@ export default function BusinessPlanPremiumPage() {
     competition: "",
     differentiation: "",
 
+
+    strategicPartnerships: "",
     pricing: "",
     channels: "",
     operations: "",
@@ -177,7 +179,7 @@ export default function BusinessPlanPremiumPage() {
   // Auto-save (localStorage)
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("bp_premium_form_v2");
+      const raw = localStorage.getItem("bp_premium_form_v3");
       if (raw) {
         const saved = JSON.parse(raw);
         setForm((prev) => ({ ...prev, ...saved }));
@@ -189,7 +191,7 @@ export default function BusinessPlanPremiumPage() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("bp_premium_form_v2", JSON.stringify(form));
+      localStorage.setItem("bp_premium_form_v3", JSON.stringify(form));
     } catch {
       // ignore
     }
@@ -232,15 +234,16 @@ export default function BusinessPlanPremiumPage() {
             { at: 95, text: "Finalisation & export…" },
           ]
         : [
-            { at: 8, text: "Analyse du contexte…" },
-            { at: 20, text: "Executive Summary…" },
-            { at: 35, text: "Marché & concurrence…" },
-            { at: 50, text: "Modèle économique & Go-To-Market…" },
-            { at: 65, text: "Canvas / SWOT / KPIs…" },
-            { at: 78, text: "Section financière (Y1–Y5)…" },
-            { at: 88, text: "Assemblage du document…" },
-            { at: 95, text: "Finalisation & export…" },
-          ];
+{ at: 8, text: "Analyse du contexte…" },
+{ at: 20, text: "Executive Summary…" },
+{ at: 34, text: "Marché…" },
+{ at: 44, text: "Concurrence & différenciation…" },
+{ at: 54, text: "Modèle économique…" },
+{ at: 62, text: "Partenariats stratégiques…" },
+{ at: 72, text: "Go-To-Market…" },
+{ at: 82, text: "Canvas / SWOT / KPIs…" },
+{ at: 90, text: "Section financière (Y1–Y5)…" },
+{ at: 95, text: "Finalisation & export…" },          ];
 
     let i = 0;
     setStatusText(steps[0].text);
@@ -310,6 +313,7 @@ export default function BusinessPlanPremiumPage() {
     const businessModelBlock =
       `${buildMultiline("Modèle économique", form.pricing ? "Revenus via tarification ci-dessus + ventes." : "")}` +
       `${buildMultiline("Canaux", form.channels)}` +
+      `${buildMultiline("Partenariats stratégiques", form.strategicPartnerships)}` +
       `${buildMultiline("Opérations", form.operations)}`;
 
     const tractionBlock =
@@ -604,6 +608,9 @@ export default function BusinessPlanPremiumPage() {
       differentiation:
         prev.differentiation ||
         "Hygiène, équipements modernes, coachs certifiés, suivi, application/WhatsApp de coaching, offres B2B.",
+strategicPartnerships:
+  prev.strategicPartnerships ||
+  "Partenaires : fournisseurs d’équipements, nutritionnistes, entreprises (abonnements), influenceurs fitness, assurances santé, banques/IMF (financement).",
       pricing:
         prev.pricing ||
         "Abonnements mensuels + packs 3/6/12 mois, séances coaching premium, cours collectifs inclus ou add-on.",
@@ -633,7 +640,7 @@ export default function BusinessPlanPremiumPage() {
 
   function resetForm() {
     if (!confirm("Réinitialiser le formulaire ?")) return;
-    localStorage.removeItem("bp_premium_form_v2");
+    localStorage.removeItem("bp_premium_form_v3");
     window.location.reload();
   }
 
@@ -1042,6 +1049,14 @@ export default function BusinessPlanPremiumPage() {
                     disabled={loading}
                     placeholder="Ex: boutique, partenaires, réseaux sociaux, entreprises, export, etc."
                   />
+<Area
+  label="Partenariats stratégiques (optionnel)"
+  value={form.strategicPartnerships}
+  onChange={(v) => updateField("strategicPartnerships", v)}
+  disabled={loading}
+  placeholder="Ex: fournisseurs clés, distributeurs, supermarchés, institutions, banques/IMF, incubateurs, partenaires techniques…"
+/>
+
                   <Area
                     label="Opérations (production, livraison, équipe…)"
                     value={form.operations}
