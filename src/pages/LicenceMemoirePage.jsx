@@ -7,6 +7,10 @@ const METHODS = [
   { value: "comparative", label: "Comparative (RDC vs autres)" },
   { value: "jurisprudence", label: "Analyse de jurisprudence" },
   { value: "case_study", label: "Étude de cas" },
+  { value: "qualitative", label: "Qualitative (entretiens/observations)" },
+  { value: "quantitative", label: "Quantitative (enquête/statistiques)" },
+  { value: "mixed", label: "Mixte (qualitatif + quantitatif)" },
+  { value: "ethnography", label: "Ethnographie / terrain" },
 ];
 
 const INPUT =
@@ -29,6 +33,7 @@ const [mode, setMode] = useState("standard"); // standard | droit_congolais
     university: "",
     faculty: "",
     department: "",
+    discipline: "",
     academicYear: "",
     problemStatement: "",
     objectives: "",
@@ -125,92 +130,49 @@ if (elapsed >= totalSec) {
         // ✅ footnotes always on (no UI field)
         citationStyle: "footnotes",
         ...form,
-        // ✅ fixed: always 70 pages
-        lengthPagesTarget: 70,
-        // ✅ standard mode: no methodology field sent
-        methodology: mode === "standard" ? undefined : form.methodology,
+        // ✅ pages target: default 55 (>=50) to keep performance stable; backend enforces >=50
+        lengthPagesTarget: Number(import.meta.env.VITE_ACADEMIC_PAGES_TARGET || 55),
+        // ✅ always send methodology (non-law disciplines need it)
+        methodology: String(form.methodology || "").trim(),
+        // ✅ discipline: steers prompts in standard mode (ex: Sociologie)
+        discipline:
+          mode === "droit_congolais"
+            ? "Droit"
+            : String(form.discipline || form.department || form.faculty || "").trim(),
         // ✅ droit congolais: faculty implicit
         faculty: mode === "droit_congolais" ? "Droit" : form.faculty,
       };
 
-      const endpoint = `${API_BASE}/generate-academic/licence-memoire`;
-      console.log("[Memoire] POST", endpoint);
+const endpoint = `${API_BASE}/generate-academic/licence-memoire`;
+console.log("[Memoire] POST", endpoint);
 
-      // ✅ Timeout global (mémoire ~70 pages peut être long). 45 minutes par défaut.
-      const controller = new AbortController();
-      const timeoutMs = Number(import.meta.env.VITE_ACADEMIC_TIMEOUT_MS || 45 * 60 * 1000);
-      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+// ✅ Timeout (mémoire ~70 pages peut être long). 45 minutes par défaut.
+const controller = new AbortController();
+const timeoutMs = Number(import.meta.env.VITE_ACADEMIC_TIMEOUT_MS || 45 * 60 * 1000);
+const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
-      let r;
-      try {
-        // 1) Mode JOB (optionnel) — anti-veille / anti-timeout réseau.
-        // Si le backend ne supporte pas ?async=1, on retombe automatiquement sur le mode direct.
-        const startRes = await fetch(`${endpoint}?async=1`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        }).catch(() => null);
+let r;
+try {
+  r = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: controller.signal,
+  });
+} finally {
+  window.clearTimeout(timeoutId);
+}
 
-        const startCt = String(startRes?.headers?.get("content-type") || "").toLowerCase();
+if (!r.ok) {
+  const txt = await r.text().catch(() => "");
+  throw new Error(txt || `Erreur serveur (${r.status})`);
+}
 
-        if (startRes && startRes.ok && startCt.includes("application/json")) {
-          const started = await startRes.json().catch(() => ({}));
-          const jobId = started?.jobId;
-
-          if (jobId) {
-            // 2) Poll status
-            const statusUrl = `${endpoint}/jobs/${jobId}`;
-            const resultUrl = `${endpoint}/jobs/${jobId}/result`;
-
-            setStatus("Génération en cours… (mode job)");
-
-            while (true) {
-              const stRes = await fetch(statusUrl, { signal: controller.signal });
-              if (!stRes.ok) {
-                const t = await stRes.text().catch(() => "");
-                throw new Error(t || `Erreur job (${stRes.status})`);
-              }
-              const st = await stRes.json().catch(() => ({}));
-              if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
-              if (st.status === "done") break;
-              await new Promise((rr) => setTimeout(rr, 4000));
-            }
-
-            // 3) Download result (PDF)
-            r = await fetch(resultUrl, { signal: controller.signal });
-          } else {
-            // Pas de jobId => fallback direct
-            r = await fetch(endpoint, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-              signal: controller.signal,
-            });
-          }
-        } else {
-          // startRes non supporté => fallback direct
-          r = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-          });
-        }
-      } finally {
-        window.clearTimeout(timeoutId);
-      }
-
-      if (!r || !r.ok) {
-        const txt = await r?.text?.().catch(() => "");
-        throw new Error(txt || `Erreur serveur (${r?.status || "?"})`);
-      }
-
-      const ct = (r.headers.get("content-type") || "").toLowerCase();
-      if (!ct.includes("application/pdf")) {
-        const txt = await r.text().catch(() => "");
-        throw new Error(txt || `Réponse inattendue (Content-Type: ${ct || "inconnu"})`);
-      }
+const ct = (r.headers.get("content-type") || "").toLowerCase();
+if (!ct.includes("application/pdf")) {
+  const txt = await r.text().catch(() => "");
+  throw new Error(txt || `Réponse inattendue (Content-Type: ${ct || "inconnu"})`);
+}
 
       const hdr = r.headers.get("x-sources-used");
       if (hdr) {
@@ -312,21 +274,22 @@ if (elapsed >= totalSec) {
                 <input name="faculty" value={form.faculty} onChange={onChange} className={INPUT} placeholder="Ex: Droit" />
               </Field>
             )}
-<Field label="Département (optionnel)">
-              <input name="department" value={form.department} onChange={onChange} className={INPUT} placeholder="Ex: Droit privé" />
+            <Field label="Département (optionnel)">
+              <input name="department" value={form.department} onChange={onChange} className={INPUT} placeholder="Ex: Sociologie / Gestion" />
             </Field>
-            {mode !== "standard" && (
-              <Field label="Méthodologie">
-                <select name="methodology" value={form.methodology} onChange={onChange} className={INPUT}>
-                  {METHODS.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-<Field label="Étudiant (optionnel)">
+            <Field label="Discipline / Filière (important)">
+              <input name="discipline" value={form.discipline} onChange={onChange} className={INPUT} placeholder="Ex: Sociologie" />
+            </Field>
+            <Field label="Méthodologie">
+              <select name="methodology" value={form.methodology} onChange={onChange} className={INPUT}>
+                {METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Étudiant (optionnel)">
               <input name="studentName" value={form.studentName} onChange={onChange} className={INPUT} placeholder="Nom de l’étudiant" />
             </Field>
             <Field label="Encadreur (optionnel)">
