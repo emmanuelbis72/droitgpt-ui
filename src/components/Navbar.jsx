@@ -10,9 +10,12 @@ export default function Navbar() {
     () => [
       { to: "/", label: "Accueil" },
       { to: "/chat", label: "Chatbot" },
+      { to: "/generate", label: "Docs" },
       { to: "/analyse", label: "Analyse" },
       { to: "/bp", label: "Business Plan" },
       { to: "/memoire", label: "Mémoire" },
+      { to: "/justice-lab", label: "JusticeLab" },
+      { to: "/academie", label: "Académie" },
     ],
     []
   );

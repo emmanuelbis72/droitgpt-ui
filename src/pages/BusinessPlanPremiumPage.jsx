@@ -71,9 +71,9 @@ function safeFilename(name) {
     .trim()
     .replace(/[^a-zA-Z0-9._-]+/g, "_")
     .slice(0, 80);
-  };
+}
 
-  function prettyDate() {
+function prettyDate() {
   const d = new Date();
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -92,6 +92,27 @@ function buildMultiline(label, value) {
   if (!v) return "";
   return `- ${label} : ${v}\n`;
 }
+
+async function readResponseBodyOnce(res) {
+  // Read body only once; avoids "body stream already read" when JSON parse fails.
+  const text = await res.text().catch(() => "");
+  if (!text) return { text: "", json: null };
+  try {
+    return { text, json: JSON.parse(text) };
+  } catch {
+    return { text, json: null };
+  }
+}
+
+function extractErrorDetails(parsed) {
+  if (!parsed) return "";
+  const j = parsed.json;
+  if (j && typeof j === "object") {
+    return j.details || j.error || (j.message ? String(j.message) : "") || JSON.stringify(j);
+  }
+  return parsed.text || "";
+}
+
 
 export default function BusinessPlanPremiumPage() {
   const API_BASE = import.meta.env.VITE_BP_API_BASE || DEFAULT_API_BASE;
@@ -386,70 +407,152 @@ export default function BusinessPlanPremiumPage() {
   }
 
 
-  const onSubmitGenerate = async (e) => {
-    e.preventDefault();
-    setError("");
-    setSuccessHint("");
+    async function onSubmitGenerate(e) {
+      e.preventDefault();
+      setError("");
+      setSuccessHint("");
 
-    if (!String(form.companyName).trim()) return setError("Le nom de l’entreprise est requis.");
-    if (!String(form.sector).trim()) return setError("Le secteur est requis.");
-    if (!String(form.solution).trim() && !String(form.product).trim())
-      return setError("Décris au moins la solution OU le produit/service.");
+      if (!String(form.companyName).trim()) return setError("Le nom de l’entreprise est requis.");
+      if (!String(form.sector).trim()) return setError("Le secteur est requis.");
+      if (!String(form.solution).trim() && !String(form.product).trim())
+        return setError("Décris au moins la solution OU le produit/service.");
 
-    setLoading(true);
-    startFakeProgress("generate");
+      setLoading(true);
+      startFakeProgress("generate");
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    // Timeout 15 min
-    const timeoutId = setTimeout(() => controller.abort(), 900000);
+      // ✅ En local, tu peux activer l'async JOB via VITE_BP_ASYNC=1
+      const useAsync = import.meta.env.PROD || String(import.meta.env.VITE_BP_ASYNC || "") === "1";
 
-    try {
-      const payload = buildPayloadForGenerate();
+      // Timeout: 15 min en sync, 60 min en async (job + polling)
+      const timeoutId = setTimeout(() => controller.abort(), useAsync ? 3600000 : 900000);
 
-      const res = await fetch(endpointGenerate, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-      if (!res.ok) {
-        let details = "";
-        try {
-          const j = await res.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await res.text();
+      try {
+        const payload = buildPayloadForGenerate();
+
+        // --------------------------
+        // ASYNC JOB MODE (prod / dev opt-in)
+        // --------------------------
+        if (useAsync) {
+          setStatusText("Démarrage de la génération (mode asynchrone)…");
+
+          const createUrl = `${endpointGenerate}?async=1`;
+          const res = await fetch(createUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+
+          if (!res.ok) {
+            const parsed = await readResponseBodyOnce(res);
+            const details = extractErrorDetails(parsed);
+            throw new Error(details || `HTTP ${res.status}`);
+          }
+
+          const created = await res.json().catch(() => ({}));
+          const jobId = created?.jobId;
+          if (!jobId) throw new Error("JobId manquant (backend).");
+
+          const base = API_BASE.replace(/\/$/, "");
+          const statusUrl = `${base}/jobs/${jobId}/status`;
+          const downloadUrl = `${base}/jobs/${jobId}/download`;
+
+          let bump = 95;
+
+          while (true) {
+            await sleep(2000);
+
+            bump = Math.min(99, bump + 1);
+            setProgress((p) => Math.max(p, bump));
+            setStatusText("Génération en cours sur le serveur…");
+
+            const sres = await fetch(statusUrl, { signal: controller.signal });
+            if (!sres.ok) {
+              const parsed = await readResponseBodyOnce(sres);
+              const details = extractErrorDetails(parsed);
+              throw new Error(details || `Status HTTP ${sres.status}`);
+            }
+
+            const sjson = await sres.json().catch(() => ({}));
+            const st = String(sjson?.status || "");
+
+            if (st === "failed") {
+              throw new Error(String(sjson?.error || "Génération échouée."));
+            }
+
+            if (st === "done") {
+              setStatusText("Téléchargement du PDF…");
+
+              const dres = await fetch(downloadUrl, { signal: controller.signal });
+              if (!dres.ok) {
+                const parsed = await readResponseBodyOnce(dres);
+                const details = extractErrorDetails(parsed);
+                throw new Error(details || `Download HTTP ${dres.status}`);
+              }
+
+              const blob = await dres.blob();
+              const fname =
+                (sjson?.filename && String(sjson.filename)) ||
+                `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
+
+              setPersistentDownload("generate", blob, fname);
+
+              stopFakeProgress("Téléchargement prêt ✅");
+              setSuccessHint("Ton business plan a été généré et téléchargé.");
+              return;
+            }
+          }
         }
-        throw new Error(details || `HTTP ${res.status}`);
+
+        // --------------------------
+        // SYNC MODE (comportement existant)
+        // --------------------------
+        const res = await fetch(endpointGenerate, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const parsed = await readResponseBodyOnce(res);
+          const details = extractErrorDetails(parsed);
+          throw new Error(details || `HTTP ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
+        setPersistentDownload("generate", blob, fname);
+
+        stopFakeProgress("Téléchargement prêt ✅");
+        setSuccessHint("Ton business plan a été généré et téléchargé.");
+      } catch (err) {
+        const msg =
+          err?.name === "AbortError"
+            ? useAsync
+              ? "La génération a dépassé le délai (60 min). Réessaie ou active le mode Lite."
+              : "La génération a dépassé le délai (15 min). Réessaie ou active le mode Lite."
+            : String(err?.message || err);
+
+        setError(msg);
+        setStatusText("Erreur.");
+        setProgress(0);
+      } finally {
+        clearTimeout(timeoutId);
+        setLoading(false);
+        abortRef.current = null;
+        if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+        progressTimerRef.current = null;
       }
-
-      const blob = await res.blob();
-      const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
-      setPersistentDownload("generate", blob, fname);
-
-      stopFakeProgress("Téléchargement prêt ✅");
-      setSuccessHint("Ton business plan a été généré et téléchargé.");
-    } catch (err) {
-      const msg =
-        err?.name === "AbortError"
-          ? "La génération a dépassé le délai (15 min). Réessaie ou active le mode Lite."
-          : String(err?.message || err);
-      setError(msg);
-      setStatusText("Erreur.");
-      setProgress(0);
-    } finally {
-      clearTimeout(timeoutId);
-      setLoading(false);
-      abortRef.current = null;
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-      progressTimerRef.current = null;
     }
-  };
 
-  const onSubmitRewrite = async (e) => {
+
+  async function onSubmitRewrite(e) {
     e.preventDefault();
     setError("");
     setSuccessHint("");
@@ -498,25 +601,21 @@ export default function BusinessPlanPremiumPage() {
         signal: controller.signal,
       });
 
-      if (!res.ok) {
-        let details = "";
-        try {
-          const j = await res.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await res.text();
-        }
+      
+if (!res.ok) {
+  const parsed = await readResponseBodyOnce(res);
+  const details = extractErrorDetails(parsed);
 
-        // Cas fréquent : endpoint pas encore créé
-        if (res.status === 404) {
-          throw new Error(
-            "Le mode 'Corriger un brouillon' n’est pas encore activé côté backend (endpoint /premium/rewrite). " +
-              "Dis-moi et je te fournis le handler Express prêt-à-coller (upload + extraction + génération PDF)."
-          );
-        }
+  // Cas fréquent : endpoint pas encore créé
+  if (res.status === 404) {
+    throw new Error(
+      "Le mode 'Corriger un brouillon' n’est pas encore activé côté backend (endpoint /premium/rewrite). " +
+        "Dis-moi et je te fournis le handler Express prêt-à-coller (upload + extraction + génération PDF)."
+    );
+  }
 
-        throw new Error(details || `HTTP ${res.status}`);
-      }
+  throw new Error(details || `HTTP ${res.status}`);
+}
 
       const blob = await res.blob();
       const fname = `${safeFilename(form.companyName)}_BusinessPlan_CORRIGE_${prettyDate()}.pdf`;
@@ -539,7 +638,7 @@ export default function BusinessPlanPremiumPage() {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
       progressTimerRef.current = null;
     }
-  };
+  }
 
   function fillExample() {
     setForm((prev) => ({
@@ -613,9 +712,11 @@ export default function BusinessPlanPremiumPage() {
             </h1>
             <p className="text-slate-300 mt-2">
               Remplis simplement — le système génère un document premium (niveau banque / investisseur).
-              <span className="ml-2 text-slate-400">
-                API: <span className="font-mono">{API_BASE}</span>
-              </span>
+              {import.meta.env.DEV ? (
+                <span className="ml-2 text-slate-400">
+                  API: <span className="font-mono">{API_BASE}</span>
+                </span>
+              ) : null}
             </p>
           </div>
 

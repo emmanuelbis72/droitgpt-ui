@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 const AuthContext = createContext(null);
 
@@ -10,6 +17,11 @@ const STORAGE_KEY = "droitgpt_access_token";
 // GET   /auth/me        (Bearer token)               => { user }
 const AUTH_BASE_URL =
   import.meta.env.VITE_AUTH_API_URL || "https://droitgpt-indexer.onrender.com/auth";
+
+// ✅ Option : désactiver l'auth en local/dev (utile pour tester /bp sans bruit 401)
+const DISABLE_AUTH =
+  String(import.meta.env.VITE_DISABLE_AUTH || "").toLowerCase() === "1" ||
+  String(import.meta.env.VITE_DISABLE_AUTH || "").toLowerCase() === "true";
 
 async function parseError(res) {
   try {
@@ -26,9 +38,14 @@ async function parseError(res) {
 }
 
 export function AuthProvider({ children }) {
-  const [accessToken, setAccessToken] = useState(() => localStorage.getItem(STORAGE_KEY) || "");
+  const [accessToken, setAccessToken] = useState(
+    () => localStorage.getItem(STORAGE_KEY) || ""
+  );
   const [user, setUser] = useState(null);
   const [isReady, setIsReady] = useState(false);
+
+  // ✅ Anti double-fetch en DEV (React StrictMode)
+  const lastMeCheckRef = useRef({ token: "", ts: 0 });
 
   const saveToken = (token) => {
     const t = token || "";
@@ -38,17 +55,42 @@ export function AuthProvider({ children }) {
   };
 
   const refreshMe = async (token = accessToken) => {
+    if (DISABLE_AUTH) {
+      setUser(null);
+      return null;
+    }
+
     if (!token) {
       setUser(null);
       return null;
+    }
+
+    // DEV StrictMode -> évite 2 appels /me identiques dans la même seconde
+    if (import.meta.env.DEV) {
+      const now = Date.now();
+      if (
+        lastMeCheckRef.current.token === token &&
+        now - lastMeCheckRef.current.ts < 1500
+      ) {
+        return user || null;
+      }
+      lastMeCheckRef.current = { token, ts: now };
     }
 
     const res = await fetch(`${AUTH_BASE_URL}/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (!res.ok) {
+    // ✅ 401 = "pas connecté" : ne pas spammer, ne pas bloquer
+    if (res.status === 401) {
+      // Token invalide/expiré -> on nettoie pour éviter des appels futurs
       saveToken("");
+      setUser(null);
+      return null;
+    }
+
+    if (!res.ok) {
+      // Autres erreurs (500, 503, etc.) -> on ne bloque pas l'app
       setUser(null);
       return null;
     }
@@ -62,10 +104,17 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const run = async () => {
       setIsReady(false);
+
+      if (DISABLE_AUTH) {
+        setUser(null);
+        setIsReady(true);
+        return;
+      }
+
       try {
         await refreshMe(accessToken);
       } catch {
-        // backend down: user null, token conservé (le user devra réessayer)
+        // backend down: user null, token conservé (l'utilisateur réessaiera)
         setUser(null);
       } finally {
         setIsReady(true);
@@ -156,6 +205,7 @@ export function AuthProvider({ children }) {
       logout,
       refreshMe,
       AUTH_BASE_URL,
+      DISABLE_AUTH,
     }),
     [accessToken, isAuthenticated, isReady, user]
   );
