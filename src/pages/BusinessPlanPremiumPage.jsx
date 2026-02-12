@@ -93,6 +93,27 @@ function buildMultiline(label, value) {
   return `- ${label} : ${v}\n`;
 }
 
+async function readResponseBodyOnce(res) {
+  // Read body only once; avoids "body stream already read" when JSON parse fails.
+  const text = await res.text().catch(() => "");
+  if (!text) return { text: "", json: null };
+  try {
+    return { text, json: JSON.parse(text) };
+  } catch {
+    return { text, json: null };
+  }
+}
+
+function extractErrorDetails(parsed) {
+  if (!parsed) return "";
+  const j = parsed.json;
+  if (j && typeof j === "object") {
+    return j.details || j.error || (j.message ? String(j.message) : "") || JSON.stringify(j);
+  }
+  return parsed.text || "";
+}
+
+
 export default function BusinessPlanPremiumPage() {
   const API_BASE = import.meta.env.VITE_BP_API_BASE || DEFAULT_API_BASE;
 
@@ -387,91 +408,38 @@ export default function BusinessPlanPremiumPage() {
 
 
   async function onSubmitGenerate(e) {
-    e.preventDefault();
-    setError("");
-    setSuccessHint("");
+  e.preventDefault();
+  setError("");
+  setSuccessHint("");
 
-    if (!String(form.companyName).trim()) return setError("Le nom de l’entreprise est requis.");
-    if (!String(form.sector).trim()) return setError("Le secteur est requis.");
-    if (!String(form.solution).trim() && !String(form.product).trim())
-      return setError("Décris au moins la solution OU le produit/service.");
+  if (!String(form.companyName).trim()) return setError("Le nom de l’entreprise est requis.");
+  if (!String(form.sector).trim()) return setError("Le secteur est requis.");
+  if (!String(form.solution).trim() && !String(form.product).trim())
+    return setError("Décris au moins la solution OU le produit/service.");
 
-    setLoading(true);
-    startFakeProgress("generate");
+  setLoading(true);
+  startFakeProgress("generate");
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const controller = new AbortController();
+  abortRef.current = controller;
 
-    // Timeout: 15 min en sync, 60 min en async
-    const useAsync = import.meta.env.PROD || String(import.meta.env.VITE_BP_ASYNC || "") === "1";
-    const timeoutId = setTimeout(() => controller.abort(), useAsync ? 3600000 : 900000);
-try {
-      const payload = buildPayloadForGenerate();
+  // Timeout 15 min (mode sync) / 60 min (mode async)
+  const useAsync = import.meta.env.PROD; // en production: évite blocage à 95% + veille
+  const timeoutId = setTimeout(() => controller.abort(), useAsync ? 3600000 : 900000);
 
-      // ✅ Mode JOB async (évite blocage à 95% si la requête longue se coupe)
-      if (useAsync) {
-        const createUrl = `${endpointGenerate}?async=1`;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-        const r = await fetch(createUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
+  try {
+    const payload = buildPayloadForGenerate();
 
-        if (!r.ok) {
-          const parsed = await readResponseBodyOnce(r);
-          const details = extractErrorDetails(parsed);
-          throw new Error(details || `HTTP ${r.status}`);
-        }
+    // --------------------------
+    // ASYNC JOB MODE (prod)
+    // --------------------------
+    if (useAsync) {
+      setStatusText("Démarrage de la génération (mode asynchrone)…");
 
-        const created = await r.json().catch(() => ({}));
-        const jobId = created?.jobId;
-        if (!jobId) throw new Error("JobId manquant (backend).");
-
-        const base = API_BASE.replace(/\/$/, "");
-        const statusUrl = `${base}/jobs/${jobId}/status`;
-        const downloadUrl = `${base}/jobs/${jobId}/download`;
-
-        while (true) {
-          await new Promise((x) => setTimeout(x, 2000));
-
-          const sres = await fetch(statusUrl, { signal: controller.signal });
-          if (!sres.ok) {
-            const parsed = await readResponseBodyOnce(sres);
-            const details = extractErrorDetails(parsed);
-            throw new Error(details || `Status HTTP ${sres.status}`);
-          }
-
-          const sjson = await sres.json().catch(() => ({}));
-          const st = String(sjson?.status || "");
-
-          if (st === "failed") {
-            throw new Error(String(sjson?.error || "Génération échouée."));
-          }
-
-          if (st === "done") {
-            const dres = await fetch(downloadUrl, { signal: controller.signal });
-            if (!dres.ok) {
-              const parsed = await readResponseBodyOnce(dres);
-              const details = extractErrorDetails(parsed);
-              throw new Error(details || `Download HTTP ${dres.status}`);
-            }
-
-            const blob = await dres.blob();
-            const fname =
-              (sjson?.filename && String(sjson.filename)) ||
-              `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
-
-            setPersistentDownload("generate", blob, fname);
-            stopFakeProgress("Téléchargement prêt ✅");
-            setSuccessHint("Ton business plan a été généré et téléchargé.");
-            return;
-          }
-        }
-      }
-
-      const res = await fetch(endpointGenerate, {
+      const createUrl = `${endpointGenerate}?async=1`;
+      const res = await fetch(createUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -481,31 +449,117 @@ try {
       if (!res.ok) {
         const parsed = await readResponseBodyOnce(res);
         const details = extractErrorDetails(parsed);
-        throw new Error(details ||| `HTTP ${res.status}`);
+        throw new Error(details || `HTTP ${res.status}`);
       }
 
-      const blob = await res.blob();
-      const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
-      setPersistentDownload("generate", blob, fname);
+      const { jobId } = (await res.json().catch(() => ({}))) || {};
+      if (!jobId) throw new Error("JobId manquant (backend).");
 
-      stopFakeProgress("Téléchargement prêt ✅");
-      setSuccessHint("Ton business plan a été généré et téléchargé.");
-    } catch (err) {
-      const msg =
-        err?.name === "AbortError"
-          ? "La génération a dépassé le délai (15 min). Réessaie ou active le mode Lite."
-          : String(err?.message || err);
-      setError(msg);
-      setStatusText("Erreur.");
-      setProgress(0);
-    } finally {
-      clearTimeout(timeoutId);
-      setLoading(false);
-      abortRef.current = null;
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-      progressTimerRef.current = null;
+      // Stocke pour reprise simple (si refresh)
+      try {
+        localStorage.setItem("bp_last_job_generate", String(jobId));
+      } catch {
+        // ignore
+      }
+
+      const base = API_BASE.replace(/\/$/, "");
+      const statusUrl = `${base}/jobs/${jobId}/status`;
+      const downloadUrl = `${base}/jobs/${jobId}/download`;
+
+      // petit “petit pas” au-dessus de 95% pendant l’attente
+      let bump = 95;
+
+      while (true) {
+        await sleep(2000);
+
+        // bump progress 95 -> 99 doucement
+        bump = Math.min(99, bump + 1);
+        setProgress((p) => Math.max(p, bump));
+        setStatusText("Génération en cours sur le serveur…");
+
+        const sres = await fetch(statusUrl, { signal: controller.signal });
+        if (!sres.ok) {
+          const parsed = await readResponseBodyOnce(sres);
+          const details = extractErrorDetails(parsed);
+          throw new Error(details || `Status HTTP ${sres.status}`);
+        }
+
+        const sjson = await sres.json().catch(() => ({}));
+        const st = String(sjson?.status || "");
+
+        if (st === "failed") {
+          throw new Error(String(sjson?.error || "Génération échouée."));
+        }
+
+        if (st === "done") {
+          setStatusText("Téléchargement du PDF…");
+          const dres = await fetch(downloadUrl, { signal: controller.signal });
+          if (!dres.ok) {
+            const parsed = await readResponseBodyOnce(dres);
+            const details = extractErrorDetails(parsed);
+            throw new Error(details || `Download HTTP ${dres.status}`);
+          }
+
+          const blob = await dres.blob();
+          const fname =
+            (sjson?.filename && String(sjson.filename)) ||
+            `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
+
+          setPersistentDownload("generate", blob, fname);
+
+          try {
+            localStorage.removeItem("bp_last_job_generate");
+          } catch {
+            // ignore
+          }
+
+          stopFakeProgress("Téléchargement prêt ✅");
+          setSuccessHint("Ton business plan a été généré et téléchargé.");
+          return;
+        }
+      }
     }
+
+    // --------------------------
+    // SYNC (dev/local) - comportement actuel
+    // --------------------------
+    const res = await fetch(endpointGenerate, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const parsed = await readResponseBodyOnce(res);
+      const details = extractErrorDetails(parsed);
+      throw new Error(details || `HTTP ${res.status}`);
+    }
+
+    const blob = await res.blob();
+    const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
+    setPersistentDownload("generate", blob, fname);
+
+    stopFakeProgress("Téléchargement prêt ✅");
+    setSuccessHint("Ton business plan a été généré et téléchargé.");
+  } catch (err) {
+    const msg =
+      err?.name === "AbortError"
+        ? useAsync
+          ? "La génération a dépassé le délai (60 min). Réessaie ou active le mode Lite."
+          : "La génération a dépassé le délai (15 min). Réessaie ou active le mode Lite."
+        : String(err?.message || err);
+    setError(msg);
+    setStatusText("Erreur.");
+    setProgress(0);
+  } finally {
+    clearTimeout(timeoutId);
+    setLoading(false);
+    abortRef.current = null;
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    progressTimerRef.current = null;
   }
+}
 
   async function onSubmitRewrite(e) {
     e.preventDefault();
@@ -556,25 +610,21 @@ try {
         signal: controller.signal,
       });
 
-      if (!res.ok) {
-        let details = "";
-        try {
-          const j = await res.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await res.text();
-        }
+      
+if (!res.ok) {
+  const parsed = await readResponseBodyOnce(res);
+  const details = extractErrorDetails(parsed);
 
-        // Cas fréquent : endpoint pas encore créé
-        if (res.status === 404) {
-          throw new Error(
-            "Le mode 'Corriger un brouillon' n’est pas encore activé côté backend (endpoint /premium/rewrite). " +
-              "Dis-moi et je te fournis le handler Express prêt-à-coller (upload + extraction + génération PDF)."
-          );
-        }
+  // Cas fréquent : endpoint pas encore créé
+  if (res.status === 404) {
+    throw new Error(
+      "Le mode 'Corriger un brouillon' n’est pas encore activé côté backend (endpoint /premium/rewrite). " +
+        "Dis-moi et je te fournis le handler Express prêt-à-coller (upload + extraction + génération PDF)."
+    );
+  }
 
-        throw new Error(details || `HTTP ${res.status}`);
-      }
+  throw new Error(details || `HTTP ${res.status}`);
+}
 
       const blob = await res.blob();
       const fname = `${safeFilename(form.companyName)}_BusinessPlan_CORRIGE_${prettyDate()}.pdf`;
@@ -671,9 +721,11 @@ try {
             </h1>
             <p className="text-slate-300 mt-2">
               Remplis simplement — le système génère un document premium (niveau banque / investisseur).
-              <span className="ml-2 text-slate-400">
-                API: <span className="font-mono">{API_BASE}</span>
-              </span>
+              {import.meta.env.DEV ? (
+                <span className="ml-2 text-slate-400">
+                  API: <span className="font-mono">{API_BASE}</span>
+                </span>
+              ) : null}
             </p>
           </div>
 
