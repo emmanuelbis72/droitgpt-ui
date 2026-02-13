@@ -312,9 +312,9 @@ if (!ct.includes("application/pdf")) {
           {/* ✅ Progress bar 20 minutes */}
           {isGenerating && (
             <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-              <div className="text-xs text-slate-300">Génération du mémoire (~25 minutes)</div>
+              <div className="text-xs text-slate-300">Génération du mémoire (~30 minutes)</div>
               <div className="mt-1 text-[11px] text-slate-400">
-                Temps restant estimé : {formatTime(Math.max(0, 1500 - progressElapsed))} / 20:00
+                Temps restant estimé : {formatTime(Math.max(0, 1800 - progressElapsed))} / 30:00
               </div>
               <div className="mt-2 h-3 w-full rounded-full bg-white/10 overflow-hidden">
                 <div className="h-full bg-emerald-400/80" style={{ width: `${progress}%`, transition: "width 1s linear" }} />
