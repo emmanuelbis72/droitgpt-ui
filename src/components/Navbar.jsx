@@ -12,6 +12,7 @@ export default function Navbar() {
       { to: "/chat", label: "Chatbot" },
       { to: "/analyse", label: "Analyse" },
       { to: "/bp", label: "Business Plan" },
+      { to: "/ong", label: "Projets ONG" }, // ✅ NEW
       { to: "/memoire", label: "Mémoire" },
     ],
     []

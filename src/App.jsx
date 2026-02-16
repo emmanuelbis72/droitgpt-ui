@@ -48,6 +48,9 @@ import { readRuns } from "./justiceLab/storage.js";
 import BusinessPlanPremiumPage from "./pages/BusinessPlanPremiumPage.jsx";
 import LicenceMemoirePage from "./pages/LicenceMemoirePage.jsx";
 
+// ✅ NEW: ONG Premium (page)
+import NgoProjectPremiumPage from "./pages/NgoProjectPremiumPage.jsx";
+
 function JusticeLabResultsFallback() {
   try {
     const runs = readRuns();
@@ -65,204 +68,213 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route element={<Layout />}>
+            {/* Public */}
+            <Route path="/" element={<Home />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
 
-          {/* Public */}
-          <Route path="/" element={<Home />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+            {/* ✅ Business Plan Premium (protégé) */}
+            <Route
+              path="/bp"
+              element={
+                <ProtectedRoute>
+                  <BusinessPlanPremiumPage />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ✅ Business Plan Premium (protégé) */}
-          <Route
-            path="/bp"
-            element={
-              <ProtectedRoute>
-                <BusinessPlanPremiumPage />
-              </ProtectedRoute>
-            }
-          />
+            {/* ✅ ONG Premium (protégé) */}
+            <Route
+              path="/ong"
+              element={
+                <ProtectedRoute>
+                  <NgoProjectPremiumPage />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ✅ Mémoire Licence (protégé) */}
-          <Route
-            path="/memoire"
-            element={
-              <ProtectedRoute>
-                <LicenceMemoirePage />
-              </ProtectedRoute>
-            }
-          />
+            {/* ✅ Mémoire Licence (protégé) */}
+            <Route
+              path="/memoire"
+              element={
+                <ProtectedRoute>
+                  <LicenceMemoirePage />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ✅ Admin (invisible pour les autres) */}
-          <Route
-            path="/admin"
-            element={
-              <AdminRoute>
-                <Admin />
-              </AdminRoute>
-            }
-          />
+            {/* ✅ Admin (invisible pour les autres) */}
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <Admin />
+                </AdminRoute>
+              }
+            />
 
-          {/* Protected */}
-          <Route
-            path="/chat"
-            element={
-              <ProtectedRoute>
-                <ChatInterface />
-              </ProtectedRoute>
-            }
-          />
+            {/* Protected */}
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute>
+                  <ChatInterface />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/generate"
-            element={
-              <ProtectedRoute>
-                <Generate />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/generate"
+              element={
+                <ProtectedRoute>
+                  <Generate />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/analyse"
-            element={
-              <ProtectedRoute>
-                <Analyse />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/analyse"
+              element={
+                <ProtectedRoute>
+                  <Analyse />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/assistant-vocal"
-            element={
-              <ProtectedRoute>
-                <AssistantVocal />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/assistant-vocal"
+              element={
+                <ProtectedRoute>
+                  <AssistantVocal />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ⚖️ Justice Lab (protégé) */}
-          <Route
-            path="/justice-lab"
-            element={
-              <ProtectedRoute>
-                <JusticeLab />
-              </ProtectedRoute>
-            }
-          />
+            {/* ⚖️ Justice Lab (protégé) */}
+            <Route
+              path="/justice-lab"
+              element={
+                <ProtectedRoute>
+                  <JusticeLab />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/justice-lab/dashboard"
-            element={
-              <ProtectedRoute>
-                <JusticeLabDashboard />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/justice-lab/dashboard"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabDashboard />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Join / lobby screen without selecting a dossier first */}
-          <Route
-            path="/justice-lab/play"
-            element={
-              <ProtectedRoute>
-                <JusticeLabPlay />
-              </ProtectedRoute>
-            }
-          />
+            {/* Join / lobby screen without selecting a dossier first */}
+            <Route
+              path="/justice-lab/play"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabPlay />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/justice-lab/play/:caseId"
-            element={
-              <ProtectedRoute>
-                <JusticeLabPlay />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/justice-lab/play/:caseId"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabPlay />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ✅ Results (robuste) */}
-          <Route
-            path="/justice-lab/results"
-            element={
-              <ProtectedRoute>
-                <JusticeLabResultsFallback />
-              </ProtectedRoute>
-            }
-          />
+            {/* ✅ Results (robuste) */}
+            <Route
+              path="/justice-lab/results"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabResultsFallback />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/justice-lab/results/:runId"
-            element={
-              <ProtectedRoute>
-                <JusticeLabResults />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/justice-lab/results/:runId"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabResults />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ✅ Journal (audit log) */}
-          <Route
-            path="/justice-lab/journal/:runId"
-            element={
-              <ProtectedRoute>
-                <JusticeLabJournal />
-              </ProtectedRoute>
-            }
-          />
+            {/* ✅ Journal (audit log) */}
+            <Route
+              path="/justice-lab/journal/:runId"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabJournal />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ✅ Routes phases (protégées) */}
-          <Route
-            path="/justice-lab/audience"
-            element={
-              <ProtectedRoute>
-                <JusticeLabAudience />
-              </ProtectedRoute>
-            }
-          />
+            {/* ✅ Routes phases (protégées) */}
+            <Route
+              path="/justice-lab/audience"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabAudience />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/justice-lab/appeal"
-            element={
-              <ProtectedRoute>
-                <JusticeLabAppeal />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/justice-lab/appeal"
+              element={
+                <ProtectedRoute>
+                  <JusticeLabAppeal />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Académie (protégé) */}
-          <Route
-            path="/academie"
-            element={
-              <ProtectedRoute>
-                <Academie />
-              </ProtectedRoute>
-            }
-          />
+            {/* Académie (protégé) */}
+            <Route
+              path="/academie"
+              element={
+                <ProtectedRoute>
+                  <Academie />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/academie/dashboard"
-            element={
-              <ProtectedRoute>
-                <AcademieDashboard />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/academie/dashboard"
+              element={
+                <ProtectedRoute>
+                  <AcademieDashboard />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/academie/programme/:id"
-            element={
-              <ProtectedRoute>
-                <AcademieProgramme />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/academie/programme/:id"
+              element={
+                <ProtectedRoute>
+                  <AcademieProgramme />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/academie/programme/:id/lesson/:lessonId"
-            element={
-              <ProtectedRoute>
-                <AcademieLecon />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/academie/programme/:id/lesson/:lessonId"
+              element={
+                <ProtectedRoute>
+                  <AcademieLecon />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+            {/* Fallback */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </AuthProvider>
