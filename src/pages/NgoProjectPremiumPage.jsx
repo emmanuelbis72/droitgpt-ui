@@ -33,26 +33,6 @@ function clampText(v, max = 2500) {
   return s.slice(0, max);
 }
 
-
-async function readErrorBody(res) {
-  if (!res) return "";
-  try {
-    const ct = res.headers?.get?.("content-type") || "";
-    if (ct.includes("application/json")) {
-      const j = await res.json();
-      return j?.details || j?.error || JSON.stringify(j);
-    }
-  } catch (_) {
-    // ignore
-  }
-  try {
-    if (typeof res.text === "function") return await res.text();
-  } catch (_) {
-    // ignore
-  }
-  return "";
-}
-
 export default function NgoProjectPremiumPage() {
   const endpointNgo = useMemo(() => `${API_BASE}/generate-ngo-project/premium`, []);
 
