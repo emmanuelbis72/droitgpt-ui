@@ -33,6 +33,45 @@ function clampText(v, max = 2500) {
   return s.slice(0, max);
 }
 
+/**
+ * Ultra-defensive error body reader.
+ * - Never throws
+ * - Never calls .text() unless it exists
+ * - Handles JSON + plain text
+ */
+async function readErrorBody(res) {
+  try {
+    if (!res) return "NO_RESPONSE";
+    const hasText = typeof res.text === "function";
+    const hasJson = typeof res.json === "function";
+    const headersGet =
+      res.headers && typeof res.headers.get === "function" ? res.headers.get.bind(res.headers) : null;
+    const ct = headersGet ? headersGet("content-type") || "" : "";
+
+    if (ct.includes("application/json") && hasJson) {
+      try {
+        const j = await res.json();
+        return j?.details || j?.error || JSON.stringify(j);
+      } catch (_) {
+        // fallthrough to text
+      }
+    }
+
+    if (hasText) {
+      try {
+        const t = await res.text();
+        return t || "";
+      } catch (e) {
+        return String(e?.message || e);
+      }
+    }
+
+    return "NOT_A_RESPONSE";
+  } catch (e) {
+    return String(e?.message || e);
+  }
+}
+
 export default function NgoProjectPremiumPage() {
   const endpointNgo = useMemo(() => `${API_BASE}/generate-ngo-project/premium`, []);
 
@@ -76,12 +115,12 @@ export default function NgoProjectPremiumPage() {
     setProgress(1);
     setStatusText("Préparation…");
     const start = Date.now();
-    const DURATION_MS = 10 * 60 * 1000; // 10 min simulées (comme ton process Premium)
+    const DURATION_MS = 10 * 60 * 1000;
 
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     progressTimerRef.current = setInterval(() => {
       const t = Date.now() - start;
-      const p = Math.min(96, Math.floor((t / DURATION_MS) * 100)); // max 96% tant que pas fini
+      const p = Math.min(96, Math.floor((t / DURATION_MS) * 100));
       setProgress((prev) => (p > prev ? p : prev));
     }, 800);
   }
@@ -99,7 +138,6 @@ export default function NgoProjectPremiumPage() {
     lastDownloadUrlRef.current = url;
     setLastFile({ url, name: suggestedName });
 
-    // auto-download
     const a = document.createElement("a");
     a.href = url;
     a.download = suggestedName;
@@ -150,21 +188,25 @@ export default function NgoProjectPremiumPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const timeoutId = setTimeout(() => controller.abort(), 1800000); // 30 min
+    const timeoutId = setTimeout(() => controller.abort(), 1800000);
 
     try {
       const payload = buildPayload();
 
-      // 1) Start JOB
       setStatusText("Démarrage génération (mode job)…");
-      const startRes = await fetch(`${endpointNgo}?async=1`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+      let startRes;
+      try {
+        startRes = await fetch(`${endpointNgo}?async=1`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+      } catch (netErr) {
+        throw new Error(`NETWORK_ERROR: ${String(netErr?.message || netErr)}`);
+      }
 
-      if (!startRes.ok) {
+      if (!startRes?.ok) {
         let details = "";
         try {
           const j = await startRes.json();
@@ -172,10 +214,17 @@ export default function NgoProjectPremiumPage() {
         } catch {
           details = await readErrorBody(startRes);
         }
-        throw new Error(details || `HTTP ${startRes.status}`);
+        throw new Error(details || `HTTP ${startRes?.status || "?"}`);
       }
 
-      const started = await startRes.json();
+      let started;
+      try {
+        started = await startRes.json();
+      } catch {
+        const t = await readErrorBody(startRes);
+        throw new Error(t || "Réponse backend invalide (start).");
+      }
+
       const jobId = started?.jobId;
       if (!jobId) throw new Error("JOB_ID manquant (backend ?async=1 non actif).");
 
@@ -184,14 +233,26 @@ export default function NgoProjectPremiumPage() {
 
       setStatusText("Génération en cours… (mode job)");
 
-      // 2) Poll status
       while (true) {
-        const stRes = await fetch(statusUrl, { signal: controller.signal });
-        if (!stRes.ok) {
-          const t = await readErrorBody(stRes);
-          throw new Error(t || `HTTP ${stRes.status}`);
+        let stRes;
+        try {
+          stRes = await fetch(statusUrl, { signal: controller.signal });
+        } catch (netErr) {
+          throw new Error(`NETWORK_ERROR: ${String(netErr?.message || netErr)}`);
         }
-        const st = await stRes.json();
+
+        if (!stRes?.ok) {
+          const t = await readErrorBody(stRes);
+          throw new Error(t || `HTTP ${stRes?.status || "?"}`);
+        }
+
+        let st;
+        try {
+          st = await stRes.json();
+        } catch {
+          const t = await readErrorBody(stRes);
+          throw new Error(t || "Réponse backend invalide (status).");
+        }
 
         if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
         if (st.status === "rejected") throw new Error(st.error || "Job rejeté.");
@@ -200,10 +261,15 @@ export default function NgoProjectPremiumPage() {
         await new Promise((r) => setTimeout(r, 4000));
       }
 
-      // 3) Download PDF
       setStatusText("Téléchargement PDF…");
-      const pdfRes = await fetch(resultUrl, { signal: controller.signal });
-      if (!pdfRes.ok) {
+      let pdfRes;
+      try {
+        pdfRes = await fetch(resultUrl, { signal: controller.signal });
+      } catch (netErr) {
+        throw new Error(`NETWORK_ERROR: ${String(netErr?.message || netErr)}`);
+      }
+
+      if (!pdfRes?.ok) {
         let details = "";
         try {
           const j = await pdfRes.json();
@@ -211,7 +277,7 @@ export default function NgoProjectPremiumPage() {
         } catch {
           details = await readErrorBody(pdfRes);
         }
-        throw new Error(details || `HTTP ${pdfRes.status}`);
+        throw new Error(details || `HTTP ${pdfRes?.status || "?"}`);
       }
 
       const blob = await pdfRes.blob();
