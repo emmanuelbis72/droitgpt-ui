@@ -136,6 +136,24 @@ export default function NgoProjectPremiumPage() {
     };
   }
 
+  async function readErrorDetails(res) {
+    if (!res) return "";
+    try {
+      const ct = res.headers?.get?.("content-type") || "";
+      if (ct.includes("application/json")) {
+        const j = await res.json();
+        return j?.details || j?.error || JSON.stringify(j);
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      return await res.text();
+    } catch {
+      return "";
+    }
+  }
+
   async function onSubmit(e) {
     e.preventDefault();
     setError("");
@@ -165,13 +183,7 @@ export default function NgoProjectPremiumPage() {
       });
 
       if (!startRes.ok) {
-        let details = "";
-        try {
-          const j = await startRes.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await startRes.text();
-        }
+        const details = await readErrorDetails(startRes);
         throw new Error(details || `HTTP ${startRes.status}`);
       }
 
@@ -188,7 +200,12 @@ export default function NgoProjectPremiumPage() {
       while (true) {
         const stRes = await fetch(statusUrl, { signal: controller.signal });
         if (!stRes.ok) {
-          const t = await stRes.text();
+          const t = await readErrorDetails(stRes);
+          if (stRes.status === 404 && String(t).includes("JOB_NOT_FOUND")) {
+            throw new Error(
+              "JOB introuvable (serveur redémarré). Relance la génération pour obtenir un nouveau JOB."
+            );
+          }
           throw new Error(t || `HTTP ${stRes.status}`);
         }
         const st = await stRes.json();
@@ -204,13 +221,7 @@ export default function NgoProjectPremiumPage() {
       setStatusText("Téléchargement PDF…");
       const pdfRes = await fetch(resultUrl, { signal: controller.signal });
       if (!pdfRes.ok) {
-        let details = "";
-        try {
-          const j = await pdfRes.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await pdfRes.text();
-        }
+        const details = await readErrorDetails(pdfRes);
         throw new Error(details || `HTTP ${pdfRes.status}`);
       }
 
