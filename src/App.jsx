@@ -51,8 +51,8 @@ import LicenceMemoirePage from "./pages/LicenceMemoirePage.jsx";
 // ✅ NEW: ONG Premium (page)
 import NgoProjectPremiumPage from "./pages/NgoProjectPremiumPage.jsx";
 
-// 🧪 Articles scientifiques (Droit RAG + général)
-import ScientificArticlePage from "./pages/ScientificArticlePage.jsx";
+// ✅ Excel Apps (progiciels Excel)
+import ExcelAppsPage from "./pages/ExcelAppsPage.jsx";
 
 function JusticeLabResultsFallback() {
   try {
@@ -87,21 +87,22 @@ function App() {
             />
 
             {/* ✅ ONG Premium (protégé) */}
+            {/* ✅ Progiciels Excel (protégé) */}
+            <Route
+              path="/excel-apps"
+              element={
+                <ProtectedRoute>
+                  <ExcelAppsPage />
+                </ProtectedRoute>
+              }
+            />
+
+
             <Route
               path="/ong"
               element={
                 <ProtectedRoute>
                   <NgoProjectPremiumPage />
-                </ProtectedRoute>
-              }
-            />
-
-            {/* ✅ Articles scientifiques (protégé) */}
-            <Route
-              path="/articles"
-              element={
-                <ProtectedRoute>
-                  <ScientificArticlePage />
                 </ProtectedRoute>
               }
             />

@@ -129,36 +129,6 @@ export default function Home() {
   </div>
 </Link>
 
-            {/* 🧩 ONG / Fondations / Associations */}
-            <Link
-              to="/ong"
-              className="group rounded-2xl border border-cyan-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-cyan-300 hover:bg-slate-900 transition shadow-lg shadow-cyan-500/10"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xl">🌍</span>
-                <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-cyan-200">ONG</span>
-              </div>
-              <h2 className="text-lg font-semibold">Génération de projets ONG</h2>
-              <p className="text-xs text-slate-300">
-                Génère un projet complet (narratif, logframe, budget, M&amp;E, risques, chronogramme) prêt à soumettre.
-              </p>
-            </Link>
-
-            {/* 🧪 Articles scientifiques */}
-            <Link
-              to="/articles"
-              className="group rounded-2xl border border-emerald-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-emerald-300 hover:bg-slate-900 transition shadow-lg shadow-emerald-500/10"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xl">🧪</span>
-                <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-emerald-200">RAG</span>
-              </div>
-              <h2 className="text-lg font-semibold">Articles scientifiques</h2>
-              <p className="text-xs text-slate-300">
-                Mode <strong>Droit congolais (RAG)</strong> basé sur Qdrant + mode <strong>scientifique</strong> général.
-              </p>
-            </Link>
-
 {/* 1) Chatbot juridique */}
             <Link
               to="/chat"
