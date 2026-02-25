@@ -46,7 +46,7 @@ export default function ScientificArticlePage() {
     title: "",
     topic: "Jurisprudence congolaise : tendances récentes et enjeux pratiques",
     researchQuestion: "Quels principes jurisprudentiels dominants se dégagent et comment orientent-ils la pratique ?",
-    targetPages: 15,
+    targetPages: 20,
     lite: false,
   });
 
