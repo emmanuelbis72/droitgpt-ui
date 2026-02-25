@@ -94,6 +94,80 @@ export default function Home() {
               </div>
             </Link>
 
+
+            {/* ✅ PROJET ONG / NGO Premium */}
+            <Link
+              to="/ong"
+              className="group rounded-2xl border border-sky-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-sky-300 hover:bg-slate-900 transition shadow-lg shadow-sky-500/10"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">🌍</span>
+                <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-sky-200">
+                  Premium
+                </span>
+              </div>
+
+              <h2 className="text-lg font-semibold">
+                PROJET ONG <span className="text-xs">(bailleurs)</span>
+              </h2>
+
+              <p className="text-xs text-slate-300">
+                Génération automatique de projets conformes bailleurs : narratif, LogFrame, budget, M&amp;E, risques, PDF.
+              </p>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  🤝 Bailleurs
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  📊 LogFrame
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  🧾 PDF
+                </span>
+              </div>
+            </Link>
+
+
+
+            {/* 📊 Progiciels Excel IA */}
+            <Link
+              to="/excel-apps"
+              className="group rounded-2xl border border-indigo-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-indigo-300 hover:bg-slate-900 transition shadow-lg shadow-indigo-500/10"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">📊</span>
+                <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] font-semibold text-indigo-200">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-400" />
+                  </span>
+                  en cours de developpement
+                </span>
+              </div>
+
+              <h2 className="text-lg font-semibold">GÉNÉRATION PROGICIELS EXCEL</h2>
+
+              <p className="text-xs text-slate-300">
+                Génère des outils de gestion Excel professionnels : formules, validations, tableaux et dashboard KPI prêts à utiliser.
+              </p>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  ✅ Formules
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  🔽 Listes
+                </span>
+                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
+                  📈 Dashboard
+                </span>
+              </div>
+            </Link>
+
+
+
+
             
 
 {/* 🎓 Rédaction Mémoire de Licence */}
