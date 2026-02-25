@@ -51,6 +51,9 @@ import LicenceMemoirePage from "./pages/LicenceMemoirePage.jsx";
 // ✅ NEW: ONG Premium (page)
 import NgoProjectPremiumPage from "./pages/NgoProjectPremiumPage.jsx";
 
+// 📘 NEW: Livre Jurisprudence (page)
+import BookJurisprudencePremiumPage from "./pages/BookJurisprudencePremiumPage.jsx";
+
 function JusticeLabResultsFallback() {
   try {
     const runs = readRuns();
@@ -89,6 +92,16 @@ function App() {
               element={
                 <ProtectedRoute>
                   <NgoProjectPremiumPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* ✅ Livre Jurisprudence (protégé) */}
+            <Route
+              path="/book-jurisprudence"
+              element={
+                <ProtectedRoute>
+                  <BookJurisprudencePremiumPage />
                 </ProtectedRoute>
               }
             />
