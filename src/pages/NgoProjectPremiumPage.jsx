@@ -115,7 +115,7 @@ export default function NgoProjectPremiumPage() {
     setProgress(1);
     setStatusText("Préparation…");
     const start = Date.now();
-    const DURATION_MS = 15 * 60 * 1000;
+    const DURATION_MS = 21 * 60 * 1000;
 
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     progressTimerRef.current = setInterval(() => {
