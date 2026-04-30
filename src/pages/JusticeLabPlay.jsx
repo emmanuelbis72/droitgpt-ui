@@ -593,12 +593,12 @@ export default function JusticeLabPlay() {
     if (step === "ROLE") return setStep("BRIEFING");
     if (step === "BRIEFING") return setStep("QUALIFICATION");
     if (step === "QUALIFICATION") return setStep("PROCEDURE");
-    if (step === "PROCEDURE") {
+    if (step === "PROCEDURE") return setStep("DECISION");
+    if (step === "DECISION") {
       await loadAudience();
       return setStep("AUDIENCE");
     }
-    if (step === "AUDIENCE") return setStep("DECISION");
-    if (step === "DECISION") return finalize();
+    if (step === "AUDIENCE") return finalize();
   };
 
   const goPrev = () => {
@@ -606,8 +606,8 @@ export default function JusticeLabPlay() {
     if (step === "BRIEFING") return setStep("ROLE");
     if (step === "QUALIFICATION") return setStep("BRIEFING");
     if (step === "PROCEDURE") return setStep("QUALIFICATION");
-    if (step === "AUDIENCE") return setStep("PROCEDURE");
-    if (step === "DECISION") return setStep("AUDIENCE");
+    if (step === "DECISION") return setStep("PROCEDURE");
+    if (step === "AUDIENCE") return setStep("DECISION");
   };
 
   const loadAudience = async () => {
@@ -1176,10 +1176,26 @@ export default function JusticeLabPlay() {
               onClick={goNext}
               className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition font-semibold text-sm"
             >
-              {step === "DECISION" ? "Terminer & scorer" : "Continuer →"}
+              {step === "AUDIENCE"
+                ? "Terminer & voir les résultats"
+                : step === "DECISION"
+                ? "Lancer l'audience virtuelle"
+                : "Continuer →"}
             </button>
           </div>
         </div>
+
+        {isScoring ? (
+          <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+            <div className="flex items-center justify-between text-xs text-emerald-50">
+              <span>Génération des résultats en cours...</span>
+              <span>{progress}%</span>
+            </div>
+            <div className="mt-2 h-2 rounded-full bg-slate-900/70 overflow-hidden">
+              <div className="h-2 bg-emerald-400 transition-all" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        ) : null}
 
         {/* content */}
         <div className="mt-6">
@@ -1356,22 +1372,18 @@ export default function JusticeLabPlay() {
               </section>
 
               <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-                <h2 className="text-sm font-semibold text-emerald-200 mb-2">➡️ Étape suivante : Audience IA</h2>
+                <h2 className="text-sm font-semibold text-emerald-200 mb-2">Étape suivante : décision motivée</h2>
                 <p className="text-sm text-slate-200/90">
-                  Après PROCÉDURE, le jeu lance une audience simulée : objections, gestion de débats, pièces tardives,
-                  audit log en direct.
+                  Après la procédure, rédige d'abord la motivation et le dispositif. L'audience virtuelle arrive ensuite
+                  comme dernière phase interactive avant les résultats.
                 </p>
                 <div className="mt-4 flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={isLoadingAudience}
                     className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 disabled:opacity-60 transition font-semibold"
-                    onClick={async () => {
-                      await loadAudience();
-                      setStep("AUDIENCE");
-                    }}
+                    onClick={() => setStep("DECISION")}
                   >
-                    {isLoadingAudience ? "Chargement audience..." : "Lancer l’audience →"}
+                    Rédiger la décision →
                   </button>
                 </div>
 
