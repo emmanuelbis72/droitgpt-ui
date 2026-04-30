@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.16",
+    "dompurify": "^3.4.2",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
     "pdfjs-dist": "^5.4.530",

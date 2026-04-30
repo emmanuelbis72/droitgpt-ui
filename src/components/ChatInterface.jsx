@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
+import { API_BASE } from "../config/api.js";
+import { sanitizeHtml } from "../utils/sanitizeHtml.js";
 
-const API_BASE = "https://droitgpt-indexer.onrender.com";
 const ACTIVE_DOC_KEY = "droitgpt_active_document_context";
 
 export default function ChatInterface() {
@@ -238,7 +239,7 @@ export default function ChatInterface() {
       }
 
       const data = await res.json().catch(() => ({}));
-      const answer = data?.answer || "<p>❌ Réponse vide.</p>";
+      const answer = sanitizeHtml(data?.answer || "<p>❌ Réponse vide.</p>");
 
       await typeWriterEffect(answer);
     } catch {
@@ -351,7 +352,7 @@ export default function ChatInterface() {
                   className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
                     isUser ? "bg-emerald-500 text-white" : "bg-slate-900/90 border border-white/10"
                   }`}
-                  dangerouslySetInnerHTML={{ __html: msg.text }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(msg.text) }}
                 />
               </div>
             );

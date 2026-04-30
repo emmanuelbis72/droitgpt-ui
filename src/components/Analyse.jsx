@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
-
-const ANALYSE_API = "https://droitgpt-analysepdf.onrender.com";
+import { ANALYSE_API } from "../config/api.js";
+import { sanitizeHtml } from "../utils/sanitizeHtml.js";
 
 // ✅ clé partagée avec ChatInterface.jsx
 const ACTIVE_DOC_KEY = "droitgpt_active_document_context";
@@ -208,7 +208,7 @@ export default function Analyse() {
       <p style="white-space:pre-wrap">${escapeHtml(fullText || "")}</p>
 
       <h2>Analyse juridique globale</h2>
-      ${analysisHtml || "<p>Analyse indisponible.</p>"}
+      ${sanitizeHtml(analysisHtml || "<p>Analyse indisponible.</p>")}
     `.trim();
   };
 
@@ -632,7 +632,7 @@ export default function Analyse() {
               <div className="mt-3 text-sm text-slate-300">Sélectionne un fichier puis lance l’analyse.</div>
             ) : (
               <div className="mt-3 prose prose-invert max-w-none">
-                <div dangerouslySetInnerHTML={{ __html: analysis }} />
+                <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(analysis) }} />
               </div>
             )}
           </div>
