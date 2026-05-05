@@ -294,7 +294,7 @@ export default function GrantsManagementPage() {
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="grid gap-6 bg-slate-950 p-6 text-white md:grid-cols-[1.5fr_1fr]">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-300">Grants intelligence</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-300">Grants intelligence v2 - filtres pro</p>
             <h1 className="mt-3 text-3xl font-bold">Opportunites financees pour la RDC, triees et exploitables</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
               Selectionne le type d'opportunite, la cible et le domaine. Le systeme indexe plusieurs sources, priorise Congo/RDC, dedoublonne les resultats et prepare la candidature.
