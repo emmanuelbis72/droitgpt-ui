@@ -25,6 +25,46 @@ const DOMAINS = [
   "numerique",
 ];
 
+const COUNTRIES = [
+  ["RDC", "Congo / RDC"],
+  ["Africa", "Afrique"],
+  ["Congo", "Congo"],
+  ["Rwanda", "Rwanda"],
+  ["Burundi", "Burundi"],
+  ["Cameroon", "Cameroun"],
+  ["Senegal", "Senegal"],
+  ["Cote d'Ivoire", "Cote d'Ivoire"],
+  ["Kenya", "Kenya"],
+  ["Nigeria", "Nigeria"],
+];
+
+const SOURCE_OPTIONS = [
+  ["", "Toutes les sources"],
+  ["grants.gov", "Grants.gov"],
+  ["eu", "Union europeenne"],
+  ["worldbank", "Banque mondiale"],
+  ["ungm", "UNGM / ONU"],
+  ["undp", "PNUD / UNDP"],
+  ["opportunities-for-youth", "Opportunities for Youth"],
+  ["vc4a", "VC4A"],
+  ["scholarshipset", "ScholarshipSet"],
+  ["foundations", "Fondations"],
+  ["embassies", "Ambassades"],
+  ["scholarships", "Portails bourses"],
+  ["entrepreneurship", "Portails entrepreneurs"],
+  ["ngo-portals", "Portails ONG"],
+  ["drc-local", "Sources RDC/Congo"],
+  ["linkedin", "LinkedIn"],
+];
+
+const VALIDITY_OPTIONS = [
+  ["", "Toutes"],
+  ["drc", "Valable RDC/Congo/Afrique"],
+  ["deadline", "Avec deadline"],
+  ["high", "Score eleve"],
+  ["search_link", "A verifier manuellement"],
+];
+
 const STATUSES = [
   { value: "a_analyser", label: "A analyser" },
   { value: "candidat", label: "Candidat" },
@@ -77,7 +117,7 @@ export default function GrantsManagementPage() {
     limit: 40,
   });
 
-  const [filters, setFilters] = useState({ q: "", source: "", userStatus: "", favorite: false });
+  const [filters, setFilters] = useState({ q: "", source: "", userStatus: "", validity: "", favorite: false });
   const [opportunities, setOpportunities] = useState([]);
   const [selected, setSelected] = useState(null);
   const [profile, setProfile] = useState({});
@@ -236,6 +276,19 @@ export default function GrantsManagementPage() {
     favorites: opportunities.filter((o) => o.user?.favorite).length,
   };
 
+  const displayedOpportunities = opportunities.filter((opp) => {
+    if (filters.validity === "drc") {
+      const hay = [opp.title, opp.description, opp.eligibility, opp.enrichment?.summaryText, ...(opp.match?.reasons || [])]
+        .join(" ")
+        .toLowerCase();
+      if (!/(drc|rdc|congo|africa|afrique)/i.test(hay)) return false;
+    }
+    if (filters.validity === "deadline" && !(opp.closeDate || opp.enrichment?.deadline)) return false;
+    if (filters.validity === "high" && Number(opp.match?.score || 0) < 70) return false;
+    if (filters.validity === "search_link" && opp.status !== "search_link") return false;
+    return true;
+  });
+
   return (
     <div className="space-y-6">
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -280,25 +333,34 @@ export default function GrantsManagementPage() {
         <Panel title="Recherche guidee">
           <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
             <div className="space-y-5">
-              <div>
-                <SectionLabel>Type d'opportunite</SectionLabel>
-                <div className="grid gap-3 md:grid-cols-3">
-                  {TYPES.map((type) => (
-                    <ChoiceCard
-                      key={type.value}
-                      active={search.opportunityType === type.value}
-                      title={type.label}
-                      hint={type.hint}
-                      onClick={() => setTypedSearch({ opportunityType: type.value })}
-                    />
-                  ))}
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <SectionLabel>Filtres principaux</SectionLabel>
+                <div className="mt-3 grid gap-4 md:grid-cols-2">
+                  <Select
+                    label="Type d'opportunite"
+                    value={search.opportunityType}
+                    onChange={(v) => setTypedSearch({ opportunityType: v })}
+                    options={TYPES.map((x) => [x.value, x.label])}
+                  />
+                  <Select
+                    label="Beneficiaire cible"
+                    value={search.target}
+                    onChange={(v) => setTypedSearch({ target: v })}
+                    options={TARGETS.map((x) => [x.value, x.label])}
+                  />
+                  <Select
+                    label="Domaine"
+                    value={search.domain}
+                    onChange={(v) => setTypedSearch({ domain: v })}
+                    options={DOMAINS.map((x) => [x, titleCase(x)])}
+                  />
+                  <Select
+                    label="Pays / zone prioritaire"
+                    value={search.country}
+                    onChange={(v) => setTypedSearch({ country: v })}
+                    options={COUNTRIES}
+                  />
                 </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-3">
-                <Select label="Cible" value={search.target} onChange={(v) => setTypedSearch({ target: v })} options={TARGETS.map((x) => [x.value, x.label])} />
-                <Select label="Domaine" value={search.domain} onChange={(v) => setTypedSearch({ domain: v })} options={DOMAINS.map((x) => [x, titleCase(x)])} />
-                <Field label="Pays prioritaire" value={search.country} onChange={(v) => setTypedSearch({ country: v })} />
               </div>
 
               <Field
@@ -342,21 +404,25 @@ export default function GrantsManagementPage() {
 
       {view === "pipeline" ? (
         <Panel title="Pipeline exploitable">
-          <div className="grid gap-3 md:grid-cols-5">
-            <Field label="Recherche" value={filters.q} onChange={(v) => setFilters({ ...filters, q: v })} />
-            <Field label="Source" value={filters.source} onChange={(v) => setFilters({ ...filters, source: v })} />
-            <Select label="Statut" value={filters.userStatus} onChange={(v) => setFilters({ ...filters, userStatus: v })} options={[["", "Tous"], ...STATUSES.map((s) => [s.value, s.label])]} />
-            <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
-              <input type="checkbox" checked={filters.favorite} onChange={(e) => setFilters({ ...filters, favorite: e.target.checked })} />
-              Favoris uniquement
-            </label>
-            <div className="flex items-end">
-              <SecondaryButton onClick={() => loadOpportunities()}>Appliquer</SecondaryButton>
+          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <SectionLabel>Filtres du pipeline</SectionLabel>
+            <div className="mt-3 grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+              <Field label="Mot-cle" value={filters.q} onChange={(v) => setFilters({ ...filters, q: v })} placeholder="titre, bailleur..." />
+              <Select label="Source" value={filters.source} onChange={(v) => setFilters({ ...filters, source: v })} options={SOURCE_OPTIONS} />
+              <Select label="Statut dossier" value={filters.userStatus} onChange={(v) => setFilters({ ...filters, userStatus: v })} options={[["", "Tous"], ...STATUSES.map((s) => [s.value, s.label])]} />
+              <Select label="Validite" value={filters.validity} onChange={(v) => setFilters({ ...filters, validity: v })} options={VALIDITY_OPTIONS} />
+              <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
+                <input type="checkbox" checked={filters.favorite} onChange={(e) => setFilters({ ...filters, favorite: e.target.checked })} />
+                Favoris
+              </label>
+              <div className="flex items-end">
+                <SecondaryButton onClick={() => loadOpportunities()}>Appliquer</SecondaryButton>
+              </div>
             </div>
           </div>
 
           <div className="space-y-3">
-            {opportunities.length ? opportunities.map((opp) => (
+            {displayedOpportunities.length ? displayedOpportunities.map((opp) => (
               <OpportunityCard
                 key={opp.id}
                 opp={opp}
@@ -491,15 +557,6 @@ function Metric({ label, value }) {
       <div className="text-2xl font-bold">{value}</div>
       <div className="text-xs text-slate-300">{label}</div>
     </div>
-  );
-}
-
-function ChoiceCard({ active, title, hint, onClick }) {
-  return (
-    <button type="button" onClick={onClick} className={`rounded-2xl border p-4 text-left transition ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900 hover:border-slate-400"}`}>
-      <div className="font-bold">{title}</div>
-      <div className={`mt-1 text-sm ${active ? "text-slate-300" : "text-slate-500"}`}>{hint}</div>
-    </button>
   );
 }
 
