@@ -4,13 +4,13 @@ const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 
 const TYPES = [
   { value: "ngo", label: "Appels a projets ONG", hint: "Subventions, bailleurs, associations, ASBL" },
-  { value: "entrepreneur", label: "Entrepreneurs / startups", hint: "Incubateurs, accelerateurs, seed grants" },
+  { value: "entrepreneur", label: "Opportunites entrepreneuriales", hint: "Entrepreneurs, PME, startups, incubateurs, accelerateurs" },
   { value: "scholarship", label: "Bourses", hint: "Bourses, fellowships, formations" },
 ];
 
 const TARGETS = [
   { value: "ong", label: "ONG / ASBL" },
-  { value: "entrepreneurs", label: "Entrepreneurs" },
+  { value: "entrepreneurs", label: "Entrepreneurs / PME / startups" },
   { value: "students", label: "Etudiants" },
 ];
 
@@ -51,7 +51,7 @@ const SOURCE_OPTIONS = [
   ["foundations", "Fondations"],
   ["embassies", "Ambassades"],
   ["scholarships", "Portails bourses"],
-  ["entrepreneurship", "Portails entrepreneurs"],
+  ["entrepreneurship", "Opportunites entrepreneuriales"],
   ["ngo-portals", "Portails ONG"],
   ["drc-local", "Sources RDC/Congo"],
   ["linkedin", "LinkedIn"],
@@ -181,9 +181,18 @@ export default function GrantsManagementPage() {
         save: true,
       };
       const json = await api("/discover", { method: "POST", body: JSON.stringify(payload) });
-      await loadOpportunities();
+      const discovered = json.opportunities || [];
+      setOpportunities(discovered);
+      try {
+        const params = new URLSearchParams();
+        params.set("limit", "150");
+        const saved = await api(`/opportunities?${params.toString()}`);
+        if (saved.rows?.length) setOpportunities(saved.rows);
+      } catch {
+        // Keep live discovery results visible even if the persistence read is unavailable.
+      }
       setView("pipeline");
-      setMessage(`${json.total || 0} opportunites indexees. ${json.db?.inserted || 0} nouvelles, ${json.db?.updated || 0} mises a jour.`);
+      setMessage(`${json.total || discovered.length || 0} opportunites trouvees. ${json.db?.inserted || 0} nouvelles, ${json.db?.updated || 0} mises a jour.`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -483,7 +492,7 @@ export default function GrantsManagementPage() {
 function buildQueryPreview(search) {
   const typeWords = {
     ngo: "grant call for proposals appel a projets subvention ONG ASBL",
-    entrepreneur: "startup entrepreneur SME accelerator incubator seed grant business",
+    entrepreneur: "entrepreneur PME startup business accelerator incubator seed grant financement entreprise",
     scholarship: "scholarship bourse fellowship students training",
   };
   return [
