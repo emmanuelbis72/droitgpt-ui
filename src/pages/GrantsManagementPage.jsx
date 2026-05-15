@@ -37,6 +37,7 @@ const DEFAULT_SEARCH = {
   region: "Africa",
   sector: "education",
   type: "ngo_funding",
+  sites: "",
   maxResults: 8,
 };
 
@@ -53,7 +54,8 @@ export default function GrantsManagementPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const openCount = opportunities.length;
+  const openCount = opportunities.filter((opp) => opp.status === "open").length;
+  const reviewCount = opportunities.filter((opp) => opp.status !== "open").length;
   const nextDeadline = useMemo(() => {
     const dates = opportunities.map((opp) => new Date(opp.deadline)).filter((date) => !Number.isNaN(date.getTime())).sort((a, b) => a - b);
     return dates[0] || null;
@@ -67,9 +69,10 @@ export default function GrantsManagementPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await listGrantOpportunities({ ...nextFilters, status: "open" });
-      setOpportunities(onlyOpen(data.rows || []));
-      setMessage(`${data.total || 0} opportunité(s) ouverte(s) chargée(s).`);
+      const data = await listGrantOpportunities(nextFilters);
+      const rows = currentOnly(data.rows || []);
+      setOpportunities(rows);
+      setMessage(`${rows.length} opportunité(s) non expirée(s) chargée(s).`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -88,6 +91,7 @@ export default function GrantsManagementPage() {
         region: search.region,
         sectors: search.sector ? [search.sector] : [],
         types: search.type ? [search.type] : [],
+        sites: splitLines(search.sites),
         language: "fr",
         maxResults: Number(search.maxResults || 8),
       };
@@ -141,17 +145,17 @@ export default function GrantsManagementPage() {
   }
 
   function applyJobResult(result) {
-    const rows = onlyOpen(result.opportunities || result.result?.results || []);
+    const rows = currentOnly(result.opportunities || result.result?.results || []);
     setOpportunities(rows);
     setFilters((prev) => ({ ...prev, status: "open" }));
-    setMessage(`${rows.length} opportunité(s) ouverte(s) trouvée(s). Les opportunités expirées sont exclues.`);
+    setMessage(`${rows.length} opportunité(s) non expirée(s) trouvée(s). Les opportunités expirées sont exclues.`);
   }
 
   async function openDetails(opp) {
     setSelected(opp);
     try {
       const data = await getGrantOpportunity(opp.id);
-      if (data.opportunity?.status === "open") setSelected(data.opportunity);
+      if (isCurrent(data.opportunity)) setSelected(data.opportunity);
     } catch {
       setSelected(opp);
     }
@@ -163,13 +167,14 @@ export default function GrantsManagementPage() {
         <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-300">DroitGPT Grants</p>
         <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_320px] lg:items-end">
           <div>
-            <h1 className="max-w-3xl text-3xl font-black leading-tight sm:text-5xl">Opportunités ouvertes et vérifiées</h1>
+            <h1 className="max-w-3xl text-3xl font-black leading-tight sm:text-5xl">Opportunités à jour, sans expirées</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-              Recherche des appels à projets, financements ONG, bourses et programmes encore ouverts. Les opportunités expirées ne sont pas affichées.
+              Recherche des appels à projets, financements ONG, bourses et programmes encore valables. Les opportunités incertaines restent marquées à vérifier, jamais confirmées artificiellement.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Metric label="Ouvertes" value={openCount} />
+            <Metric label="À vérifier" value={reviewCount} />
             <Metric label="Prochaine deadline" value={nextDeadline ? formatDate(nextDeadline) : "-"} small />
           </div>
         </div>
@@ -188,6 +193,13 @@ export default function GrantsManagementPage() {
           <Select label="Type" value={search.type} onChange={(v) => setSearch({ ...search, type: v })} options={TYPES} />
           <Field label="Résultats" type="number" value={search.maxResults} onChange={(v) => setSearch({ ...search, maxResults: v })} />
         </div>
+        <TextArea
+          label="Sites à inclure dans la recherche"
+          value={search.sites}
+          onChange={(v) => setSearch({ ...search, sites: v })}
+          placeholder={"https://www2.fundsforngos.org\nhttps://opportunitydesk.org\nNom du site | https://example.org/opportunities"}
+          helper="Optionnel. Une ligne par site. Exa cherchera prioritairement dans ces domaines et DroitGPT scannera leurs liens pertinents."
+        />
         <div className="mt-4 flex flex-wrap gap-3">
           <PrimaryButton disabled={loading || !search.query.trim()} onClick={runSearch}>{loading ? "Recherche..." : "Rechercher avec l'IA"}</PrimaryButton>
           <SecondaryButton disabled={loading} onClick={() => loadOpenOpportunities(filters)}>Actualiser la liste</SecondaryButton>
@@ -195,7 +207,7 @@ export default function GrantsManagementPage() {
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-black text-slate-950">Filtrer les opportunités ouvertes</h2>
+        <h2 className="text-lg font-black text-slate-950">Filtrer les opportunités non expirées</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <Field label="Mot-clé" value={filters.q} onChange={(v) => setFilters({ ...filters, q: v })} placeholder="ONG, climat, santé..." />
           <Field label="Pays" value={filters.country} onChange={(v) => setFilters({ ...filters, country: v })} />
@@ -227,7 +239,7 @@ function OpportunityCard({ opportunity, onDetails }) {
   return (
     <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3">
-        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200">Ouverte</span>
+        <StatusBadge status={opportunity.status} />
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{opportunity.reliabilityScore || 0}/100</span>
       </div>
       <h3 className="mt-4 text-xl font-black leading-snug text-slate-950">{opportunity.title}</h3>
@@ -253,7 +265,7 @@ function DetailsModal({ opportunity, onClose }) {
       <div className="mx-auto max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
         <div className="sticky top-0 flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-5">
           <div>
-            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">Ouverte</span>
+            <StatusBadge status={opportunity.status} />
             <h2 className="mt-3 text-2xl font-black text-slate-950">{opportunity.title}</h2>
             <p className="text-sm font-semibold text-emerald-700">{opportunity.organization || opportunity.sourceName}</p>
           </div>
@@ -298,6 +310,16 @@ function Select({ label, value, onChange, options }) {
   );
 }
 
+function TextArea({ label, value, onChange, placeholder = "", helper = "" }) {
+  return (
+    <label className="mt-4 block text-sm">
+      <span className="font-bold text-slate-700">{label}</span>
+      <textarea value={value ?? ""} onChange={(e) => onChange(e.target.value)} rows={4} placeholder={placeholder} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-emerald-500 transition focus:ring-2" />
+      {helper ? <span className="mt-1 block text-xs leading-5 text-slate-500">{helper}</span> : null}
+    </label>
+  );
+}
+
 function PrimaryButton({ children, disabled, onClick }) {
   return <button type="button" disabled={disabled} onClick={onClick} className="rounded-full bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">{children}</button>;
 }
@@ -329,6 +351,16 @@ function JobBanner({ job, loading, onRefresh }) {
   );
 }
 
+function StatusBadge({ status }) {
+  if (status === "open") {
+    return <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200">Ouverte</span>;
+  }
+  if (status === "unknown") {
+    return <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black text-sky-800 ring-1 ring-sky-200">À vérifier</span>;
+  }
+  return <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800 ring-1 ring-amber-200">À vérifier</span>;
+}
+
 function Info({ label, value }) {
   return (
     <div className="rounded-xl bg-slate-50 p-3">
@@ -350,8 +382,8 @@ function TextBlock({ title, value }) {
 function EmptyState() {
   return (
     <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
-      <p className="text-xl font-black text-slate-950">Aucune opportunité ouverte.</p>
-      <p className="mt-2 text-sm text-slate-600">Lance une nouvelle recherche ou élargis les filtres. Les opportunités expirées sont volontairement exclues.</p>
+      <p className="text-xl font-black text-slate-950">Aucune opportunité non expirée.</p>
+      <p className="mt-2 text-sm text-slate-600">Lance une nouvelle recherche, fournis des sites spécialisés ou élargis les filtres. Les opportunités expirées sont volontairement exclues.</p>
     </div>
   );
 }
@@ -360,13 +392,24 @@ function SkeletonCards() {
   return Array.from({ length: 4 }).map((_, idx) => <div key={idx} className="h-72 animate-pulse rounded-3xl bg-slate-100" />);
 }
 
-function onlyOpen(items) {
-  return (items || []).filter((item) => item.status === "open" && item.deadline && new Date(item.deadline).getTime() >= Date.now());
+function currentOnly(items) {
+  return (items || []).filter(isCurrent);
+}
+
+function isCurrent(item) {
+  if (!item || item.status === "expired" || item.status === "hidden") return false;
+  if (!item.deadline) return true;
+  const deadline = new Date(item.deadline);
+  return !Number.isNaN(deadline.getTime()) && deadline.getTime() >= Date.now();
 }
 
 function splitCsv(value) {
   if (Array.isArray(value)) return value;
   return String(value || "").split(/[,;|]/).map((x) => x.trim()).filter(Boolean);
+}
+
+function splitLines(value) {
+  return String(value || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
 }
 
 function sleep(ms) {
