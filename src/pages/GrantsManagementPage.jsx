@@ -94,6 +94,7 @@ export default function GrantsManagementPage() {
         sites: splitLines(search.sites),
         language: "fr",
         maxResults: Number(search.maxResults || 8),
+        candidateLimit: Math.max(Number(search.maxResults || 8) * 6, 40),
       };
       const started = await searchGrants(payload);
       const result = await pollJob(started.jobId);
