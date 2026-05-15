@@ -44,8 +44,11 @@ const DEFAULT_SEARCH = {
   sectors: "education, health, climate, agriculture",
   types: "grant, call_for_projects, ngo_funding",
   language: "fr",
-  maxResults: 20,
+  maxResults: 8,
 };
+
+const JOB_POLL_ATTEMPTS = 120;
+const JOB_POLL_INTERVAL_MS = 3000;
 
 export default function GrantsManagementPage() {
   const [filters, setFilters] = useState({
@@ -110,15 +113,17 @@ export default function GrantsManagementPage() {
     try {
       const payload = {
         ...searchForm,
-        maxResults: Number(searchForm.maxResults || 20),
+        maxResults: Number(searchForm.maxResults || 8),
         sectors: splitCsv(searchForm.sectors),
         types: splitCsv(searchForm.types),
       };
       const started = await searchGrants(payload);
       const result = await pollJob(started.jobId, "Recherche IA");
-      setOpportunities(nonExpired(result.opportunities || result.result?.results || []));
-      setFilters((prev) => ({ ...prev, status: "" }));
-      setMessage(jobSummary(result, "Recherche terminée"));
+      if (result.pending) {
+        handlePendingJob(result, "Recherche IA");
+        return;
+      }
+      applyJobResult(result, "Recherche terminée");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -142,9 +147,11 @@ export default function GrantsManagementPage() {
         maxPerSource: Number(crawlForm.maxPerSource || 2),
       }, crawlForm.cronSecret);
       const result = await pollJob(started.jobId, "Patrouille");
-      setOpportunities(nonExpired(result.opportunities || result.result?.results || []));
-      setFilters((prev) => ({ ...prev, status: "" }));
-      setMessage(jobSummary(result, "Patrouille terminée"));
+      if (result.pending) {
+        handlePendingJob(result, "Patrouille");
+        return;
+      }
+      applyJobResult(result, "Patrouille terminée");
     } catch (e) {
       setError(e.message === "UNAUTHORIZED" ? "Clé CRON_SECRET invalide ou absente pour lancer la patrouille." : e.message);
     } finally {
@@ -171,14 +178,48 @@ export default function GrantsManagementPage() {
   }
 
   async function pollJob(jobId, label) {
-    for (let attempt = 0; attempt < 80; attempt += 1) {
+    let latestJob = null;
+    for (let attempt = 0; attempt < JOB_POLL_ATTEMPTS; attempt += 1) {
       const data = await getGrantJob(jobId);
-      setJob(data.job);
-      if (data.job?.status === "done") return getGrantJobResult(jobId);
-      if (data.job?.status === "error") throw new Error(data.job.error || `${label} échouée.`);
-      await sleep(2500);
+      latestJob = data.job;
+      setJob(latestJob);
+      if (latestJob?.status === "done") return getGrantJobResult(jobId);
+      if (latestJob?.status === "error") throw new Error(latestJob.error || `${label} échouée.`);
+      await sleep(JOB_POLL_INTERVAL_MS);
     }
-    throw new Error(`${label} trop longue. Le job continue peut-être côté serveur: ${jobId}`);
+    return { pending: true, jobId, job: latestJob, status: latestJob?.status || "running" };
+  }
+
+  function applyJobResult(result, prefix) {
+    setOpportunities(nonExpired(result.opportunities || result.result?.results || []));
+    setFilters((prev) => ({ ...prev, status: "" }));
+    setMessage(jobSummary(result, prefix));
+  }
+
+  function handlePendingJob(result, label) {
+    setMessage(`${label} toujours en cours sur Render. Job: ${result.jobId}. Clique sur \"Récupérer le résultat\" dans le bandeau quand le statut passe à done.`);
+  }
+
+  async function refreshCurrentJobResult() {
+    if (!job?.id) return;
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getGrantJob(job.id);
+      setJob(data.job);
+      if (data.job?.status === "done") {
+        const result = await getGrantJobResult(job.id);
+        applyJobResult(result, "Job terminé");
+      } else if (data.job?.status === "error") {
+        throw new Error(data.job.error || "Job en erreur.");
+      } else {
+        setMessage(`Job encore en cours: ${data.job?.status || "running"}.`);
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function openDetails(opp) {
@@ -259,7 +300,7 @@ export default function GrantsManagementPage() {
 
       {error ? <Notice tone="red">{error}</Notice> : null}
       {message ? <Notice tone="green">{message}</Notice> : null}
-      {job ? <JobBanner job={job} /> : null}
+      {job ? <JobBanner job={job} onRefresh={refreshCurrentJobResult} disabled={loading} /> : null}
 
       <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
         <Panel title="Recherche intelligente" eyebrow="IA + sources contrôlées">
@@ -490,10 +531,20 @@ function Notice({ tone, children }) {
   return <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${cls}`}>{children}</div>;
 }
 
-function JobBanner({ job }) {
+function JobBanner({ job, onRefresh, disabled }) {
   return (
-    <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-      Job {job.id}: <strong>{job.status}</strong>{job.query ? ` - ${job.query}` : ""}
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+      <div>
+        Job {job.id}: <strong>{job.status}</strong>{job.query ? ` - ${job.query}` : ""}
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onRefresh}
+        className="rounded-full bg-sky-900 px-4 py-2 text-xs font-black text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        Récupérer le résultat
+      </button>
     </div>
   );
 }
