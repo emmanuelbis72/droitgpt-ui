@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
+import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
+import { clearStoredPayment } from "../services/paymentsApi.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 
@@ -167,6 +169,9 @@ export default function BusinessPlanPremiumPage() {
   const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
   const [successHint, setSuccessHint] = useState("");
+  const [paymentRequired, setPaymentRequired] = useState(false);
+  const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentResetSignal, setPaymentResetSignal] = useState(0);
 
   // Last generated files (for re-download without regenerating)
   const [lastGenerateFile, setLastGenerateFile] = useState({ url: "", name: "" });
@@ -400,6 +405,9 @@ export default function BusinessPlanPremiumPage() {
     if (!String(form.sector).trim()) return setError("Le secteur est requis.");
     if (!String(form.solution).trim() && !String(form.product).trim())
       return setError("Décris au moins la solution OU le produit/service.");
+    if (paymentRequired && !paymentOrderNumber) {
+      return setError("Valide d'abord le paiement Mobile Money avant de lancer la génération.");
+    }
 
     setLoading(true);
     startFakeProgress("generate");
@@ -416,7 +424,10 @@ export default function BusinessPlanPremiumPage() {
       // 1) Start JOB
       const startRes = await fetch(`${endpointGenerate}?async=1`, {
         method: "POST",
-        headers: generationHeaders({ "Content-Type": "application/json" }),
+        headers: generationHeaders({
+          "Content-Type": "application/json",
+          ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+        }),
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
@@ -473,6 +484,11 @@ export default function BusinessPlanPremiumPage() {
 
       stopFakeProgress("Téléchargement prêt ✅");
       setSuccessHint("Ton business plan a été généré et téléchargé.");
+      if (paymentOrderNumber) {
+        clearStoredPayment("businessplan");
+        setPaymentOrderNumber("");
+        setPaymentResetSignal((value) => value + 1);
+      }
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -505,6 +521,10 @@ export default function BusinessPlanPremiumPage() {
       setError("Indique au moins le nom de l’entreprise (même si tu as un brouillon).");
       return;
     }
+    if (paymentRequired && !paymentOrderNumber) {
+      setError("Valide d'abord le paiement Mobile Money avant de lancer la correction.");
+      return;
+    }
 
     setLoading(true);
     startFakeProgress("rewrite");
@@ -535,7 +555,7 @@ export default function BusinessPlanPremiumPage() {
       // Si tu ne l’as pas encore côté backend, tu auras un message clair.
       const res = await fetch(endpointRewrite, {
         method: "POST",
-        headers: generationHeaders(),
+        headers: generationHeaders(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
         body: fd,
         signal: controller.signal,
       });
@@ -566,6 +586,11 @@ export default function BusinessPlanPremiumPage() {
 
       stopFakeProgress("Téléchargement prêt ✅");
       setSuccessHint("Ton brouillon a été corrigé et converti en version professionnelle.");
+      if (paymentOrderNumber) {
+        clearStoredPayment("businessplan");
+        setPaymentOrderNumber("");
+        setPaymentResetSignal((value) => value + 1);
+      }
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -731,6 +756,17 @@ strategicPartnerships:
             <div className="mt-1 text-sm whitespace-pre-wrap">{successHint}</div>
           </div>
         ) : null}
+
+        <MobileMoneyPayment
+          apiBase={API_BASE}
+          documentType="businessplan"
+          variant="dark"
+          disabled={loading}
+          resetSignal={paymentResetSignal}
+          className="mb-6"
+          onRequirementChange={setPaymentRequired}
+          onPaymentReady={setPaymentOrderNumber}
+        />
 
         {/* Controls top (common) */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 md:p-6 shadow-xl">
@@ -1127,10 +1163,10 @@ strategicPartnerships:
                 <div className="flex flex-col items-end">
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || (paymentRequired && !paymentOrderNumber)}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
-                    {loading ? "Génération…" : "Générer & Télécharger"}
+                    {loading ? "Génération…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger"}
                   </button>
 
                   {/* Progress bar (14 minutes fake progress) */}
@@ -1283,10 +1319,10 @@ strategicPartnerships:
                 <div className="flex flex-col items-end">
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || (paymentRequired && !paymentOrderNumber)}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
-                    {loading ? "Correction…" : "Corriger & Télécharger"}
+                    {loading ? "Correction…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Corriger & Télécharger"}
                   </button>
 
                   {/* Progress bar (14 minutes fake progress) */}

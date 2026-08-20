@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
+import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
+import { clearStoredPayment } from "../services/paymentsApi.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 const API_BASE = import.meta.env.VITE_ACADEMIC_API_BASE || import.meta.env.VITE_BP_API_BASE || import.meta.env.VITE_API_BASE || DEFAULT_API_BASE;
@@ -65,6 +67,9 @@ const [mode, setMode] = useState("standard"); // standard | droit_congolais
   const [error, setError] = useState("");
   const [sourcesUsed, setSourcesUsed] = useState([]);
   const [lastPdfUrl, setLastPdfUrl] = useState("");
+  const [paymentRequired, setPaymentRequired] = useState(false);
+  const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentResetSignal, setPaymentResetSignal] = useState(0);
 
   const lastPdfUrlRef = useRef("");
   const revokeLastPdfUrl = () => {
@@ -134,6 +139,10 @@ if (elapsed >= totalSec) {
     setError("");
     setSourcesUsed([]);
     revokeLastPdfUrl();
+    if (paymentRequired && !paymentOrderNumber) {
+      setError("Valide d'abord le paiement Mobile Money avant de lancer la génération.");
+      return;
+    }
     setIsGenerating(true);
 
     try {
@@ -164,7 +173,10 @@ let r;
 try {
   const startRes = await fetch(`${endpoint}?async=1`, {
     method: "POST",
-    headers: generationHeaders({ "Content-Type": "application/json" }),
+    headers: generationHeaders({
+      "Content-Type": "application/json",
+      ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+    }),
     body: JSON.stringify(payload),
     signal: controller.signal,
   });
@@ -230,6 +242,11 @@ if (!ct.includes("application/pdf")) {
       document.body.appendChild(a);
       a.click();
       a.remove();
+      if (paymentOrderNumber) {
+        clearStoredPayment("memoire");
+        setPaymentOrderNumber("");
+        setPaymentResetSignal((value) => value + 1);
+      }
 } catch (e) {
   const msg = String(e?.name === "AbortError"
     ? "La génération a dépassé le temps limite. Réessaye (ou augmente le timeout côté frontend)."
@@ -259,6 +276,16 @@ if (!ct.includes("application/pdf")) {
         </div>
 
         <div className="px-6 py-6 bg-slate-950/60 space-y-6">
+          <MobileMoneyPayment
+            apiBase={API_BASE}
+            documentType="memoire"
+            variant="dark"
+            disabled={isGenerating}
+            resetSignal={paymentResetSignal}
+            onRequirementChange={setPaymentRequired}
+            onPaymentReady={setPaymentOrderNumber}
+          />
+
           {/* Mode toggle */}
           <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -373,10 +400,10 @@ if (!ct.includes("application/pdf")) {
             <button
               type="button"
               onClick={generateMemoire}
-              disabled={isGenerating}
+              disabled={isGenerating || (paymentRequired && !paymentOrderNumber)}
               className="rounded-2xl px-5 py-3 font-semibold border border-white/10 bg-white/10 hover:bg-white/15 transition disabled:opacity-60"
             >
-              {isGenerating ? "Génération en cours…" : "Générer & Télécharger (PDF)"}
+              {isGenerating ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger (PDF)"}
             </button>
 
             {lastPdfUrl && (

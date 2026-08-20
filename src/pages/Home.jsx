@@ -54,7 +54,7 @@ export default function Home() {
               🚀 Créer un compte gratuitement
             </Link>
 
-            <p className="text-[11px] text-slate-400">Aucun paiement requis • Accès immédiat</p>
+            <p className="text-[11px] text-slate-400">Compte gratuit • Paiement Mobile Money seulement avant génération premium</p>
           </div>
         </div>
 

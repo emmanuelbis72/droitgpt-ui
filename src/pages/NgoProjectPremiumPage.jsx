@@ -1,6 +1,8 @@
 // src/pages/NgoProjectPremiumPage.jsx
 import React, { useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
+import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
+import { clearStoredPayment } from "../services/paymentsApi.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 const API_BASE = (import.meta?.env?.VITE_BP_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
@@ -105,6 +107,9 @@ export default function NgoProjectPremiumPage() {
   const [error, setError] = useState("");
   const [successHint, setSuccessHint] = useState("");
   const [progress, setProgress] = useState(0);
+  const [paymentRequired, setPaymentRequired] = useState(false);
+  const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentResetSignal, setPaymentResetSignal] = useState(0);
 
   const abortRef = useRef(null);
   const progressTimerRef = useRef(null);
@@ -182,6 +187,9 @@ export default function NgoProjectPremiumPage() {
 
     if (!String(form.projectTitle).trim()) return setError("Le titre du projet est requis.");
     if (!String(form.organization).trim()) return setError("Le nom de l’ONG / organisation est requis.");
+    if (paymentRequired && !paymentOrderNumber) {
+      return setError("Valide d'abord le paiement Mobile Money avant de lancer la génération.");
+    }
 
     setLoading(true);
     startFakeProgress();
@@ -199,7 +207,10 @@ export default function NgoProjectPremiumPage() {
       try {
         startRes = await fetch(`${endpointNgo}?async=1`, {
           method: "POST",
-          headers: generationHeaders({ "Content-Type": "application/json" }),
+          headers: generationHeaders({
+            "Content-Type": "application/json",
+            ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+          }),
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
@@ -287,6 +298,11 @@ export default function NgoProjectPremiumPage() {
 
       stopFakeProgress("Téléchargement prêt ✅");
       setSuccessHint("Ton projet ONG Premium a été généré et téléchargé.");
+      if (paymentOrderNumber) {
+        clearStoredPayment("ngo_project");
+        setPaymentOrderNumber("");
+        setPaymentResetSignal((value) => value + 1);
+      }
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -323,6 +339,16 @@ export default function NgoProjectPremiumPage() {
           <div className="text-xs text-slate-500">API: {API_BASE}</div>
         </div>
       </div>
+
+      <MobileMoneyPayment
+        apiBase={API_BASE}
+        documentType="ngo_project"
+        variant="light"
+        disabled={loading}
+        resetSignal={paymentResetSignal}
+        onRequirementChange={setPaymentRequired}
+        onPaymentReady={setPaymentOrderNumber}
+      />
 
       <form onSubmit={onSubmit} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -543,10 +569,10 @@ export default function NgoProjectPremiumPage() {
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (paymentRequired && !paymentOrderNumber)}
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
             >
-              Générer & Télécharger (PDF)
+              {paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger (PDF)"}
             </button>
             <button
               type="button"
