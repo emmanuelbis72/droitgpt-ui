@@ -196,7 +196,7 @@ export default function ExcelAppsPage() {
               disabled={status === "starting" || status === "running"}
               className="rounded-2xl px-6 py-4 font-semibold bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 transition disabled:opacity-60"
             >
-              {paymentRequired && !paymentOrderNumber ? "Paiement requis" : "🚀 Générer le progiciel Excel"}
+              {paymentRequired && !paymentOrderNumber ? "Payer et générer le progiciel" : "Générer le progiciel Excel"}
             </button>
 
             {status !== "idle" && (

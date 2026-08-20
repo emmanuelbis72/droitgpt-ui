@@ -56,10 +56,6 @@ export default function MobileMoneyPayment({
     ? "border-white/10 bg-slate-950/50 text-slate-50 hover:bg-slate-900/70"
     : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50";
   const muted = isDark ? "text-slate-300" : "text-slate-600";
-  const inputClass = isDark
-    ? "border-white/10 bg-slate-950/70 text-slate-50 placeholder:text-slate-500"
-    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400";
-
   const readyOrderNumber = useMemo(() => {
     return payment?.status === "paid" && !payment?.consumedAt ? payment.orderNumber : "";
   }, [payment]);
@@ -183,7 +179,7 @@ export default function MobileMoneyPayment({
 
   if (!requiresPayment) return null;
 
-  const statusBadge = payment?.status ? STATUS_LABELS[payment.status] || payment.status : "Paiement requis";
+  const statusBadge = payment?.status ? STATUS_LABELS[payment.status] || payment.status : "Paiement à effectuer";
   const amount = formatMoney(docConfig?.amount, docConfig?.currency || config?.currency);
 
   return (
@@ -237,7 +233,7 @@ export default function MobileMoneyPayment({
 
             {!config?.configured ? (
               <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-                Paiement requis mais FlexPay n'est pas encore configuré côté backend.
+                Le paiement Mobile Money n'est pas encore configuré côté backend.
               </div>
             ) : null}
 
@@ -276,13 +272,22 @@ export default function MobileMoneyPayment({
               <div className="mt-5 space-y-3">
                 <label className="block text-sm font-medium">
                   Numéro Mobile Money
-                  <input
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    disabled={disabled || starting || !config?.configured}
-                    className={`mt-2 w-full rounded-xl border px-3 py-3 text-sm outline-none focus:border-emerald-400 ${inputClass}`}
-                    placeholder="243XXXXXXXXX ou 0XXXXXXXXX"
-                  />
+                  <span className={`mt-1 block text-xs font-normal ${muted}`}>
+                    Le préfixe pays 243 est ajouté automatiquement. Entrez le numéro local sans zéro initial, par exemple 997123456.
+                  </span>
+                  <div className="mt-2 flex overflow-hidden rounded-xl border border-emerald-400/30">
+                    <span className={`flex items-center px-3 text-sm font-semibold ${isDark ? "bg-emerald-500/10 text-emerald-200" : "bg-emerald-50 text-emerald-800"}`}>
+                      243
+                    </span>
+                    <input
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      disabled={disabled || starting || !config?.configured}
+                      className={`w-full px-3 py-3 text-sm outline-none ${isDark ? "bg-slate-950/70 text-slate-50 placeholder:text-slate-500" : "bg-white text-slate-900 placeholder:text-slate-400"}`}
+                      placeholder="997123456"
+                      inputMode="numeric"
+                    />
+                  </div>
                 </label>
                 <button
                   type="button"
@@ -290,7 +295,7 @@ export default function MobileMoneyPayment({
                   disabled={disabled || starting || !phone.trim() || !config?.configured}
                   className="w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-600 disabled:opacity-60"
                 >
-                  {starting ? "Envoi du paiement..." : "Envoyer le push Mobile Money"}
+                  {starting ? "Traitement du paiement..." : "Effectuer le paiement par Mobile Money"}
                 </button>
               </div>
             )}

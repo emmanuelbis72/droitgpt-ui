@@ -20,6 +20,8 @@ import AssistantVocal from "./components/AssistantVocal.jsx";
 // Auth UI
 import Login from "./components/Login.jsx";
 import Register from "./components/Register.jsx";
+import ForgotPassword from "./components/ForgotPassword.jsx";
+import ResetPassword from "./components/ResetPassword.jsx";
 
 // 🎓 Pages Académie
 import Academie from "./pages/Academie.jsx";
@@ -76,6 +78,8 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             {/* ✅ Business Plan Premium (protégé) */}
             <Route

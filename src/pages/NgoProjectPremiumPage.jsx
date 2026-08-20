@@ -588,7 +588,7 @@ export default function NgoProjectPremiumPage() {
               disabled={loading}
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
             >
-              {paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger (PDF)"}
+              {paymentRequired && !paymentOrderNumber ? "Payer et générer le projet" : "Générer & Télécharger (PDF)"}
             </button>
             <button
               type="button"

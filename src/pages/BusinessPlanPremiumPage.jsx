@@ -1216,7 +1216,7 @@ strategicPartnerships:
                     disabled={loading}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
-                    {loading ? "Génération…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger"}
+                    {loading ? "Génération…" : paymentRequired && !paymentOrderNumber ? "Payer et générer le document" : "Générer & Télécharger"}
                   </button>
 
                   {/* Progress bar (14 minutes fake progress) */}
@@ -1373,7 +1373,7 @@ strategicPartnerships:
                     disabled={loading}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
-                    {loading ? "Correction…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Corriger & Télécharger"}
+                    {loading ? "Correction…" : paymentRequired && !paymentOrderNumber ? "Payer et corriger le document" : "Corriger & Télécharger"}
                   </button>
 
                   {/* Progress bar (14 minutes fake progress) */}

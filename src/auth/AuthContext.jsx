@@ -11,9 +11,11 @@ const AuthContext = createContext(null);
 
 const STORAGE_KEY = "droitgpt_access_token";
 
-// 👉 Backend attendu:
-// POST  /auth/register  { fullName, phone, password } => { accessToken, user }
-// POST  /auth/login     { phone, password }          => { accessToken, user }
+// Backend attendu:
+// POST  /auth/register        { fullName, phone, email?, password } => { accessToken, user }
+// POST  /auth/login           { identifier|phone|email, password } => { accessToken, user }
+// POST  /auth/forgot-password { email }
+// POST  /auth/reset-password  { token, password } => { accessToken, user }
 // GET   /auth/me        (Bearer token)               => { user }
 const AUTH_BASE_URL =
   import.meta.env.VITE_AUTH_API_URL || "https://droitgpt-indexer.onrender.com/auth";
@@ -128,12 +130,12 @@ export function AuthProvider({ children }) {
   // ✅ Auth “réelle” = token présent + user chargé
   const isAuthenticated = !!accessToken && !!user;
 
-  // ✅ LOGIN : { phone, password }
-  const login = async ({ phone, password }) => {
+  // LOGIN : { identifier|phone|email, password }
+  const login = async ({ identifier, phone, email, password }) => {
     const res = await fetch(`${AUTH_BASE_URL}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone, password }),
+      body: JSON.stringify({ identifier, phone, email, password }),
     });
 
     if (!res.ok) {
@@ -153,12 +155,12 @@ export function AuthProvider({ children }) {
     return true;
   };
 
-  // ✅ REGISTER : { fullName, phone, password }
-  const register = async ({ fullName, phone, password }) => {
+  // REGISTER : { fullName, phone, email?, password }
+  const register = async ({ fullName, phone, email, password }) => {
     const res = await fetch(`${AUTH_BASE_URL}/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fullName, phone, password }),
+      body: JSON.stringify({ fullName, phone, email, password }),
     });
 
     if (!res.ok) {
@@ -174,6 +176,41 @@ export function AuthProvider({ children }) {
       else await refreshMe(data.accessToken);
     }
 
+    return true;
+  };
+
+  const forgotPassword = async ({ email }) => {
+    const res = await fetch(`${AUTH_BASE_URL}/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!res.ok) {
+      const msg = await parseError(res);
+      throw new Error(msg || "Demande de réinitialisation impossible.");
+    }
+
+    return res.json().catch(() => ({ ok: true }));
+  };
+
+  const resetPassword = async ({ token, password }) => {
+    const res = await fetch(`${AUTH_BASE_URL}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, password }),
+    });
+
+    if (!res.ok) {
+      const msg = await parseError(res);
+      throw new Error(msg || "Réinitialisation impossible.");
+    }
+
+    const data = await res.json().catch(() => null);
+    if (!data?.accessToken) throw new Error("Réponse invalide (accessToken manquant).");
+    saveToken(data.accessToken);
+    if (data?.user) setUser(data.user);
+    else await refreshMe(data.accessToken);
     return true;
   };
 
@@ -202,6 +239,8 @@ export function AuthProvider({ children }) {
       user,
       login,
       register,
+      forgotPassword,
+      resetPassword,
       logout,
       refreshMe,
       AUTH_BASE_URL,

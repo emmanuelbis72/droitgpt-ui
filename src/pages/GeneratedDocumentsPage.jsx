@@ -2,10 +2,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   clearGeneratedDocuments,
   downloadGeneratedDocument,
+  fetchGeneratedDocuments,
   listGeneratedDocuments,
   refreshGeneratedDocument,
   removeGeneratedDocument,
+  syncGeneratedDocuments,
 } from "../services/generatedDocuments.js";
+import { useAuth } from "../auth/AuthContext.jsx";
+
+const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
+const API_BASE = import.meta.env.VITE_BP_API_BASE || import.meta.env.VITE_API_BASE || DEFAULT_API_BASE;
 
 const STATUS_LABELS = {
   queued: "En file",
@@ -36,17 +42,33 @@ function formatDate(value) {
 }
 
 export default function GeneratedDocumentsPage() {
+  const { user } = useAuth();
   const [documents, setDocuments] = useState(() => listGeneratedDocuments());
   const [busy, setBusy] = useState({});
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const pendingCount = useMemo(
     () => documents.filter((doc) => ["queued", "running"].includes(doc.status)).length,
     [documents]
   );
 
-  function reload() {
-    setDocuments(listGeneratedDocuments());
+  async function reload(options = {}) {
+    const remote = options.remote !== false;
+    if (!remote) {
+      setDocuments(listGeneratedDocuments());
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await fetchGeneratedDocuments(API_BASE);
+      setDocuments(rows);
+    } catch (error) {
+      setMessage(String(error?.message || error));
+      setDocuments(listGeneratedDocuments());
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function refreshOne(doc) {
@@ -54,7 +76,7 @@ export default function GeneratedDocumentsPage() {
     setMessage("");
     try {
       await refreshGeneratedDocument(doc);
-      reload();
+      await reload();
     } catch (error) {
       setMessage(String(error?.message || error));
     } finally {
@@ -70,11 +92,11 @@ export default function GeneratedDocumentsPage() {
       if (doc.status !== "done") latest = await refreshGeneratedDocument(doc);
       if (latest.status !== "done") {
         setMessage("Le document n'est pas encore prêt. Réessaie dans quelques minutes.");
-        reload();
+        await reload();
         return;
       }
       await downloadGeneratedDocument(latest);
-      reload();
+      await reload();
     } catch (error) {
       setMessage(String(error?.message || error));
     } finally {
@@ -93,15 +115,33 @@ export default function GeneratedDocumentsPage() {
         }
       }
     }
-    reload();
+    await reload();
   }
 
   useEffect(() => {
+    let alive = true;
+    async function initialLoad() {
+      setLoading(true);
+      try {
+        const rows = await syncGeneratedDocuments(API_BASE);
+        if (alive) setDocuments(rows);
+      } catch (error) {
+        if (alive) {
+          setMessage(String(error?.message || error));
+          setDocuments(listGeneratedDocuments());
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    void initialLoad();
     window.addEventListener("online", refreshAll);
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") refreshAll();
     }, 15000);
     return () => {
+      alive = false;
       window.removeEventListener("online", refreshAll);
       window.clearInterval(timer);
     };
@@ -115,8 +155,9 @@ export default function GeneratedDocumentsPage() {
           <h1 className="mt-1 text-2xl font-semibold text-slate-950">Mes documents générés</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
             Quand une génération démarre, elle continue côté serveur. Si votre connexion coupe ou si l'ordinateur s'éteint,
-            revenez ici après reconnexion pour vérifier le statut et télécharger le fichier.
+            reconnectez-vous à votre compte pour vérifier le statut et télécharger le fichier.
           </p>
+          {user?.email ? <p className="mt-1 text-xs text-slate-500">Compte : {user.email}</p> : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -124,15 +165,15 @@ export default function GeneratedDocumentsPage() {
             onClick={refreshAll}
             className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
-            Actualiser
+            {loading ? "Chargement..." : "Actualiser"}
           </button>
           {documents.length ? (
             <button
               type="button"
               onClick={() => {
-                if (!confirm("Vider l'historique local des documents ?")) return;
-                clearGeneratedDocuments();
-                reload();
+                if (!confirm("Supprimer l'historique des documents de votre compte ?")) return;
+                clearGeneratedDocuments(API_BASE);
+                void reload();
               }}
               className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
             >
@@ -154,7 +195,7 @@ export default function GeneratedDocumentsPage() {
 
       {!documents.length ? (
         <div className="mt-8 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-          <div className="text-lg font-semibold text-slate-900">Aucun document enregistré sur cet appareil</div>
+          <div className="text-lg font-semibold text-slate-900">Aucun document enregistré sur votre compte</div>
           <p className="mt-2 text-sm text-slate-600">
             Lancez une génération depuis Business Plan, Mémoire, Projet ONG ou Excel. Le suivi apparaîtra ici automatiquement.
           </p>
@@ -201,7 +242,7 @@ export default function GeneratedDocumentsPage() {
                     type="button"
                     onClick={() => {
                       removeGeneratedDocument(doc.id);
-                      reload();
+                      void reload();
                     }}
                     disabled={Boolean(busy[doc.id])}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 disabled:opacity-60"

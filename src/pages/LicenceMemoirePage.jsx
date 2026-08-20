@@ -419,7 +419,7 @@ if (!ct.includes("application/pdf")) {
               disabled={isGenerating}
               className="rounded-2xl px-5 py-3 font-semibold border border-white/10 bg-white/10 hover:bg-white/15 transition disabled:opacity-60"
             >
-              {isGenerating ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger (PDF)"}
+              {isGenerating ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Payer et générer le mémoire" : "Générer & Télécharger (PDF)"}
             </button>
 
             {lastPdfUrl && (
