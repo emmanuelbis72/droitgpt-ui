@@ -1,5 +1,8 @@
 // src/pages/ExcelAppsPage.jsx
 import React, { useEffect, useRef, useState } from "react";
+import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
+import { clearStoredPayment } from "../services/paymentsApi.js";
+import { generationHeaders } from "../utils/generationClient.js";
 
 const API_BASE =
   import.meta.env.VITE_BP_API_BASE || "https://businessplan-v9yy.onrender.com";
@@ -24,6 +27,9 @@ export default function ExcelAppsPage() {
   const [progress, setProgress] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState(null);
   const [error, setError] = useState(null);
+  const [paymentRequired, setPaymentRequired] = useState(false);
+  const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentResetSignal, setPaymentResetSignal] = useState(0);
 
   const startTimeRef = useRef(null);
   const progressTimerRef = useRef(null);
@@ -43,11 +49,20 @@ export default function ExcelAppsPage() {
     setError(null);
     setDownloadUrl(null);
     setProgress(0);
+
+    if (paymentRequired && !paymentOrderNumber) {
+      setError("Valide d'abord le paiement Mobile Money avant de lancer la génération.");
+      return;
+    }
+
     setStatus("starting");
 
     const res = await fetch(`${API_BASE}/generate-excel-app?async=1`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: generationHeaders({
+        "Content-Type": "application/json",
+        ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+      }),
       body: JSON.stringify({
         lang,
         ctx: {
@@ -73,6 +88,11 @@ export default function ExcelAppsPage() {
     }
 
     setJobId(data.jobId);
+    if (paymentOrderNumber) {
+      clearStoredPayment("excel_app");
+      setPaymentOrderNumber("");
+      setPaymentResetSignal((value) => value + 1);
+    }
     setStatus("running");
     startTimeRef.current = Date.now();
     startProgressTimer();
@@ -115,6 +135,17 @@ export default function ExcelAppsPage() {
         </div>
 
         <div className="px-6 py-6 bg-slate-950/60">
+          <MobileMoneyPayment
+            apiBase={API_BASE}
+            documentType="excel_app"
+            variant="dark"
+            disabled={status === "starting" || status === "running"}
+            resetSignal={paymentResetSignal}
+            onRequirementChange={setPaymentRequired}
+            onPaymentReady={setPaymentOrderNumber}
+            className="mb-6"
+          />
+
           <div className="grid grid-cols-1 gap-4">
             <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
               <label className="text-xs text-slate-300">Template</label>
@@ -143,8 +174,12 @@ export default function ExcelAppsPage() {
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="mt-1 w-full rounded-xl bg-slate-950/70 border border-white/10 p-3 text-sm outline-none" />
             </div>
 
-            <button onClick={handleGenerate} disabled={status === "starting" || status === "running"} className="rounded-2xl px-6 py-4 font-semibold bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 transition disabled:opacity-60">
-              🚀 Générer le progiciel Excel
+            <button
+              onClick={handleGenerate}
+              disabled={status === "starting" || status === "running" || (paymentRequired && !paymentOrderNumber)}
+              className="rounded-2xl px-6 py-4 font-semibold bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 transition disabled:opacity-60"
+            >
+              {paymentRequired && !paymentOrderNumber ? "Paiement requis" : "🚀 Générer le progiciel Excel"}
             </button>
 
             {status !== "idle" && (
