@@ -15,6 +15,7 @@ export default function Navbar() {
       { to: "/grants", label: "Grants" },
       { to: "/ong", label: "Projets ONG" }, // ✅ NEW
       { to: "/memoire", label: "Mémoire" },
+      { to: "/documents", label: "Mes documents" },
     ],
     []
   );

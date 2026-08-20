@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
+import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 
@@ -172,6 +173,7 @@ export default function BusinessPlanPremiumPage() {
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
+  const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
   // Last generated files (for re-download without regenerating)
   const [lastGenerateFile, setLastGenerateFile] = useState({ url: "", name: "" });
@@ -451,6 +453,22 @@ export default function BusinessPlanPremiumPage() {
 
       const statusUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}`;
       const resultUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}/result`;
+      const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
+      upsertGeneratedDocument({
+        documentType: "businessplan",
+        title: form.companyName || "Business Plan",
+        fileName: fname,
+        jobId,
+        statusUrl,
+        resultUrl,
+        apiBase: API_BASE,
+        paymentOrderNumber,
+      });
+      if (paymentOrderNumber) {
+        clearStoredPayment("businessplan");
+        setPaymentOrderNumber("");
+        setPaymentResetSignal((value) => value + 1);
+      }
 
       // 2) Poll status (léger, 4s)
       while (true) {
@@ -460,6 +478,7 @@ export default function BusinessPlanPremiumPage() {
           throw new Error(t || `HTTP ${stRes.status}`);
         }
         const st = await stRes.json();
+        updateGeneratedDocument(jobId, { status: st.status, error: st.error || null, doneAt: st.doneAt || null });
         if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
         if (st.status === "done") break;
         await new Promise((r) => setTimeout(r, 4000));
@@ -479,16 +498,11 @@ export default function BusinessPlanPremiumPage() {
       }
 
       const blob = await pdfRes.blob();
-      const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
       setPersistentDownload("generate", blob, fname);
+      updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
 
       stopFakeProgress("Téléchargement prêt ✅");
       setSuccessHint("Ton business plan a été généré et téléchargé.");
-      if (paymentOrderNumber) {
-        clearStoredPayment("businessplan");
-        setPaymentOrderNumber("");
-        setPaymentResetSignal((value) => value + 1);
-      }
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -551,15 +565,63 @@ export default function BusinessPlanPremiumPage() {
       if (draftFile) fd.append("file", draftFile);
       if (!draftFile) fd.append("text", form.rewriteTextFallback || "");
 
-      // IMPORTANT : cet endpoint est “optionnel”.
-      // Si tu ne l’as pas encore côté backend, tu auras un message clair.
-      const res = await fetch(endpointRewrite, {
+      const startRes = await fetch(`${endpointRewrite}?async=1`, {
         method: "POST",
         headers: generationHeaders(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
         body: fd,
         signal: controller.signal,
       });
 
+      if (!startRes.ok) {
+        let details = "";
+        try {
+          const j = await startRes.json();
+          details = j?.details || j?.error || JSON.stringify(j);
+        } catch {
+          details = await startRes.text();
+        }
+
+        throw new Error(details || `HTTP ${startRes.status}`);
+      }
+
+      const started = await startRes.json();
+      const jobId = started?.jobId;
+      if (!jobId) throw new Error("JOB_ID manquant pour la correction.");
+
+      const fname = `${safeFilename(form.companyName)}_BusinessPlan_CORRIGE_${prettyDate()}.pdf`;
+      const statusUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}`;
+      const resultUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}/result`;
+      upsertGeneratedDocument({
+        documentType: "businessplan_rewrite",
+        title: `${form.companyName || "Business Plan"} - correction`,
+        fileName: fname,
+        jobId,
+        statusUrl,
+        resultUrl,
+        apiBase: API_BASE,
+        paymentOrderNumber,
+      });
+      if (paymentOrderNumber) {
+        clearStoredPayment("businessplan");
+        setPaymentOrderNumber("");
+        setPaymentResetSignal((value) => value + 1);
+      }
+
+      setStatusText("Correction en cours... (mode job)");
+      while (true) {
+        const stRes = await fetch(statusUrl, { signal: controller.signal });
+        if (!stRes.ok) {
+          const t = await stRes.text();
+          throw new Error(t || `HTTP ${stRes.status}`);
+        }
+        const st = await stRes.json();
+        updateGeneratedDocument(jobId, { status: st.status, error: st.error || null, doneAt: st.doneAt || null });
+        if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
+        if (st.status === "done") break;
+        await new Promise((r) => setTimeout(r, 4000));
+      }
+
+      const res = await fetch(resultUrl, { signal: controller.signal });
       if (!res.ok) {
         let details = "";
         try {
@@ -568,29 +630,15 @@ export default function BusinessPlanPremiumPage() {
         } catch {
           details = await res.text();
         }
-
-        // Cas fréquent : endpoint pas encore créé
-        if (res.status === 404) {
-          throw new Error(
-            "Le mode 'Corriger un brouillon' n’est pas encore activé côté backend (endpoint /premium/rewrite). " +
-              "Dis-moi et je te fournis le handler Express prêt-à-coller (upload + extraction + génération PDF)."
-          );
-        }
-
         throw new Error(details || `HTTP ${res.status}`);
       }
 
       const blob = await res.blob();
-      const fname = `${safeFilename(form.companyName)}_BusinessPlan_CORRIGE_${prettyDate()}.pdf`;
       setPersistentDownload("rewrite", blob, fname);
+      updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
 
       stopFakeProgress("Téléchargement prêt ✅");
       setSuccessHint("Ton brouillon a été corrigé et converti en version professionnelle.");
-      if (paymentOrderNumber) {
-        clearStoredPayment("businessplan");
-        setPaymentOrderNumber("");
-        setPaymentResetSignal((value) => value + 1);
-      }
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -763,6 +811,7 @@ strategicPartnerships:
           variant="dark"
           disabled={loading}
           resetSignal={paymentResetSignal}
+          openSignal={paymentOpenSignal}
           className="mb-6"
           onRequirementChange={setPaymentRequired}
           onPaymentReady={setPaymentOrderNumber}
@@ -1162,8 +1211,9 @@ strategicPartnerships:
 
                 <div className="flex flex-col items-end">
                   <button
-                    type="submit"
-                    disabled={loading || (paymentRequired && !paymentOrderNumber)}
+                    type={paymentRequired && !paymentOrderNumber ? "button" : "submit"}
+                    onClick={paymentRequired && !paymentOrderNumber ? () => setPaymentOpenSignal((value) => value + 1) : undefined}
+                    disabled={loading}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
                     {loading ? "Génération…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger"}
@@ -1318,8 +1368,9 @@ strategicPartnerships:
 
                 <div className="flex flex-col items-end">
                   <button
-                    type="submit"
-                    disabled={loading || (paymentRequired && !paymentOrderNumber)}
+                    type={paymentRequired && !paymentOrderNumber ? "button" : "submit"}
+                    onClick={paymentRequired && !paymentOrderNumber ? () => setPaymentOpenSignal((value) => value + 1) : undefined}
+                    disabled={loading}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
                     {loading ? "Correction…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Corriger & Télécharger"}

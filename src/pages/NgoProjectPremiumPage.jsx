@@ -3,6 +3,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
+import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 const API_BASE = (import.meta?.env?.VITE_BP_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
@@ -110,6 +111,7 @@ export default function NgoProjectPremiumPage() {
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
+  const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
   const abortRef = useRef(null);
   const progressTimerRef = useRef(null);
@@ -242,6 +244,22 @@ export default function NgoProjectPremiumPage() {
 
       const statusUrl = `${API_BASE}/generate-ngo-project/premium/jobs/${encodeURIComponent(jobId)}`;
       const resultUrl = `${API_BASE}/generate-ngo-project/premium/jobs/${encodeURIComponent(jobId)}/result`;
+      const fname = `${safeFilename(form.organization)}_Projet_ONG_Premium_${prettyDate()}.pdf`;
+      upsertGeneratedDocument({
+        documentType: "ngo_project",
+        title: form.projectTitle || "Projet ONG",
+        fileName: fname,
+        jobId,
+        statusUrl,
+        resultUrl,
+        apiBase: API_BASE,
+        paymentOrderNumber,
+      });
+      if (paymentOrderNumber) {
+        clearStoredPayment("ngo_project");
+        setPaymentOrderNumber("");
+        setPaymentResetSignal((value) => value + 1);
+      }
 
       setStatusText("Génération en cours… (mode job)");
 
@@ -266,6 +284,7 @@ export default function NgoProjectPremiumPage() {
           throw new Error(t || "Réponse backend invalide (status).");
         }
 
+        updateGeneratedDocument(jobId, { status: st.status, error: st.error || null, doneAt: st.doneAt || null });
         if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
         if (st.status === "rejected") throw new Error(st.error || "Job rejeté.");
         if (st.status === "done") break;
@@ -293,16 +312,11 @@ export default function NgoProjectPremiumPage() {
       }
 
       const blob = await pdfRes.blob();
-      const fname = `${safeFilename(form.organization)}_Projet_ONG_Premium_${prettyDate()}.pdf`;
       setPersistentDownload(blob, fname);
+      updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
 
       stopFakeProgress("Téléchargement prêt ✅");
       setSuccessHint("Ton projet ONG Premium a été généré et téléchargé.");
-      if (paymentOrderNumber) {
-        clearStoredPayment("ngo_project");
-        setPaymentOrderNumber("");
-        setPaymentResetSignal((value) => value + 1);
-      }
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -346,6 +360,7 @@ export default function NgoProjectPremiumPage() {
         variant="light"
         disabled={loading}
         resetSignal={paymentResetSignal}
+        openSignal={paymentOpenSignal}
         onRequirementChange={setPaymentRequired}
         onPaymentReady={setPaymentOrderNumber}
       />
@@ -568,8 +583,9 @@ export default function NgoProjectPremiumPage() {
 
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
             <button
-              type="submit"
-              disabled={loading || (paymentRequired && !paymentOrderNumber)}
+              type={paymentRequired && !paymentOrderNumber ? "button" : "submit"}
+              onClick={paymentRequired && !paymentOrderNumber ? () => setPaymentOpenSignal((value) => value + 1) : undefined}
+              disabled={loading}
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
             >
               {paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger (PDF)"}

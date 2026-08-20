@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
+import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
 import { generationHeaders } from "../utils/generationClient.js";
 
 const API_BASE =
@@ -30,6 +31,7 @@ export default function ExcelAppsPage() {
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
+  const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
   const startTimeRef = useRef(null);
   const progressTimerRef = useRef(null);
@@ -88,6 +90,18 @@ export default function ExcelAppsPage() {
     }
 
     setJobId(data.jobId);
+    const statusUrl = `${API_BASE}/generate-excel-app/jobs/${encodeURIComponent(data.jobId)}`;
+    const resultUrl = `${API_BASE}/generate-excel-app/jobs/${encodeURIComponent(data.jobId)}/result`;
+    upsertGeneratedDocument({
+      documentType: "excel_app",
+      title: appName || selected?.title || "Progiciel Excel",
+      fileName: `${String(appName || selected?.title || "progiciel-excel").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80)}.xlsx`,
+      jobId: data.jobId,
+      statusUrl,
+      resultUrl,
+      apiBase: API_BASE,
+      paymentOrderNumber,
+    });
     if (paymentOrderNumber) {
       clearStoredPayment("excel_app");
       setPaymentOrderNumber("");
@@ -104,6 +118,7 @@ export default function ExcelAppsPage() {
       const r = await fetch(`${API_BASE}/generate-excel-app/jobs/${jobId}`).catch(() => null);
       const j = r ? await r.json().catch(() => null) : null;
       if (!j) return;
+      updateGeneratedDocument(jobId, { status: j.status, error: j.error || null, doneAt: j.doneAt || null });
 
       if (j.status === "error") {
         clearInterval(poll);
@@ -119,6 +134,7 @@ export default function ExcelAppsPage() {
         setProgress(100);
         setStatus("done");
         setDownloadUrl(`${API_BASE}/generate-excel-app/jobs/${jobId}/result`);
+        updateGeneratedDocument(jobId, { status: "done", doneAt: new Date().toISOString() });
       }
     }, 4000);
 
@@ -141,6 +157,7 @@ export default function ExcelAppsPage() {
             variant="dark"
             disabled={status === "starting" || status === "running"}
             resetSignal={paymentResetSignal}
+            openSignal={paymentOpenSignal}
             onRequirementChange={setPaymentRequired}
             onPaymentReady={setPaymentOrderNumber}
             className="mb-6"
@@ -175,8 +192,8 @@ export default function ExcelAppsPage() {
             </div>
 
             <button
-              onClick={handleGenerate}
-              disabled={status === "starting" || status === "running" || (paymentRequired && !paymentOrderNumber)}
+              onClick={paymentRequired && !paymentOrderNumber ? () => setPaymentOpenSignal((value) => value + 1) : handleGenerate}
+              disabled={status === "starting" || status === "running"}
               className="rounded-2xl px-6 py-4 font-semibold bg-gradient-to-r from-emerald-500 to-indigo-500 hover:from-emerald-600 hover:to-indigo-600 transition disabled:opacity-60"
             >
               {paymentRequired && !paymentOrderNumber ? "Paiement requis" : "🚀 Générer le progiciel Excel"}
@@ -198,7 +215,13 @@ export default function ExcelAppsPage() {
             )}
 
             {downloadUrl && (
-              <a href={downloadUrl} target="_blank" rel="noreferrer" className="text-center rounded-2xl px-6 py-4 font-semibold border border-emerald-400/50 bg-slate-900/60 hover:bg-slate-900 transition">
+              <a
+                href={downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => jobId && updateGeneratedDocument(jobId, { downloadedAt: new Date().toISOString() })}
+                className="text-center rounded-2xl px-6 py-4 font-semibold border border-emerald-400/50 bg-slate-900/60 hover:bg-slate-900 transition"
+              >
                 ⬇️ Télécharger le fichier Excel (.xlsx)
               </a>
             )}

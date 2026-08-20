@@ -53,6 +53,7 @@ import GrantsManagementPage from "./pages/GrantsManagementPage.jsx";
 
 // ✅ Excel Apps (progiciels Excel)
 import ExcelAppsPage from "./pages/ExcelAppsPage.jsx";
+import GeneratedDocumentsPage from "./pages/GeneratedDocumentsPage.jsx";
 
 function JusticeLabResultsFallback() {
   try {
@@ -93,6 +94,15 @@ function App() {
               element={
                 <ProtectedRoute>
                   <ExcelAppsPage />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/documents"
+              element={
+                <ProtectedRoute>
+                  <GeneratedDocumentsPage />
                 </ProtectedRoute>
               }
             />

@@ -217,6 +217,20 @@ export default function Home() {
               </div>
             </Link>
 
+            <Link
+              to="/documents"
+              className="group rounded-2xl border border-sky-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-sky-300 hover:bg-slate-900 transition"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xl">📂</span>
+                <span className="text-[10px] uppercase tracking-[0.18em] text-sky-300">Suivi</span>
+              </div>
+              <h2 className="mt-1 text-lg font-semibold">Mes documents générés</h2>
+              <p className="text-xs text-slate-300">
+                Retrouvez les générations en cours ou terminées après une coupure Internet ou une reconnexion.
+              </p>
+            </Link>
+
             {/* 5) Génération de documents */}
             <Link
               to="/generate"

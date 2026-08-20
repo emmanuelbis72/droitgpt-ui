@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
+import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 const API_BASE = import.meta.env.VITE_ACADEMIC_API_BASE || import.meta.env.VITE_BP_API_BASE || import.meta.env.VITE_API_BASE || DEFAULT_API_BASE;
@@ -70,6 +71,7 @@ const [mode, setMode] = useState("standard"); // standard | droit_congolais
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
+  const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
   const lastPdfUrlRef = useRef("");
   const revokeLastPdfUrl = () => {
@@ -192,6 +194,22 @@ try {
 
   const statusUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}`;
   const resultUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}/result`;
+  const fileName = `memoire_licence_${(form.topic || "droit").slice(0, 40).replace(/\s+/g, "_")}.pdf`;
+  upsertGeneratedDocument({
+    documentType: "memoire",
+    title: form.topic || "Mémoire de licence",
+    fileName,
+    jobId,
+    statusUrl,
+    resultUrl,
+    apiBase: apiBase,
+    paymentOrderNumber,
+  });
+  if (paymentOrderNumber) {
+    clearStoredPayment("memoire");
+    setPaymentOrderNumber("");
+    setPaymentResetSignal((value) => value + 1);
+  }
 
   while (true) {
     const statusRes = await fetch(statusUrl, { signal: controller.signal });
@@ -201,6 +219,7 @@ try {
     }
 
     const st = await statusRes.json();
+    updateGeneratedDocument(jobId, { status: st.status, error: st.error || null, doneAt: st.doneAt || null });
     if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
     if (st.status === "done") break;
     await wait(4000);
@@ -238,15 +257,11 @@ if (!ct.includes("application/pdf")) {
 
       const a = document.createElement("a");
       a.href = url;
-      a.download = `memoire_licence_${(form.topic || "droit").slice(0, 40).replace(/\s+/g, "_")}.pdf`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      if (paymentOrderNumber) {
-        clearStoredPayment("memoire");
-        setPaymentOrderNumber("");
-        setPaymentResetSignal((value) => value + 1);
-      }
+      updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
 } catch (e) {
   const msg = String(e?.name === "AbortError"
     ? "La génération a dépassé le temps limite. Réessaye (ou augmente le timeout côté frontend)."
@@ -282,6 +297,7 @@ if (!ct.includes("application/pdf")) {
             variant="dark"
             disabled={isGenerating}
             resetSignal={paymentResetSignal}
+            openSignal={paymentOpenSignal}
             onRequirementChange={setPaymentRequired}
             onPaymentReady={setPaymentOrderNumber}
           />
@@ -399,8 +415,8 @@ if (!ct.includes("application/pdf")) {
           <div className="flex flex-col gap-3">
             <button
               type="button"
-              onClick={generateMemoire}
-              disabled={isGenerating || (paymentRequired && !paymentOrderNumber)}
+              onClick={paymentRequired && !paymentOrderNumber ? () => setPaymentOpenSignal((value) => value + 1) : generateMemoire}
+              disabled={isGenerating}
               className="rounded-2xl px-5 py-3 font-semibold border border-white/10 bg-white/10 hover:bg-white/15 transition disabled:opacity-60"
             >
               {isGenerating ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Paiement requis" : "Générer & Télécharger (PDF)"}
