@@ -62,6 +62,18 @@ export function crawlGrants(payload, cronSecret) {
   });
 }
 
+export function getGrantPatrolStatus() {
+  return request("/patrol/status");
+}
+
+export function runGrantPatrol(payload = {}, cronSecret) {
+  return request("/patrol/run", {
+    method: "POST",
+    headers: cronSecret ? { "X-Cron-Secret": cronSecret } : {},
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getGrantJob(id) {
   return request(`/jobs/${encodeURIComponent(id)}`);
 }
