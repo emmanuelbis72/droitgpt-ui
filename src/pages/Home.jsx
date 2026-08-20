@@ -13,7 +13,7 @@ export default function Home() {
             </div>
             <h1 className="text-3xl font-semibold mt-1">DroitGPT</h1>
             <p className="mt-1 text-sm text-slate-300">
-              Discutez, analysez et générez des documents juridiques avec un assistant intelligent.
+              Discutez et générez des documents juridiques avec un assistant intelligent.
             </p>
           </div>
 
@@ -38,8 +38,8 @@ export default function Home() {
           <div className="flex flex-col items-center text-center gap-3">
             <h2 className="text-xl font-semibold">Accédez à toutes les fonctionnalités de DroitGPT</h2>
             <p className="text-sm text-slate-300 max-w-xl">
-              Créez gratuitement votre compte pour discuter avec l’assistant juridique, analyser vos documents et
-              générer des actes juridiques en quelques secondes.
+              Créez gratuitement votre compte pour discuter avec l’assistant juridique et générer des documents
+              professionnels en quelques secondes.
             </p>
 
             <Link
@@ -215,21 +215,6 @@ export default function Home() {
                   ⚖️ Appel
                 </span>
               </div>
-            </Link>
-
-            {/* 4) Analyse de documents */}
-            <Link
-              to="/analyse"
-              className="group rounded-2xl border border-sky-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-sky-300 hover:bg-slate-900 transition"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xl">📄</span>
-                <span className="text-[10px] uppercase tracking-[0.18em] text-sky-300">Analyse</span>
-              </div>
-              <h2 className="mt-1 text-lg font-semibold">Analyse de documents</h2>
-              <p className="text-xs text-slate-300">
-                Téléversez un document juridique (PDF ou Word) et obtenez une analyse claire.
-              </p>
             </Link>
 
             {/* 5) Génération de documents */}

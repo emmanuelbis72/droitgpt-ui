@@ -1,5 +1,6 @@
 // src/pages/NgoProjectPremiumPage.jsx
 import React, { useMemo, useRef, useState } from "react";
+import { generationHeaders } from "../utils/generationClient.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 const API_BASE = (import.meta?.env?.VITE_BP_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
@@ -198,7 +199,7 @@ export default function NgoProjectPremiumPage() {
       try {
         startRes = await fetch(`${endpointNgo}?async=1`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: generationHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(payload),
           signal: controller.signal,
         });

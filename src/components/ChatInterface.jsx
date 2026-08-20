@@ -281,10 +281,6 @@ export default function ChatInterface() {
                 📝 Générer document
               </Link>
 
-              <Link to="/analyse" className="px-3 py-1.5 rounded-full border border-amber-500/80 text-amber-200">
-                📂 Analyse document
-              </Link>
-
               <Link to="/assistant-vocal" className="px-3 py-1.5 rounded-full border border-emerald-500/80 text-emerald-200">
                 🎤 Assistant vocal
               </Link>

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { generationHeaders } from "../utils/generationClient.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 const API_BASE = import.meta.env.VITE_ACADEMIC_API_BASE || import.meta.env.VITE_BP_API_BASE || import.meta.env.VITE_API_BASE || DEFAULT_API_BASE;
@@ -11,6 +12,23 @@ const METHODS = [
 
 const INPUT =
   "w-full rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-50 outline-none placeholder:text-slate-500 focus:border-emerald-400/70 focus:ring-2 focus:ring-emerald-400/10";
+
+async function readResponseError(res) {
+  try {
+    const ct = (res?.headers?.get("content-type") || "").toLowerCase();
+    if (ct.includes("application/json")) {
+      const j = await res.json();
+      return j?.details || j?.error || JSON.stringify(j);
+    }
+    return (await res.text()) || "";
+  } catch (e) {
+    return String(e?.message || e);
+  }
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export default function LicenceMemoirePage() {
   
@@ -133,34 +151,62 @@ if (elapsed >= totalSec) {
         faculty: mode === "droit_congolais" ? "Droit" : form.faculty,
       };
 
-const endpoint = `${API_BASE}/generate-academic/licence-memoire`;
-console.log("[Memoire] POST", endpoint);
+const apiBase = API_BASE.replace(/\/$/, "");
+const endpoint = `${apiBase}/generate-academic/licence-memoire`;
+console.log("[Memoire] POST", `${endpoint}?async=1`);
 
-// ✅ Timeout (mémoire ~70 pages peut être long). 45 minutes par défaut.
+// ✅ Timeout local large; le backend continue en job si le navigateur se met en veille.
 const controller = new AbortController();
 const timeoutMs = Number(import.meta.env.VITE_ACADEMIC_TIMEOUT_MS || 45 * 60 * 1000);
 const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
 let r;
 try {
-  r = await fetch(endpoint, {
+  const startRes = await fetch(`${endpoint}?async=1`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: generationHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
     signal: controller.signal,
   });
+
+  if (!startRes.ok) {
+    const txt = await readResponseError(startRes);
+    throw new Error(txt || `Erreur serveur (${startRes.status})`);
+  }
+
+  const started = await startRes.json();
+  const jobId = started?.jobId;
+  if (!jobId) throw new Error("JOB_ID manquant (backend ?async=1 non actif).");
+
+  const statusUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}`;
+  const resultUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}/result`;
+
+  while (true) {
+    const statusRes = await fetch(statusUrl, { signal: controller.signal });
+    if (!statusRes.ok) {
+      const txt = await readResponseError(statusRes);
+      throw new Error(txt || `Erreur statut job (${statusRes.status})`);
+    }
+
+    const st = await statusRes.json();
+    if (st.status === "error") throw new Error(st.error || "Erreur job inconnue.");
+    if (st.status === "done") break;
+    await wait(4000);
+  }
+
+  r = await fetch(resultUrl, { signal: controller.signal });
 } finally {
   window.clearTimeout(timeoutId);
 }
 
 if (!r.ok) {
-  const txt = await r.text().catch(() => "");
+  const txt = await readResponseError(r);
   throw new Error(txt || `Erreur serveur (${r.status})`);
 }
 
 const ct = (r.headers.get("content-type") || "").toLowerCase();
 if (!ct.includes("application/pdf")) {
-  const txt = await r.text().catch(() => "");
+  const txt = await readResponseError(r);
   throw new Error(txt || `Réponse inattendue (Content-Type: ${ct || "inconnu"})`);
 }
 

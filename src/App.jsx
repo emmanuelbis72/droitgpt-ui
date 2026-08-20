@@ -15,7 +15,6 @@ import Admin from "./pages/Admin.jsx";
 // Pages / components
 import ChatInterface from "./components/ChatInterface.jsx";
 import Generate from "./components/Generate.jsx";
-import Analyse from "./components/Analyse.jsx";
 import AssistantVocal from "./components/AssistantVocal.jsx";
 
 // Auth UI
@@ -152,15 +151,6 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Generate />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/analyse"
-              element={
-                <ProtectedRoute>
-                  <Analyse />
                 </ProtectedRoute>
               }
             />

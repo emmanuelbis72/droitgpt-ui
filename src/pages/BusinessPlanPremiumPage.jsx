@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { generationHeaders } from "../utils/generationClient.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 
@@ -415,7 +416,7 @@ export default function BusinessPlanPremiumPage() {
       // 1) Start JOB
       const startRes = await fetch(`${endpointGenerate}?async=1`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: generationHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
@@ -534,6 +535,7 @@ export default function BusinessPlanPremiumPage() {
       // Si tu ne l’as pas encore côté backend, tu auras un message clair.
       const res = await fetch(endpointRewrite, {
         method: "POST",
+        headers: generationHeaders(),
         body: fd,
         signal: controller.signal,
       });

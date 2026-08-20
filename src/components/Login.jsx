@@ -52,7 +52,7 @@ export default function Login() {
 
         <h1 className="text-xl font-semibold">Se connecter</h1>
         <p className="text-xs text-slate-400 mt-1">
-          Accès requis pour utiliser le chat, l’analyse, l’assistant vocal et la génération PDF.
+          Accès requis pour utiliser le chat, l’assistant vocal et la génération PDF.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-3">

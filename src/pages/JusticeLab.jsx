@@ -5,14 +5,10 @@ import {
   CASES,
   generateCase, // (laissé pour compat si utilisé ailleurs / futur)
   generateCaseAIByDomain,
-  importCaseFromDocumentText,
   listGeneratedCases,
 } from "../justiceLab/cases";
 
 const MAX_DYNAMIC_VISIBLE = 24;
-
-// ✅ Base Render analyse par défaut (si VITE_ANALYSE_BASE absent)
-const DEFAULT_ANALYSE_BASE = "https://droitgpt-analysepdf.onrender.com";
 
 function formatDomainLabel(d) {
   const map = {
@@ -54,22 +50,6 @@ function getApiBase() {
     (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) ||
     "https://droitgpt-indexer.onrender.com";
   return String(base).replace(/\/$/, "");
-}
-
-function getAnalyseBase() {
-  /**
-   * ✅ FIX CRITIQUE:
-   * - si VITE_ANALYSE_BASE est défini => on l’utilise
-   * - sinon => on force le service Render officiel (DEFAULT_ANALYSE_BASE)
-   * (évite les 404 si Vercel ne charge pas les envs)
-   */
-  const base =
-    (typeof import.meta !== "undefined" &&
-      (import.meta.env?.VITE_ANALYSE_BASE || import.meta.env?.VITE_ANALYSE_URL)) ||
-    "";
-
-  const resolved = base && String(base).trim() !== "" ? base : DEFAULT_ANALYSE_BASE;
-  return String(resolved).replace(/\/$/, "");
 }
 
 export default function JusticeLab() {
@@ -316,167 +296,12 @@ export default function JusticeLab() {
     }
   }
 
-  // ✅ Import dossier réel (PDF/DOCX)
-  async function handleImportPdf(file) {
-    setImportError("");
-    if (!file) return;
-
-    // Annule l’import précédent si l’utilisateur relance (évite abort “sans raison”)
-    try {
-      if (importAbortRef.current) importAbortRef.current.abort();
-    } catch {}
-    importAbortRef.current = new AbortController();
-    const { signal } = importAbortRef.current;
-
-    const ext = String(file.name || "").toLowerCase();
-    const isPdf = ext.endsWith(".pdf");
-    const isDocx = ext.endsWith(".docx");
-    if (!isPdf && !isDocx) {
-      setImportError("Format non supporté. Importer un PDF ou un DOCX.");
-      if (fileRef.current) fileRef.current.value = "";
-      return;
-    }
-
-    setImporting(true);
-
-    // ✅ progress bar : démarre immédiatement (12s minimum)
-    const MIN_MS = 20000;
-    const startAt = Date.now();
+  // Import dossier reel desactive pour reduire les couts Render.
+  async function handleImportPdf(_file) {
+    setImportError("Import PDF/DOCX désactivé pour réduction des coûts Render. Crée le dossier avec le générateur de texte ci-dessus.");
     setImportProgress(0);
-    if (importProgressTimerRef.current) {
-      clearInterval(importProgressTimerRef.current);
-      importProgressTimerRef.current = null;
-    }
-    importProgressTimerRef.current = setInterval(() => {
-      const elapsed = Date.now() - startAt;
-      const pct = Math.min(95, Math.round((elapsed / MIN_MS) * 100));
-      setImportProgress((prev) => (pct > prev ? pct : prev));
-    }, 120);
-
-    try {
-      // 1) Extraction (analyse-service)
-      const analyseBase = getAnalyseBase();
-
-      const candidates = [
-        `${analyseBase}/analyse/extract`,
-        `${analyseBase}/extract`,
-        `${analyseBase}/analyse-document/extract`,
-      ];
-
-      async function tryExtract(url) {
-  // ✅ nouveau FormData pour chaque tentative (body consommable)
-  const fd = new FormData();
-  fd.append("file", file);
-
-  // ✅ timeout dur (sinon progress reste bloqué si service ne répond pas)
-  const TIMEOUT_MS = 45000;
-  const fetchPromise = fetch(url, { method: "POST", body: fd, signal });
-
-  const r = await Promise.race([
-    fetchPromise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`EXTRACT_TIMEOUT_${TIMEOUT_MS}`)), TIMEOUT_MS)
-    ),
-  ]);
-
-  if (!r.ok) {
-    const txt = await r.text().catch(() => "");
-    const err = new Error(`EXTRACT_HTTP_${r.status}: ${txt.slice(0, 200)}`);
-    err.status = r.status;
-    err.body = txt;
-    throw err;
-  }
-  return r.json();
-}
-
-      let extracted = null;
-      let lastErr = null;
-      for (const url of candidates) {
-        try {
-          extracted = await tryExtract(url);
-          lastErr = null;
-          break;
-        } catch (e) {
-          lastErr = e;
-        }
-      }
-      if (!extracted) throw lastErr || new Error("EXTRACT_FAILED");
-
-      const documentText = extracted?.documentText || extracted?.text || extracted?.content || extracted?.data?.documentText || "";
-      if (!documentText || String(documentText).trim().length < 20) {
-        throw new Error("Texte extrait trop court ou vide.");
-      }
-
-      // 2) Génération du dossier jouable (backend JusticeLab)
-let imported = null;
-
-// 2) Génération du dossier jouable (backend JusticeLab) + fallback local si indisponible
-try {
-  imported = await importCaseFromDocumentText({
-        documentText,
-        filename: file.name,
-        domain: selectedDomain || "",
-        level:
-          selectedLevel === "débutant"
-            ? "Débutant"
-            : selectedLevel === "avancé"
-            ? "Avancé"
-            : "Intermédiaire",
-        apiBase: getApiBase(),
-        lang: "fr",
-      });
-} catch (err) {
-  // fallback local: construit un dossier jouable uniquement depuis le texte extrait
-  imported = await importCaseFromDocumentText({
-    documentText,
-    filename: file.name,
-    domain: selectedDomain || "",
-    level:
-      selectedLevel === "débutant"
-        ? "Débutant"
-        : selectedLevel === "avancé"
-        ? "Avancé"
-        : "Intermédiaire",
-    ai: false,
-    apiBase: getApiBase(),
-    lang: "fr",
-  });
-}
-
-
-      const elapsed = Date.now() - startAt;
-      const remain = Math.max(0, MIN_MS - elapsed);
-      if (remain) await new Promise((res) => setTimeout(res, remain));
-
-      // stop timer + force 100%
-      if (importProgressTimerRef.current) {
-        clearInterval(importProgressTimerRef.current);
-        importProgressTimerRef.current = null;
-      }
-      setImportProgress(100);
-
-      // Rafraîchit le cache IA visible
-      const gen = listGeneratedCases?.({ limit: MAX_DYNAMIC_VISIBLE }) || [];
-      setDynamicCases(Array.isArray(gen) ? gen.slice(0, MAX_DYNAMIC_VISIBLE) : []);
-
-      const caseId = imported?.caseId || imported?.id;
-      if (!caseId) throw new Error("Dossier importé invalide (caseId manquant).");
-      openCase(caseId);
-    } catch (e) {
-      // ✅ Si abort: on ignore (nouveau fichier / navigation / relance)
-      if (e?.name === "AbortError") return;
-      setImportError(e?.message || "Impossible d’importer le dossier.");
-      setImportProgress(0);
-    } finally {
-      importAbortRef.current = null;
-
-      if (importProgressTimerRef.current) {
-        clearInterval(importProgressTimerRef.current);
-        importProgressTimerRef.current = null;
-      }
-      setImporting(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
+    setImporting(false);
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   return (
@@ -607,11 +432,11 @@ try {
               </div>
             </div>
 
-            {/* ✅ Import PDF */}
+            {/* Import PDF/DOCX desactive pour reduire les couts Render */}
             <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-sm font-semibold">📎 Importer un dossier réel (PDF / Word)</div>
+              <div className="text-sm font-semibold">📎 Import PDF / Word désactivé</div>
               <div className="text-xs text-slate-400 mt-1">
-                Ajoute un PDF ou un Word (.docx) : on extrait le texte puis on génère un dossier jouable basé sur ce contenu.
+                Fonction suspendue pour réduire les coûts Render. Utilise le générateur de texte ci-dessus pour créer un dossier jouable.
               </div>
 
               <div className="mt-3 flex items-center gap-2">
@@ -623,15 +448,15 @@ try {
                   onChange={(e) => handleImportPdf(e.target.files?.[0])}
                 />
                 <button
-                  onClick={() => fileRef.current?.click()}
-                  disabled={importing}
-                  className="rounded-xl border border-slate-700 bg-slate-900/40 hover:bg-white/5 px-3 py-2 text-xs"
+                  onClick={() => handleImportPdf(null)}
+                  disabled
+                  className="rounded-xl border border-slate-700 bg-slate-900/40 px-3 py-2 text-xs opacity-50 cursor-not-allowed"
                 >
-                  {importing ? "Import..." : "Choisir un fichier"}
+                  Choisir un fichier
                 </button>
 
                 <span className="text-[11px] text-slate-500">
-                  Extraction + génération via backend (≈12s)
+                  Service analyse PDF non utilisé par le frontend.
                 </span>
               </div>
 

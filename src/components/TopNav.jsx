@@ -10,7 +10,7 @@ export default function Navbar() {
     () => [
       { to: "/", label: "Accueil" },
       { to: "/chat", label: "Chatbot" },
-      { to: "/analyse", label: "Analyse" },
+
       { to: "/bp", label: "Business Plan" },
       { to: "/memoire", label: "Mémoire" },
     ],
