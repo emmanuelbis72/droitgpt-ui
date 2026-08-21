@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import {
   getGrantAdvice,
   getGrantJob,
@@ -9,70 +10,32 @@ import {
   searchGrants,
   semanticSearchGrants,
 } from "../services/grantsApi.js";
+import { BUSINESS_PLAN_PACK_ITEMS, BUSINESS_PLAN_PACK_SUMMARY } from "../data/businessPlanPackCatalog.js";
 
-const CATEGORY_DEFS = [
-  {
-    id: "all",
-    label: "Toutes",
-    title: "Toutes les opportunités",
-    description: "Annuaire complet : financements, appels d'offres, bourses, concours et programmes.",
-    accent: "slate",
-    types: [],
-    query: "",
-  },
-  {
-    id: "entrepreneurs",
-    label: "Entrepreneurs",
-    title: "Entrepreneurs, startups et PME",
-    description: "Incubateurs, accélérateurs, concours, subventions d'innovation et programmes business.",
-    accent: "emerald",
-    types: ["accelerator", "competition", "grant"],
-    query: "startup entrepreneur PME accelerator incubateur concours innovation",
-  },
-  {
-    id: "tenders",
-    label: "Appels d'offres",
-    title: "Appels d'offres et marchés",
-    description: "Procurement, tenders, RFP/RFQ, marchés publics et avis d'appel d'offres.",
-    accent: "amber",
-    types: ["tender"],
-    query: "appel d'offres tender procurement marché public RFP RFQ",
-  },
-  {
-    id: "ngo",
-    label: "ONG",
-    title: "ONG, ASBL et appels à projets",
-    description: "Financements ONG, subventions, appels à propositions et programmes bailleurs.",
-    accent: "sky",
-    types: ["ngo_funding", "call_for_projects", "grant"],
-    query: "ONG ASBL civil society call for proposals financement subvention",
-  },
-  {
-    id: "scholarships",
-    label: "Bourses",
-    title: "Bourses, fellowships et formations",
-    description: "Bourses d'études, fellowships, formations internationales, masters et doctorats.",
-    accent: "indigo",
-    types: ["scholarship", "fellowship"],
-    query: "bourse scholarship fellowship formation master phd étudiant",
-  },
+const API_BASE = String(import.meta.env.VITE_BP_API_BASE || import.meta.env.VITE_API_BASE || "https://businessplan-v9yy.onrender.com").replace(/\/$/, "");
+
+const CATEGORIES = [
+  { id: "all", label: "Toutes", types: [], query: "opportunités entrepreneurs ONG bourses appels d'offres Afrique RDC" },
+  { id: "entrepreneurs", label: "Entrepreneurs", types: ["accelerator", "competition", "grant"], query: "startup entrepreneurs PME incubateur accélérateur concours Afrique RDC" },
+  { id: "ngo", label: "ONG", types: ["ngo_funding", "call_for_projects", "grant"], query: "financements ONG appels à projets Afrique francophone RDC" },
+  { id: "scholarships", label: "Bourses", types: ["scholarship", "fellowship"], query: "bourses fellowship formation étudiants Afrique RDC" },
+  { id: "tenders", label: "Appels d'offres", types: ["tender"], query: "appels d'offres marchés procurement tender RDC Afrique" },
 ];
 
 const TYPES = [
-  ["", "Tous les types"],
+  ["", "Tous"],
   ["grant", "Subvention"],
   ["ngo_funding", "Financement ONG"],
   ["call_for_projects", "Appel à projets"],
   ["tender", "Appel d'offres"],
   ["scholarship", "Bourse"],
   ["competition", "Concours"],
-  ["accelerator", "Accélérateur / incubateur"],
+  ["accelerator", "Accélérateur"],
   ["fellowship", "Fellowship"],
-  ["other", "Autre"],
 ];
 
 const SECTORS = [
-  ["", "Tous les secteurs"],
+  ["", "Tous"],
   ["entrepreneurship", "Entrepreneuriat"],
   ["education", "Éducation"],
   ["health", "Santé"],
@@ -81,216 +44,182 @@ const SECTORS = [
   ["digital", "Numérique"],
   ["women", "Femmes"],
   ["youth", "Jeunesse"],
-  ["governance", "Gouvernance"],
-  ["innovation", "Innovation"],
-  ["procurement", "Marchés / achats"],
-];
-
-const REGION_OPTIONS = [
-  ["", "Toutes régions"],
-  ["Africa", "Afrique"],
-  ["global", "Global"],
-  ["francophone", "Afrique francophone"],
-  ["RDC", "RDC"],
+  ["procurement", "Marchés"],
 ];
 
 const DEFAULT_FILTERS = {
   q: "",
   country: "RDC",
-  region: "",
   sector: "",
   type: "",
-  deadlineTo: "",
-  limit: 80,
 };
 
-const JOB_POLL_ATTEMPTS = 100;
-const JOB_POLL_INTERVAL_MS = 3000;
+const PACK_CATEGORIES = ["Tous", ...Array.from(new Set(BUSINESS_PLAN_PACK_ITEMS.map((item) => item.category))).sort()];
 
 export default function GrantsManagementPage() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
-  const [webSearch, setWebSearch] = useState({
-    query: "",
-    sites: "",
-    maxResults: 12,
-  });
   const [opportunities, setOpportunities] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [advice, setAdvice] = useState(null);
   const [patrol, setPatrol] = useState(null);
-  const [job, setJob] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
-  const [adviceLoading, setAdviceLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [advice, setAdvice] = useState(null);
+  const [adviceLoading, setAdviceLoading] = useState(false);
+  const [packOrder, setPackOrder] = useState("");
+  const [packOpenSignal, setPackOpenSignal] = useState(0);
+  const [packDownloading, setPackDownloading] = useState(false);
+  const [packSearch, setPackSearch] = useState("");
+  const [packCategory, setPackCategory] = useState("Tous");
+  const [showAllPackItems, setShowAllPackItems] = useState(false);
 
-  const category = CATEGORY_DEFS.find((item) => item.id === activeCategory) || CATEGORY_DEFS[0];
-  const currentRows = useMemo(() => currentOnly(opportunities), [opportunities]);
-  const stats = useMemo(() => buildStats(currentRows), [currentRows]);
+  const category = CATEGORIES.find((item) => item.id === activeCategory) || CATEGORIES[0];
+  const currentRows = useMemo(() => sortByDeadline(currentOnly(opportunities)), [opportunities]);
+  const packItems = useMemo(() => filterPackItems(packSearch, packCategory), [packSearch, packCategory]);
+  const visiblePackItems = showAllPackItems ? packItems : packItems.slice(0, 18);
 
   useEffect(() => {
-    refreshPatrolStatus();
-    loadDirectory(activeCategory, filters).catch((err) => setError(err.message));
-    const timer = window.setInterval(refreshPatrolStatus, 60_000);
+    void refreshPatrolStatus();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const rows = await loadDirectory({ silent: false }).catch((err) => {
+        if (!cancelled) setError(err?.message || "Chargement impossible.");
+        return null;
+      });
+      if (!cancelled && rows) setOpportunities(rows);
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCategory, filters.q, filters.country, filters.sector, filters.type]);
+
+  useEffect(() => {
+    const timer = window.setInterval(async () => {
+      await refreshPatrolStatus();
+      const rows = await loadDirectory({ silent: true }).catch(() => null);
+      if (rows) setOpportunities(rows);
+    }, 120_000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeCategory, filters.q, filters.country, filters.sector, filters.type]);
 
   async function refreshPatrolStatus() {
     try {
       const data = await getGrantPatrolStatus();
       setPatrol(data);
     } catch {
-      // Non-bloquant pour l'utilisateur.
+      // Patrol status is informational only.
     }
   }
 
-  async function loadDirectory(categoryId = activeCategory, nextFilters = filters) {
-    setLoading(true);
-    setError("");
-    const cat = CATEGORY_DEFS.find((item) => item.id === categoryId) || CATEGORY_DEFS[0];
+  async function loadDirectory({ silent = false } = {}) {
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
+
     try {
-      const rows = await fetchDirectoryRows(cat, nextFilters);
-      setOpportunities(rows);
-      setMessage(`${rows.length} opportunité(s) ouvertes ou à vérifier chargée(s). Les opportunités expirées sont exclues.`);
-      setActiveCategory(categoryId);
-    } catch (err) {
-      setError(err?.message || "Chargement impossible.");
+      const base = {
+        q: filters.q,
+        country: filters.country,
+        sector: filters.sector,
+        status: "open",
+        limit: 80,
+      };
+      const requestedTypes = filters.type ? [filters.type] : category.types;
+      let rows = [];
+
+      if (requestedTypes.length) {
+        const batches = await Promise.all(
+          requestedTypes.map((type) => listGrantOpportunities({ ...base, type }).catch(() => ({ rows: [] })))
+        );
+        rows = batches.flatMap((batch) => batch.rows || []);
+      } else {
+        const data = await listGrantOpportunities(base);
+        rows = data.rows || [];
+      }
+
+      const next = dedupe(currentOnly(rows));
+      if (!silent) {
+        setMessage(next.length ? `${next.length} opportunité(s) active(s) disponibles.` : "Aucune opportunité active pour ces critères.");
+      }
+      return next;
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
-  async function fetchDirectoryRows(cat, nextFilters) {
-    const baseFilters = {
-      ...nextFilters,
-      q: nextFilters.q,
-      limit: nextFilters.limit || 80,
-    };
+  async function runSmartSearch() {
+    const q = [filters.q, category.query, filters.country].filter(Boolean).join(" ");
+    if (!q.trim()) return;
 
-    const requestedType = nextFilters.type;
-    if (requestedType) {
-      const data = await listGrantOpportunities({ ...baseFilters, type: requestedType });
-      return currentOnly(data.rows || []);
-    }
-
-    if (!cat.types.length) {
-      const data = await listGrantOpportunities(baseFilters);
-      return currentOnly(data.rows || []);
-    }
-
-    const batches = await Promise.all(
-      cat.types.map((type) => listGrantOpportunities({ ...baseFilters, type }).catch(() => ({ rows: [] })))
-    );
-    return dedupeOpportunities(currentOnly(batches.flatMap((batch) => batch.rows || [])));
-  }
-
-  async function runSemanticSearch() {
-    const q = cleanJoin(filters.q, category.query);
-    if (!q.trim()) {
-      await loadDirectory(activeCategory, filters);
-      return;
-    }
-
-    setLoading(true);
+    setSearching(true);
     setError("");
+    setMessage("Recherche intelligente en cours dans l'annuaire...");
     try {
       const data = await semanticSearchGrants(q, {
         country: filters.country,
-        region: filters.region,
         sector: filters.sector,
         type: filters.type,
-        limit: 30,
+        limit: 40,
       });
-      const rows = currentOnly(data.rows || []);
+      const rows = dedupe(currentOnly(data.rows || []));
       setOpportunities(rows);
-      setMessage(`${rows.length} résultat(s) intelligents dans l'annuaire. ${data.semantic ? "Recherche sémantique active." : "Mode texte utilisé."}`);
+      setMessage(`${rows.length} résultat(s) intelligent(s), expirés exclus.`);
     } catch (err) {
-      setError(err?.message || "Recherche intelligente impossible.");
+      setError(err?.message || "Recherche intelligente indisponible.");
     } finally {
-      setLoading(false);
+      setSearching(false);
     }
   }
 
-  async function runWebSearch() {
-    const query = cleanJoin(webSearch.query, filters.q, category.query, filters.country, filters.region);
-    if (!query.trim()) {
-      setError("Indique une recherche ou choisis une catégorie avant de lancer la recherche IA.");
-      return;
-    }
+  async function enrichOnline() {
+    const q = [filters.q, category.query, filters.country].filter(Boolean).join(" ");
+    if (!q.trim()) return;
 
     setSearching(true);
     setError("");
-    setMessage("Recherche IA en ligne lancée. DroitGPT vérifie les sources et exclut les opportunités expirées.");
+    setMessage("L'agent DroitGPT cherche en ligne, vérifie les sources et indexe les opportunités ouvertes.");
     try {
-      const payload = {
-        query,
+      const started = await searchGrants({
+        query: q,
         country: filters.country,
-        region: filters.region || "Africa",
-        sectors: filters.sector ? [filters.sector] : inferCategorySectors(category),
+        region: "Africa",
+        sectors: filters.sector ? [filters.sector] : [],
         types: filters.type ? [filters.type] : category.types,
-        sites: splitLines(webSearch.sites),
         language: "fr",
-        maxResults: Number(webSearch.maxResults || 12),
-        candidateLimit: Math.max(Number(webSearch.maxResults || 12) * 6, 50),
-      };
-      const started = await searchGrants(payload);
-      const result = await pollJob(started.jobId);
-      if (result.pending) {
-        setJob(result.job);
-        setMessage(`Recherche encore en cours sur Render. Job: ${started.jobId}. Reviens dans quelques minutes et clique sur "Récupérer".`);
-        return;
-      }
-      applyJobResult(result);
+        maxResults: 12,
+        candidateLimit: 60,
+      });
+      const result = await waitForGrantJob(started.jobId);
+      const rows = dedupe(currentOnly(result.opportunities || result.result?.results || []));
+      setOpportunities(rows.length ? rows : await loadDirectory({ silent: true }));
+      setMessage(rows.length ? `${rows.length} opportunité(s) en ligne vérifiée(s) et indexée(s).` : "Recherche terminée. L'annuaire reste affiché avec les résultats disponibles.");
       await refreshPatrolStatus();
     } catch (err) {
-      setError(err?.message || "Recherche IA impossible.");
+      setError(err?.message || "Recherche en ligne impossible.");
     } finally {
       setSearching(false);
     }
   }
 
-  async function pollJob(jobId) {
-    let latestJob = null;
-    for (let attempt = 0; attempt < JOB_POLL_ATTEMPTS; attempt += 1) {
+  async function waitForGrantJob(jobId) {
+    if (!jobId) throw new Error("Job de recherche introuvable.");
+    for (let attempt = 0; attempt < 80; attempt += 1) {
       const data = await getGrantJob(jobId);
-      latestJob = data.job;
-      setJob(latestJob);
-      if (latestJob?.status === "done") return getGrantJobResult(jobId);
-      if (latestJob?.status === "error") throw new Error(latestJob.error || "Recherche en erreur.");
-      await sleep(JOB_POLL_INTERVAL_MS);
+      const job = data.job;
+      if (job?.status === "done") return getGrantJobResult(jobId);
+      if (job?.status === "error") throw new Error(job.error || "Recherche en erreur.");
+      await sleep(3000);
     }
-    return { pending: true, jobId, job: latestJob };
-  }
-
-  async function refreshJobResult() {
-    if (!job?.id) return;
-    setSearching(true);
-    setError("");
-    try {
-      const data = await getGrantJob(job.id);
-      setJob(data.job);
-      if (data.job?.status === "done") {
-        const result = await getGrantJobResult(job.id);
-        applyJobResult(result);
-      } else if (data.job?.status === "error") {
-        throw new Error(data.job.error || "Recherche en erreur.");
-      } else {
-        setMessage(`Job encore en cours : ${data.job?.status || "running"}.`);
-      }
-    } catch (err) {
-      setError(err?.message || "Résultat du job indisponible.");
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  function applyJobResult(result) {
-    const rows = currentOnly(result.opportunities || result.result?.results || []);
-    setOpportunities(rows);
-    setMessage(`${rows.length} opportunité(s) vérifiée(s) et non expirée(s) trouvée(s).`);
+    throw new Error("Recherche encore en cours côté serveur. Les résultats apparaîtront automatiquement après indexation.");
   }
 
   async function openDetails(opp) {
@@ -309,96 +238,105 @@ export default function GrantsManagementPage() {
     setAdviceLoading(true);
     setAdvice(null);
     try {
-      const data = await getGrantAdvice(opp.id, {
-        country: filters.country,
-        sector: filters.sector,
-        category: category.label,
-      });
+      const data = await getGrantAdvice(opp.id, { country: filters.country, sector: filters.sector });
       setAdvice(data.advice);
     } catch (err) {
-      setAdvice({ fitSummary: err?.message || "Conseils indisponibles.", firstActions: [], documentsToPrepare: [], risks: [], draftPositioning: "" });
+      setAdvice({ fitSummary: err?.message || "Conseils indisponibles.", firstActions: [], documentsToPrepare: [], risks: [] });
     } finally {
       setAdviceLoading(false);
     }
   }
 
-  function chooseCategory(id) {
-    const next = CATEGORY_DEFS.find((item) => item.id === id) || CATEGORY_DEFS[0];
-    const nextFilters = { ...filters, type: "" };
-    setActiveCategory(id);
-    setFilters(nextFilters);
-    setWebSearch((prev) => ({ ...prev, query: next.query }));
-    loadDirectory(id, nextFilters);
+  async function downloadPack() {
+    if (!packOrder) {
+      setPackOpenSignal((value) => value + 1);
+      return;
+    }
+
+    setPackDownloading(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/business-plan-pack/download`, {
+        headers: { "X-Payment-Order": packOrder },
+      });
+      if (!response.ok) throw new Error(await readDownloadError(response));
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "DroitGPT-Pack-248-Business-Plans.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err) {
+      setError(err?.message || "Téléchargement impossible.");
+    } finally {
+      setPackDownloading(false);
+    }
   }
 
   return (
     <div className="space-y-6 text-slate-950">
-      <Hero
-        category={category}
-        stats={stats}
-        patrol={patrol}
-        loading={loading || searching}
-        onRefresh={() => loadDirectory(activeCategory, filters)}
-      />
+      <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+        <div className="grid gap-0 lg:grid-cols-[1.08fr_0.92fr]">
+          <div className="bg-slate-950 p-6 text-white sm:p-8">
+            <p className="text-xs font-black uppercase tracking-[0.28em] text-emerald-300">DroitGPT</p>
+            <h1 className="mt-4 text-4xl font-black leading-tight sm:text-5xl">Opportunités</h1>
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
+              Annuaire intelligent pour entrepreneurs, ONG, étudiants et entreprises : financements, appels à projets,
+              appels d'offres, bourses, concours, incubateurs et programmes internationaux.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <Metric value={currentRows.length} label="actives" />
+              <Metric value={patrol?.enabled ? "Auto" : "Manuel"} label="mise à jour" />
+              <Metric value={nextDeadline(currentRows)} label="prochaine deadline" small />
+            </div>
+            <p className="mt-5 text-xs leading-5 text-slate-400">
+              {patrol?.enabled
+                ? `Les sources sont patrouillees automatiquement toutes les ${patrol.intervalMinutes || 360} minutes.`
+                : "La page se rafraîchit automatiquement avec les opportunités déjà indexées."}
+            </p>
+          </div>
+
+          <BusinessPlanPackOffer
+            packOrder={packOrder}
+            packOpenSignal={packOpenSignal}
+            setPackOrder={setPackOrder}
+            downloading={packDownloading}
+            onBuy={() => setPackOpenSignal((value) => value + 1)}
+            onDownload={downloadPack}
+          />
+        </div>
+      </section>
 
       {error ? <Notice tone="red">{error}</Notice> : null}
       {message ? <Notice>{message}</Notice> : null}
-      {job ? <JobBanner job={job} loading={searching} onRefresh={refreshJobResult} /> : null}
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        {CATEGORY_DEFS.map((item) => (
-          <CategoryCard
-            key={item.id}
-            category={item}
-            active={item.id === activeCategory}
-            count={countForCategory(currentRows, item)}
-            onClick={() => chooseCategory(item.id)}
-          />
-        ))}
-      </section>
+      <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+        <CatalogPanel
+          packSearch={packSearch}
+          setPackSearch={setPackSearch}
+          packCategory={packCategory}
+          setPackCategory={setPackCategory}
+          items={packItems}
+          visibleItems={visiblePackItems}
+          showAll={showAllPackItems}
+          setShowAll={setShowAllPackItems}
+        />
 
-      <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
-        <DirectorySearch
+        <OpportunitiesPanel
+          activeCategory={activeCategory}
+          setActiveCategory={setActiveCategory}
           filters={filters}
           setFilters={setFilters}
-          loading={loading}
-          onApply={() => loadDirectory(activeCategory, filters)}
-          onSemantic={runSemanticSearch}
-          onReset={() => {
-            setFilters(DEFAULT_FILTERS);
-            loadDirectory(activeCategory, DEFAULT_FILTERS);
-          }}
+          rows={currentRows}
+          loading={loading || searching}
+          onSmartSearch={runSmartSearch}
+          onEnrich={enrichOnline}
+          onDetails={openDetails}
         />
-        <WebSearchBox
-          webSearch={webSearch}
-          setWebSearch={setWebSearch}
-          category={category}
-          searching={searching}
-          onSearch={runWebSearch}
-        />
-      </section>
-
-      <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">Annuaire</p>
-            <h2 className="mt-1 text-2xl font-black text-slate-950">{category.title}</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
-              {category.description} Les cartes affichées ont toutes une source officielle et ne sont pas expirées.
-            </p>
-          </div>
-          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-            {currentRows.length} résultat(s)
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-          {(loading || searching) && !currentRows.length ? <SkeletonCards /> : null}
-          {!loading && !searching && !currentRows.length ? <EmptyState onSearch={runWebSearch} /> : null}
-          {currentRows.map((opp) => (
-            <OpportunityCard key={opp.id || opp.sourceUrl} opportunity={opp} onDetails={openDetails} />
-          ))}
-        </div>
       </section>
 
       {selected ? (
@@ -417,159 +355,178 @@ export default function GrantsManagementPage() {
   );
 }
 
-function Hero({ category, stats, patrol, loading, onRefresh }) {
+function BusinessPlanPackOffer({ packOrder, packOpenSignal, setPackOrder, downloading, onBuy, onDownload }) {
   return (
-    <section className="overflow-hidden rounded-[2rem] bg-slate-950 text-white shadow-sm">
-      <div className="relative p-6 sm:p-8">
-        <div className="absolute right-0 top-0 h-48 w-48 rounded-full bg-emerald-400/20 blur-3xl" />
-        <div className="absolute bottom-0 left-1/3 h-32 w-64 rounded-full bg-amber-300/10 blur-3xl" />
-        <div className="relative grid gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.28em] text-emerald-300">DroitGPT Opportunities</p>
-            <h1 className="mt-4 max-w-4xl text-3xl font-black leading-tight sm:text-5xl">
-              Un annuaire intelligent d'opportunités à jour.
-            </h1>
-            <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-300">
-              Entrepreneurs, ONG, étudiants et entreprises peuvent retrouver des financements, appels d'offres,
-              bourses, concours, incubateurs et programmes internationaux avec source, deadline et score de fiabilité.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Pill>Sources vérifiées</Pill>
-              <Pill>Pas d'expirées</Pill>
-              <Pill>Patrouille automatique</Pill>
-              <Pill>Recherche Exa + IA</Pill>
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Metric label="Ouvertes" value={stats.open} />
-            <Metric label="À vérifier" value={stats.review} />
-            <Metric label="Prochaine deadline" value={stats.nextDeadline ? formatDate(stats.nextDeadline) : "-"} small />
-            <Metric label="Catégorie active" value={category.label} small />
-          </div>
-        </div>
-
-        <div className="relative mt-6 flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/5 p-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-sm font-bold text-white">Mise à jour automatique</p>
-            <p className="mt-1 text-xs leading-5 text-slate-300">
-              {patrol?.enabled
-                ? `Patrouille active toutes les ${patrol.intervalMinutes || 360} minutes. Dernier passage : ${formatDateTime(patrol.lastRun?.doneAt || patrol.lastRun?.startedAt)}.`
-                : "Patrouille automatique désactivée côté backend."}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={loading}
-            className="rounded-full bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? "Actualisation..." : "Actualiser l'annuaire"}
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function CategoryCard({ category, active, count, onClick }) {
-  const activeClass = active ? "border-slate-950 bg-slate-950 text-white shadow-lg" : "border-slate-200 bg-white text-slate-950 hover:border-slate-300";
-  return (
-    <button type="button" onClick={onClick} className={`rounded-3xl border p-4 text-left transition ${activeClass}`}>
-      <div className="flex items-center justify-between gap-3">
-        <span className={`h-3 w-3 rounded-full ${accentDot(category.accent)}`} />
-        <span className={`rounded-full px-3 py-1 text-xs font-black ${active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600"}`}>
-          {count}
-        </span>
-      </div>
-      <p className="mt-4 text-base font-black">{category.label}</p>
-      <p className={`mt-1 line-clamp-2 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>{category.description}</p>
-    </button>
-  );
-}
-
-function DirectorySearch({ filters, setFilters, loading, onApply, onSemantic, onReset }) {
-  return (
-    <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">Recherche dans l'annuaire</p>
-      <h2 className="mt-1 text-xl font-black">Filtrer les opportunités déjà indexées</h2>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <Field label="Mot-clé" value={filters.q} onChange={(v) => setFilters({ ...filters, q: v })} placeholder="ex: santé, startup, éducation, tender..." />
-        <Field label="Pays" value={filters.country} onChange={(v) => setFilters({ ...filters, country: v })} placeholder="RDC, Africa, global..." />
-        <Select label="Région" value={filters.region} onChange={(v) => setFilters({ ...filters, region: v })} options={REGION_OPTIONS} />
-        <Select label="Type" value={filters.type} onChange={(v) => setFilters({ ...filters, type: v })} options={TYPES} />
-        <Select label="Secteur" value={filters.sector} onChange={(v) => setFilters({ ...filters, sector: v })} options={SECTORS} />
-        <Field label="Deadline avant" type="date" value={filters.deadlineTo} onChange={(v) => setFilters({ ...filters, deadlineTo: v })} />
-      </div>
-      <div className="mt-4 flex flex-wrap gap-3">
-        <PrimaryButton disabled={loading} onClick={onApply}>Appliquer les filtres</PrimaryButton>
-        <SecondaryButton disabled={loading} onClick={onSemantic}>Recherche intelligente</SecondaryButton>
-        <GhostButton disabled={loading} onClick={onReset}>Réinitialiser</GhostButton>
-      </div>
-    </section>
-  );
-}
-
-function WebSearchBox({ webSearch, setWebSearch, category, searching, onSearch }) {
-  return (
-    <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-700">Agent IA en ligne</p>
-      <h2 className="mt-1 text-xl font-black">Trouver et indexer de nouvelles opportunités</h2>
-      <p className="mt-2 text-sm leading-6 text-slate-600">
-        L'agent recherche en ligne, ouvre les sources, extrait les informations et classe uniquement les résultats non expirés.
+    <div className="relative bg-[linear-gradient(135deg,#ecfdf5,#fff7ed)] p-6 sm:p-8">
+      <div className="absolute right-6 top-6 rounded-full bg-rose-600 px-4 py-2 text-sm font-black text-white shadow-lg">Promo 20 USD</div>
+      <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-800">Offre entrepreneur</p>
+      <h2 className="mt-4 max-w-xl text-3xl font-black leading-tight text-slate-950">
+        Pack de {BUSINESS_PLAN_PACK_SUMMARY.total} plans d'affaires prêts à adapter
+      </h2>
+      <p className="mt-3 max-w-xl text-sm leading-7 text-slate-700">
+        Un lot complet pour gagner du temps : business plans, modèles Word, PDF et pitch decks PowerPoint couvrant
+        agriculture, mines, commerce, digital, ONG, énergie, immobilier et services.
       </p>
-      <div className="mt-4 grid gap-3 md:grid-cols-[1fr_140px]">
-        <Field
-          label="Recherche"
-          value={webSearch.query}
-          onChange={(v) => setWebSearch({ ...webSearch, query: v })}
-          placeholder={category.query || "financements ONG santé Afrique francophone 2026"}
-        />
-        <Field label="Nombre" type="number" value={webSearch.maxResults} onChange={(v) => setWebSearch({ ...webSearch, maxResults: v })} />
+      <div className="mt-5 grid grid-cols-3 gap-2">
+        <MiniStat label="Word" value={BUSINESS_PLAN_PACK_SUMMARY.docx} />
+        <MiniStat label="PowerPoint" value={BUSINESS_PLAN_PACK_SUMMARY.pptx} />
+        <MiniStat label="PDF" value={BUSINESS_PLAN_PACK_SUMMARY.pdf} />
       </div>
-      <TextArea
-        label="Sites à exploiter en priorité"
-        value={webSearch.sites}
-        onChange={(v) => setWebSearch({ ...webSearch, sites: v })}
-        placeholder={"https://www2.fundsforngos.org\nhttps://opportunitydesk.org\nNom du site | https://example.org/opportunities"}
-        helper="Optionnel : une ligne par site. Ces sites seront intégrés dans la recherche sans les enregistrer définitivement."
-      />
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+        <button
+          type="button"
+          onClick={packOrder ? onDownload : onBuy}
+          disabled={downloading}
+          className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60"
+        >
+          {downloading ? "Téléchargement..." : packOrder ? "Télécharger le pack" : "Acheter le pack maintenant"}
+        </button>
+        <a href="#catalogue-pack" className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-center text-sm font-black text-slate-800 hover:bg-slate-50">
+          Voir les plans inclus
+        </a>
+      </div>
       <div className="mt-4">
-        <PrimaryButton disabled={searching} onClick={onSearch}>{searching ? "Recherche en cours..." : "Rechercher en ligne et indexer"}</PrimaryButton>
+        <MobileMoneyPayment
+          apiBase={API_BASE}
+          documentType="businessplan_pack"
+          openSignal={packOpenSignal}
+          launcherTitle="Paiement du pack business plans"
+          launcherHint="Paiement unique. Après confirmation, le téléchargement ZIP se débloque."
+          paidMessage="Paiement confirmé. Vous pouvez télécharger le pack."
+          onPaymentReady={setPackOrder}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CatalogPanel({ packSearch, setPackSearch, packCategory, setPackCategory, items, visibleItems, showAll, setShowAll }) {
+  return (
+    <section id="catalogue-pack" className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">Catalogue du pack</p>
+      <h2 className="mt-1 text-2xl font-black">Plans inclus dans l'offre</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        {items.length} document(s) correspondent a votre filtre. Le téléchargement final est livre en ZIP.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_220px]">
+        <input
+          value={packSearch}
+          onChange={(e) => setPackSearch(e.target.value)}
+          placeholder="Chercher un business plan..."
+          className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <select
+          value={packCategory}
+          onChange={(e) => setPackCategory(e.target.value)}
+          className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          {PACK_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+        </select>
+      </div>
+      <div className="mt-4 max-h-[640px] space-y-2 overflow-y-auto pr-1">
+        {visibleItems.map((item) => (
+          <div key={item.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm font-black leading-5 text-slate-900">{item.title}</p>
+              <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-black text-slate-600 ring-1 ring-slate-200">{item.format}</span>
+            </div>
+            <p className="mt-1 text-xs font-semibold text-emerald-700">{item.category}</p>
+          </div>
+        ))}
+      </div>
+      {items.length > 18 ? (
+        <button type="button" onClick={() => setShowAll(!showAll)} className="mt-4 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">
+          {showAll ? "Reduire la liste" : `Afficher tous les ${items.length} documents`}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+function OpportunitiesPanel({ activeCategory, setActiveCategory, filters, setFilters, rows, loading, onSmartSearch, onEnrich, onDetails }) {
+  return (
+    <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">Annuaire automatique</p>
+          <h2 className="mt-1 text-2xl font-black">Opportunités à jour</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            Les opportunités expirées sont filtrees. Chaque résultat doit avoir une source verifiable.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">{rows.length} active(s)</div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap gap-2">
+        {CATEGORIES.map((category) => (
+          <button
+            key={category.id}
+            type="button"
+            onClick={() => setActiveCategory(category.id)}
+            className={`rounded-full px-4 py-2 text-sm font-black transition ${activeCategory === category.id ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+          >
+            {category.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_120px_150px_170px]">
+        <input
+          value={filters.q}
+          onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+          placeholder="Rechercher : financement ONG, startup, bourse, appel d'offres..."
+          className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <input
+          value={filters.country}
+          onChange={(e) => setFilters({ ...filters, country: e.target.value })}
+          placeholder="Pays"
+          className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <select value={filters.sector} onChange={(e) => setFilters({ ...filters, sector: e.target.value })} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500">
+          {SECTORS.map(([value, label]) => <option key={value || label} value={value}>{label}</option>)}
+        </select>
+        <select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500">
+          {TYPES.map(([value, label]) => <option key={value || label} value={value}>{label}</option>)}
+        </select>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button type="button" onClick={onSmartSearch} disabled={loading} className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-60">
+          Recherche intelligente
+        </button>
+        <button type="button" onClick={onEnrich} disabled={loading} className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black text-slate-800 hover:bg-slate-50 disabled:opacity-60">
+          Trouver de nouvelles opportunités
+        </button>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        {loading && !rows.length ? <LoadingCard /> : null}
+        {!loading && !rows.length ? <EmptyOpportunities onEnrich={onEnrich} /> : null}
+        {rows.map((opp) => <OpportunityCard key={opp.id || opp.sourceUrl} opportunity={opp} onDetails={onDetails} />)}
       </div>
     </section>
   );
 }
 
 function OpportunityCard({ opportunity, onDetails }) {
-  const status = normalizeStatus(opportunity.status);
   return (
-    <article className="flex min-h-[310px] flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
-          <StatusBadge status={status} />
-          <TypeBadge type={opportunity.type} />
-        </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">
-          {Number(opportunity.reliabilityScore || 0)}/100
-        </span>
+    <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge status={opportunity.status} />
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">{humanType(opportunity.type)}</span>
+        <span className="ml-auto rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">{Number(opportunity.reliabilityScore || 0)}/100</span>
       </div>
-      <h3 className="mt-4 line-clamp-3 text-lg font-black leading-snug text-slate-950">{opportunity.title}</h3>
-      <p className="mt-2 text-sm font-bold text-emerald-700">{opportunity.organization || opportunity.sourceName || "Organisme à vérifier"}</p>
-      <p className="mt-3 line-clamp-4 text-sm leading-6 text-slate-600">{opportunity.summary || opportunity.description || "Résumé indisponible. Consultez la source officielle."}</p>
-      <div className="mt-4 grid gap-2 text-xs text-slate-700 sm:grid-cols-2">
+      <h3 className="mt-4 line-clamp-3 text-lg font-black leading-snug">{opportunity.title}</h3>
+      <p className="mt-2 text-sm font-bold text-emerald-700">{opportunity.organization || opportunity.sourceName || "Organisme a vérifier"}</p>
+      <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{opportunity.summary || opportunity.description || "Résumé indisponible. Consultez la source officielle."}</p>
+      <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
         <Info label="Deadline" value={formatDate(opportunity.deadline)} />
         <Info label="Pays" value={(opportunity.countries || []).join(", ") || "Non précisé"} />
-        <Info label="Secteurs" value={(opportunity.sectors || []).join(", ") || "Non précisé"} />
-        <Info label="Source" value={opportunity.sourceName || hostLabel(opportunity.sourceUrl)} />
       </div>
-      <div className="mt-auto flex flex-wrap gap-2 pt-5">
-        <a className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800" href={opportunity.sourceUrl} target="_blank" rel="noreferrer">
-          Voir source
-        </a>
-        <button className="rounded-full border border-slate-200 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-50" onClick={() => onDetails(opportunity)}>
-          Voir détails
-        </button>
+      <div className="mt-5 flex flex-wrap gap-2">
+        <a href={opportunity.sourceUrl} target="_blank" rel="noreferrer" className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800">Voir source</a>
+        <button type="button" onClick={() => onDetails(opportunity)} className="rounded-full border border-slate-200 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">Details</button>
       </div>
     </article>
   );
@@ -578,22 +535,16 @@ function OpportunityCard({ opportunity, onDetails }) {
 function DetailsModal({ opportunity, advice, adviceLoading, onAdvice, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-slate-950/70 p-3 backdrop-blur-sm sm:items-center sm:p-6">
-      <div className="mx-auto max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-[2rem] bg-white shadow-2xl">
+      <div className="mx-auto max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[2rem] bg-white shadow-2xl">
         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white/95 p-5 backdrop-blur">
           <div>
-            <div className="flex flex-wrap gap-2">
-              <StatusBadge status={opportunity.status} />
-              <TypeBadge type={opportunity.type} />
-            </div>
-            <h2 className="mt-3 max-w-3xl text-2xl font-black leading-tight text-slate-950">{opportunity.title}</h2>
+            <div className="flex flex-wrap gap-2"><StatusBadge status={opportunity.status} /><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">{humanType(opportunity.type)}</span></div>
+            <h2 className="mt-3 text-2xl font-black leading-tight">{opportunity.title}</h2>
             <p className="mt-1 text-sm font-bold text-emerald-700">{opportunity.organization || opportunity.sourceName}</p>
           </div>
-          <button className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-200" onClick={onClose}>
-            Fermer
-          </button>
+          <button type="button" onClick={onClose} className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-200">Fermer</button>
         </div>
-
-        <div className="grid gap-5 p-5 lg:grid-cols-[1.25fr_0.75fr]">
+        <div className="grid gap-5 p-5 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-5">
             <TextBlock title="Résumé" value={opportunity.summary} />
             <TextBlock title="Description" value={opportunity.description} />
@@ -601,19 +552,13 @@ function DetailsModal({ opportunity, advice, adviceLoading, onAdvice, onClose })
             <TextBlock title="Notes de vérification" value={opportunity.verificationNotes} />
             {advice ? <AdviceBlock advice={advice} /> : null}
           </div>
-
           <aside className="space-y-3 rounded-3xl bg-slate-50 p-4">
             <Info label="Deadline" value={formatDate(opportunity.deadline)} />
             <Info label="Montant" value={[opportunity.amount, opportunity.currency].filter(Boolean).join(" ") || "Non précisé"} />
             <Info label="Fiabilité" value={`${Number(opportunity.reliabilityScore || 0)}/100`} />
-            <Info label="Pays" value={(opportunity.countries || []).join(", ") || "Non précisé"} />
             <Info label="Dernière vérification" value={formatDateTime(opportunity.lastCheckedAt)} />
-            <a className="block rounded-2xl bg-slate-950 px-4 py-3 text-center text-sm font-black text-white hover:bg-slate-800" href={opportunity.applicationUrl || opportunity.sourceUrl} target="_blank" rel="noreferrer">
-              Ouvrir le lien officiel
-            </a>
-            <button className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 hover:bg-slate-100" onClick={onAdvice} disabled={adviceLoading}>
-              {adviceLoading ? "Préparation..." : "Conseils pour postuler"}
-            </button>
+            <a className="block rounded-2xl bg-slate-950 px-4 py-3 text-center text-sm font-black text-white hover:bg-slate-800" href={opportunity.applicationUrl || opportunity.sourceUrl} target="_blank" rel="noreferrer">Ouvrir le lien officiel</a>
+            <button type="button" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-800 hover:bg-slate-100" onClick={onAdvice} disabled={adviceLoading}>{adviceLoading ? "Préparation..." : "Conseils pour postuler"}</button>
           </aside>
         </div>
       </div>
@@ -629,7 +574,6 @@ function AdviceBlock({ advice }) {
       <AdviceList title="Premières actions" items={advice.firstActions} />
       <AdviceList title="Documents à préparer" items={advice.documentsToPrepare} />
       <AdviceList title="Risques" items={advice.risks} />
-      {advice.draftPositioning ? <p className="mt-3 text-sm leading-7 text-emerald-950">{advice.draftPositioning}</p> : null}
     </section>
   );
 }
@@ -637,91 +581,30 @@ function AdviceBlock({ advice }) {
 function AdviceList({ title, items }) {
   const rows = Array.isArray(items) ? items.filter(Boolean) : [];
   if (!rows.length) return null;
-  return (
-    <div className="mt-3">
-      <p className="text-xs font-black uppercase tracking-wide text-emerald-800">{title}</p>
-      <ul className="mt-2 space-y-1 text-sm text-emerald-950">
-        {rows.map((item, idx) => (
-          <li key={`${title}-${idx}`}>- {String(item)}</li>
-        ))}
-      </ul>
-    </div>
-  );
+  return <div className="mt-3"><p className="text-xs font-black uppercase tracking-wide text-emerald-800">{title}</p><ul className="mt-2 space-y-1 text-sm text-emerald-950">{rows.map((item, idx) => <li key={`${title}-${idx}`}>- {String(item)}</li>)}</ul></div>;
 }
 
-function Field({ label, value, onChange, type = "text", placeholder = "" }) {
-  return (
-    <label className="block text-sm">
-      <span className="font-black text-slate-700">{label}</span>
-      <input
-        type={type}
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none ring-emerald-500 transition focus:ring-2"
-      />
-    </label>
-  );
+function Metric({ value, label, small }) {
+  return <div className="rounded-3xl border border-white/10 bg-white/10 p-4"><p className={small ? "text-lg font-black" : "text-3xl font-black"}>{value}</p><p className="mt-1 text-xs font-black uppercase tracking-wide text-slate-300">{label}</p></div>;
 }
 
-function Select({ label, value, onChange, options }) {
-  return (
-    <label className="block text-sm">
-      <span className="font-black text-slate-700">{label}</span>
-      <select value={value ?? ""} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none ring-emerald-500 transition focus:ring-2">
-        {options.map(([optionValue, labelText]) => (
-          <option key={`${optionValue}-${labelText}`} value={optionValue}>{labelText}</option>
-        ))}
-      </select>
-    </label>
-  );
+function MiniStat({ value, label }) {
+  return <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-slate-200"><p className="text-2xl font-black text-slate-950">{value}</p><p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p></div>;
 }
 
-function TextArea({ label, value, onChange, placeholder = "", helper = "" }) {
-  return (
-    <label className="mt-4 block text-sm">
-      <span className="font-black text-slate-700">{label}</span>
-      <textarea value={value ?? ""} onChange={(e) => onChange(e.target.value)} rows={4} placeholder={placeholder} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none ring-emerald-500 transition focus:ring-2" />
-      {helper ? <span className="mt-1 block text-xs leading-5 text-slate-500">{helper}</span> : null}
-    </label>
-  );
+function Info({ label, value }) {
+  return <div className="rounded-2xl bg-slate-50 p-3"><p className="text-[11px] font-black uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 break-words text-sm font-semibold text-slate-800">{value || "Non précisé"}</p></div>;
 }
 
-function PrimaryButton({ children, disabled, onClick }) {
-  return (
-    <button type="button" disabled={disabled} onClick={onClick} className="rounded-full bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
-      {children}
-    </button>
-  );
+function TextBlock({ title, value }) {
+  return <section><h3 className="text-sm font-black uppercase tracking-wide text-slate-500">{title}</h3><p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-700">{value || "Information non confirmée dans la source."}</p></section>;
 }
 
-function SecondaryButton({ children, disabled, onClick }) {
-  return (
-    <button type="button" disabled={disabled} onClick={onClick} className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
-      {children}
-    </button>
-  );
-}
-
-function GhostButton({ children, disabled, onClick }) {
-  return (
-    <button type="button" disabled={disabled} onClick={onClick} className="rounded-full px-5 py-3 text-sm font-black text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60">
-      {children}
-    </button>
-  );
-}
-
-function Pill({ children }) {
-  return <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-bold text-slate-200">{children}</span>;
-}
-
-function Metric({ label, value, small }) {
-  return (
-    <div className="rounded-3xl border border-white/10 bg-white/10 p-4">
-      <p className={small ? "text-lg font-black" : "text-3xl font-black"}>{value}</p>
-      <p className="mt-1 text-xs font-black uppercase tracking-wide text-slate-300">{label}</p>
-    </div>
-  );
+function StatusBadge({ status }) {
+  const s = String(status || "").toLowerCase();
+  if (s === "open") return <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200">Ouverte</span>;
+  if (s === "unknown") return <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black text-sky-800 ring-1 ring-sky-200">A vérifier</span>;
+  return <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800 ring-1 ring-amber-200">Revue</span>;
 }
 
 function Notice({ tone, children }) {
@@ -729,60 +612,21 @@ function Notice({ tone, children }) {
   return <div className={`rounded-2xl border px-4 py-3 text-sm font-bold ${cls}`}>{children}</div>;
 }
 
-function JobBanner({ job, loading, onRefresh }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-      <div>Recherche en ligne : <strong>{job.status}</strong>{job.id ? ` | Job ${job.id}` : ""}</div>
-      <button type="button" disabled={loading} onClick={onRefresh} className="rounded-full bg-sky-900 px-4 py-2 text-xs font-black text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-60">
-        Récupérer
-      </button>
-    </div>
-  );
+function LoadingCard() {
+  return <div className="col-span-full rounded-3xl bg-slate-100 p-8 text-center text-sm font-bold text-slate-500">Chargement automatique des opportunités...</div>;
 }
 
-function StatusBadge({ status }) {
-  const s = normalizeStatus(status);
-  if (s === "open") return <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800 ring-1 ring-emerald-200">Ouverte</span>;
-  if (s === "unknown") return <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black text-sky-800 ring-1 ring-sky-200">À vérifier</span>;
-  return <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800 ring-1 ring-amber-200">Revue requise</span>;
+function EmptyOpportunities({ onEnrich }) {
+  return <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center"><p className="text-lg font-black">Aucune opportunité active dans cette sélection.</p><p className="mt-2 text-sm text-slate-600">Lancez une recherche en ligne pour enrichir l'annuaire.</p><button type="button" onClick={onEnrich} className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">Trouver de nouvelles opportunités</button></div>;
 }
 
-function TypeBadge({ type }) {
-  return <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700 ring-1 ring-slate-200">{humanType(type)}</span>;
-}
-
-function Info({ label, value }) {
-  return (
-    <div className="rounded-2xl bg-slate-50 p-3">
-      <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 break-words text-sm font-semibold text-slate-800">{value || "Non précisé"}</p>
-    </div>
-  );
-}
-
-function TextBlock({ title, value }) {
-  return (
-    <section>
-      <h3 className="text-sm font-black uppercase tracking-wide text-slate-500">{title}</h3>
-      <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-700">{value || "Information non confirmée dans la source."}</p>
-    </section>
-  );
-}
-
-function EmptyState({ onSearch }) {
-  return (
-    <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
-      <p className="text-xl font-black text-slate-950">Aucune opportunité active dans cette sélection.</p>
-      <p className="mt-2 text-sm text-slate-600">Élargissez les filtres ou lancez une recherche IA en ligne pour enrichir l'annuaire.</p>
-      <button type="button" onClick={onSearch} className="mt-5 rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
-        Rechercher en ligne
-      </button>
-    </div>
-  );
-}
-
-function SkeletonCards() {
-  return Array.from({ length: 6 }).map((_, idx) => <div key={idx} className="h-80 animate-pulse rounded-3xl bg-slate-100" />);
+function filterPackItems(query, category) {
+  const q = String(query || "").trim().toLowerCase();
+  return BUSINESS_PLAN_PACK_ITEMS.filter((item) => {
+    const categoryOk = category === "Tous" || item.category === category;
+    const queryOk = !q || `${item.title} ${item.category} ${item.format}`.toLowerCase().includes(q);
+    return categoryOk && queryOk;
+  });
 }
 
 function currentOnly(items) {
@@ -790,13 +634,13 @@ function currentOnly(items) {
 }
 
 function isCurrent(item) {
-  if (!item || item.status === "expired" || item.status === "hidden") return false;
+  if (!item || ["expired", "hidden"].includes(String(item.status || "").toLowerCase())) return false;
   if (!item.deadline) return true;
   const deadline = new Date(item.deadline);
   return !Number.isNaN(deadline.getTime()) && deadline.getTime() >= Date.now();
 }
 
-function dedupeOpportunities(items) {
+function dedupe(items) {
   const seen = new Set();
   const out = [];
   for (const item of items || []) {
@@ -805,53 +649,40 @@ function dedupeOpportunities(items) {
     seen.add(key);
     out.push(item);
   }
-  return out.sort((a, b) => sortDeadline(a.deadline) - sortDeadline(b.deadline));
+  return sortByDeadline(out);
 }
 
-function buildStats(items) {
-  const rows = currentOnly(items);
-  const dates = rows.map((opp) => new Date(opp.deadline)).filter((date) => !Number.isNaN(date.getTime())).sort((a, b) => a - b);
-  return {
-    open: rows.filter((opp) => opp.status === "open").length,
-    review: rows.filter((opp) => opp.status !== "open").length,
-    nextDeadline: dates[0] || null,
-  };
+function sortByDeadline(items) {
+  return [...(items || [])].sort((a, b) => dateSort(a.deadline) - dateSort(b.deadline));
 }
 
-function countForCategory(items, category) {
-  if (!category.types.length) return items.length;
-  return items.filter((item) => category.types.includes(item.type)).length;
-}
-
-function inferCategorySectors(category) {
-  if (category.id === "entrepreneurs") return ["entrepreneurship", "digital", "innovation"];
-  if (category.id === "tenders") return ["procurement", "business", "services"];
-  if (category.id === "scholarships") return ["education", "research", "training"];
-  if (category.id === "ngo") return ["education", "health", "climate", "agriculture", "governance"];
-  return [];
-}
-
-function sortDeadline(value) {
+function dateSort(value) {
   if (!value) return Number.MAX_SAFE_INTEGER;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? Number.MAX_SAFE_INTEGER : d.getTime();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? Number.MAX_SAFE_INTEGER : date.getTime();
 }
 
-function splitLines(value) {
-  return String(value || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+function nextDeadline(items) {
+  const item = sortByDeadline(items).find((opp) => opp.deadline);
+  return item?.deadline ? formatDate(item.deadline) : "-";
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function formatDate(value) {
+  if (!value) return "Non précisée";
+  try {
+    return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
 }
 
-function cleanJoin(...values) {
-  return values.map((value) => String(value || "").trim()).filter(Boolean).join(" ");
-}
-
-function normalizeStatus(value) {
-  const status = String(value || "").toLowerCase();
-  return status || "draft_review";
+function formatDateTime(value) {
+  if (!value) return "Non précisée";
+  try {
+    return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
 }
 
 function humanType(type) {
@@ -864,40 +695,23 @@ function humanType(type) {
     competition: "Concours",
     accelerator: "Accélérateur",
     fellowship: "Fellowship",
-    other: "Autre",
   };
-  return labels[type] || type || "Autre";
+  return labels[type] || "Opportunité";
 }
 
-function accentDot(accent) {
-  const map = {
-    emerald: "bg-emerald-500",
-    amber: "bg-amber-500",
-    sky: "bg-sky-500",
-    indigo: "bg-indigo-500",
-    slate: "bg-slate-500",
-  };
-  return map[accent] || "bg-slate-500";
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function formatDate(value) {
-  if (!value) return "Non précisée";
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(d);
-}
-
-function formatDateTime(value) {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "-";
-  return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(d);
-}
-
-function hostLabel(url) {
+async function readDownloadError(response) {
+  const text = await response.text().catch(() => "");
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    const json = text ? JSON.parse(text) : null;
+    return json?.details || json?.error || text || `HTTP ${response.status}`;
   } catch {
-    return "";
+    return text || `HTTP ${response.status}`;
   }
 }
+
+
+

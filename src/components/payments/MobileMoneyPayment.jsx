@@ -37,6 +37,9 @@ export default function MobileMoneyPayment({
   openSignal = 0,
   onPaymentReady,
   onRequirementChange,
+  launcherTitle = "Paiement Mobile Money",
+  launcherHint = "Cliquez ici pour payer ou vérifier votre transaction.",
+  paidMessage = "Paiement confirmé. Vous pouvez lancer la génération.",
   className = "",
 }) {
   const [config, setConfig] = useState(null);
@@ -191,11 +194,11 @@ export default function MobileMoneyPayment({
       >
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-sm font-semibold">Paiement Mobile Money</div>
+            <div className="text-sm font-semibold">{launcherTitle}</div>
             <div className={`mt-1 text-sm ${muted}`}>
               {docConfig?.label || "Document premium"} : {amount}
             </div>
-            <div className={`mt-1 text-xs ${muted}`}>Cliquez ici pour payer ou vérifier votre transaction.</div>
+            <div className={`mt-1 text-xs ${muted}`}>{launcherHint}</div>
           </div>
           <span
             className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ${
@@ -242,7 +245,7 @@ export default function MobileMoneyPayment({
                 <div className="font-medium">Commande : {payment.orderNumber}</div>
                 <div className={`mt-1 ${muted}`}>
                   {payment.status === "paid"
-                    ? "Paiement confirmé. Vous pouvez lancer la génération."
+                    ? paidMessage
                     : payment.status === "failed"
                       ? "Transaction échouée. Lancez un nouveau paiement."
                       : "Validez le push Mobile Money sur votre téléphone, puis vérifiez le statut."}
