@@ -8,6 +8,30 @@ export const BUSINESS_PLAN_PACK_SUMMARY = {
   "generatedAt": "2026-08-21T20:20:01.7140653+03:00"
 };
 
+export const FREE_BUSINESS_PLAN_SAMPLES = [
+  {
+    id: "cafe-arabica-minova",
+    title: "Production et transformation du café Arabica à Minova",
+    sector: "Agro-industrie",
+    format: "DOCX",
+    downloadName: "Modele-BP-Cafe-Arabica-Minova.docx"
+  },
+  {
+    id: "porte-monnaie-electronique-rdc",
+    title: "Porte-monnaie électronique en RDC",
+    sector: "Fintech",
+    format: "DOCX",
+    downloadName: "Modele-BP-Porte-Monnaie-Electronique-RDC.docx"
+  },
+  {
+    id: "pyrolyse-dechets-plastiques-kinshasa",
+    title: "Pyrolyse des déchets plastiques à Kinshasa",
+    sector: "Économie verte",
+    format: "DOCX",
+    downloadName: "Modele-BP-Pyrolyse-Dechets-Plastiques-Kinshasa.docx"
+  }
+];
+
 export const BUSINESS_PLAN_PACK_ITEMS = [
   {
     "id": "bp-pack-1",

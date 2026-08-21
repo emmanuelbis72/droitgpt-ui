@@ -10,7 +10,7 @@ import {
   searchGrants,
   semanticSearchGrants,
 } from "../services/grantsApi.js";
-import { BUSINESS_PLAN_PACK_ITEMS, BUSINESS_PLAN_PACK_SUMMARY } from "../data/businessPlanPackCatalog.js";
+import { BUSINESS_PLAN_PACK_ITEMS, BUSINESS_PLAN_PACK_SUMMARY, FREE_BUSINESS_PLAN_SAMPLES } from "../data/businessPlanPackCatalog.js";
 
 const API_BASE = String(import.meta.env.VITE_BP_API_BASE || import.meta.env.VITE_API_BASE || "https://businessplan-v9yy.onrender.com").replace(/\/$/, "");
 
@@ -71,6 +71,7 @@ export default function GrantsManagementPage() {
   const [packOrder, setPackOrder] = useState("");
   const [packOpenSignal, setPackOpenSignal] = useState(0);
   const [packDownloading, setPackDownloading] = useState(false);
+  const [sampleDownloading, setSampleDownloading] = useState("");
   const [packSearch, setPackSearch] = useState("");
   const [packCategory, setPackCategory] = useState("Tous");
   const [showAllPackItems, setShowAllPackItems] = useState(false);
@@ -261,19 +262,26 @@ export default function GrantsManagementPage() {
       });
       if (!response.ok) throw new Error(await readDownloadError(response));
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "DroitGPT-Pack-248-Business-Plans.zip";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      await downloadBlob(response, "DroitGPT-Pack-248-Business-Plans.zip");
     } catch (err) {
       setError(err?.message || "Téléchargement impossible.");
     } finally {
       setPackDownloading(false);
+    }
+  }
+
+  async function downloadSample(sample) {
+    if (!sample?.id) return;
+    setSampleDownloading(sample.id);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/business-plan-pack/samples/${encodeURIComponent(sample.id)}/download`);
+      if (!response.ok) throw new Error(await readDownloadError(response));
+      await downloadBlob(response, sample.downloadName || `${sample.id}.docx`);
+    } catch (err) {
+      setError(err?.message || "Téléchargement du modèle gratuit impossible.");
+    } finally {
+      setSampleDownloading("");
     }
   }
 
@@ -305,8 +313,10 @@ export default function GrantsManagementPage() {
             packOpenSignal={packOpenSignal}
             setPackOrder={setPackOrder}
             downloading={packDownloading}
+            sampleDownloading={sampleDownloading}
             onBuy={() => setPackOpenSignal((value) => value + 1)}
             onDownload={downloadPack}
+            onSampleDownload={downloadSample}
           />
         </div>
       </section>
@@ -355,7 +365,7 @@ export default function GrantsManagementPage() {
   );
 }
 
-function BusinessPlanPackOffer({ packOrder, packOpenSignal, setPackOrder, downloading, onBuy, onDownload }) {
+function BusinessPlanPackOffer({ packOrder, packOpenSignal, setPackOrder, downloading, sampleDownloading, onBuy, onDownload, onSampleDownload }) {
   return (
     <div className="relative bg-[linear-gradient(135deg,#ecfdf5,#fff7ed)] p-6 sm:p-8">
       <div className="absolute right-6 top-6 rounded-full bg-rose-600 px-4 py-2 text-sm font-black text-white shadow-lg">Promo 20 USD</div>
@@ -395,6 +405,35 @@ function BusinessPlanPackOffer({ packOrder, packOpenSignal, setPackOrder, downlo
           paidMessage="Paiement confirmé. Vous pouvez télécharger le pack."
           onPaymentReady={setPackOrder}
         />
+      </div>
+      <div className="mt-5 rounded-3xl border border-emerald-200 bg-white/80 p-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700">Aperçu gratuit</p>
+            <h3 className="text-lg font-black text-slate-950">Téléchargez 3 modèles avant d'acheter le pack</h3>
+          </div>
+          <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">Gratuit</span>
+        </div>
+        <div className="mt-3 grid gap-2">
+          {FREE_BUSINESS_PLAN_SAMPLES.map((sample) => (
+            <div key={sample.id} className="rounded-2xl border border-slate-100 bg-white p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-black leading-5 text-slate-900">{sample.title}</p>
+                  <p className="mt-1 text-xs font-bold text-emerald-700">{sample.sector} · {sample.format}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onSampleDownload(sample)}
+                  disabled={sampleDownloading === sample.id}
+                  className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
+                >
+                  {sampleDownloading === sample.id ? "Téléchargement..." : "Télécharger gratuit"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -711,6 +750,18 @@ async function readDownloadError(response) {
   } catch {
     return text || `HTTP ${response.status}`;
   }
+}
+
+async function downloadBlob(response, fileName) {
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 
