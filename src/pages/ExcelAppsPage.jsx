@@ -59,21 +59,23 @@ export default function ExcelAppsPage() {
 
     setStatus("starting");
 
+    const payload = {
+      lang,
+      ctx: {
+        type: template,
+        appName: appName || selected?.title || "Progiciel Excel",
+        notes,
+        modules: [],
+      },
+    };
+
     const res = await fetch(`${API_BASE}/generate-excel-app?async=1`, {
       method: "POST",
       headers: generationHeaders({
         "Content-Type": "application/json",
         ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
       }),
-      body: JSON.stringify({
-        lang,
-        ctx: {
-          type: template,
-          appName: appName || selected?.title || "Progiciel Excel",
-          notes,
-          modules: [],
-        },
-      }),
+      body: JSON.stringify(payload),
     }).catch((e) => {
       setError(String(e?.message || e));
       setStatus("error");
@@ -101,6 +103,13 @@ export default function ExcelAppsPage() {
       resultUrl,
       apiBase: API_BASE,
       paymentOrderNumber,
+      regeneration: {
+        method: "POST",
+        url: `${API_BASE}/generate-excel-app?async=1`,
+        body: payload,
+        statusUrlTemplate: `${API_BASE}/generate-excel-app/jobs/{jobId}`,
+        resultUrlTemplate: `${API_BASE}/generate-excel-app/jobs/{jobId}/result`,
+      },
     });
     if (paymentOrderNumber) {
       clearStoredPayment("excel_app");

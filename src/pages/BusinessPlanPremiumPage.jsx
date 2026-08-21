@@ -463,6 +463,13 @@ export default function BusinessPlanPremiumPage() {
         resultUrl,
         apiBase: API_BASE,
         paymentOrderNumber,
+        regeneration: {
+          method: "POST",
+          url: `${endpointGenerate}?async=1`,
+          body: payload,
+          statusUrlTemplate: `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/{jobId}`,
+          resultUrlTemplate: `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/{jobId}/result`,
+        },
       });
       if (paymentOrderNumber) {
         clearStoredPayment("businessplan");

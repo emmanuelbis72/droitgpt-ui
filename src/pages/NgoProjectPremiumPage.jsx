@@ -254,6 +254,13 @@ export default function NgoProjectPremiumPage() {
         resultUrl,
         apiBase: API_BASE,
         paymentOrderNumber,
+        regeneration: {
+          method: "POST",
+          url: `${endpointNgo}?async=1`,
+          body: payload,
+          statusUrlTemplate: `${API_BASE}/generate-ngo-project/premium/jobs/{jobId}`,
+          resultUrlTemplate: `${API_BASE}/generate-ngo-project/premium/jobs/{jobId}/result`,
+        },
       });
       if (paymentOrderNumber) {
         clearStoredPayment("ngo_project");

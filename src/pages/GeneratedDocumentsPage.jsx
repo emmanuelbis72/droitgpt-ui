@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   clearGeneratedDocuments,
   downloadGeneratedDocument,
   fetchGeneratedDocuments,
+  isRecoverableLostJobError,
   listGeneratedDocuments,
+  regenerateGeneratedDocument,
   refreshGeneratedDocument,
   removeGeneratedDocument,
   syncGeneratedDocuments,
@@ -45,6 +47,8 @@ export default function GeneratedDocumentsPage() {
   const { user } = useAuth();
   const [documents, setDocuments] = useState(() => listGeneratedDocuments());
   const [busy, setBusy] = useState({});
+  const [recoveryProgress, setRecoveryProgress] = useState({});
+  const recoveryProgressRef = useRef({});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -71,6 +75,109 @@ export default function GeneratedDocumentsPage() {
     }
   }
 
+  function setRecoveryState(doc, patch) {
+    const key = doc.id || doc.jobId;
+    if (!key) return;
+    setRecoveryProgress((prev) => {
+      const next = {
+        ...prev,
+        [key]: {
+          progress: Math.max(0, Math.min(100, Number(patch.progress || prev[key]?.progress || 0))),
+          label: patch.label || prev[key]?.label || "Regeneration en cours...",
+          tone: patch.tone || prev[key]?.tone || "amber",
+        },
+      };
+      recoveryProgressRef.current = next;
+      return next;
+    });
+  }
+
+  function clearRecoveryState(doc) {
+    const key = doc.id || doc.jobId;
+    if (!key) return;
+    setRecoveryProgress((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      recoveryProgressRef.current = next;
+      return next;
+    });
+  }
+
+  function getProgressState(doc) {
+    const key = doc.id || doc.jobId;
+    if (key && recoveryProgress[key]) return recoveryProgress[key];
+    if (!["queued", "running"].includes(doc.status)) return null;
+
+    const createdAt = new Date(doc.createdAt || doc.updatedAt || Date.now()).getTime();
+    const elapsedSeconds = Math.max(0, (Date.now() - (Number.isNaN(createdAt) ? Date.now() : createdAt)) / 1000);
+    const progress =
+      doc.status === "queued"
+        ? Math.min(35, 8 + elapsedSeconds / 8)
+        : Math.min(94, 36 + elapsedSeconds / 12);
+
+    return {
+      progress,
+      tone: "sky",
+      label:
+        doc.status === "queued"
+          ? "Generation en file cote serveur..."
+          : "Generation en cours cote serveur...",
+    };
+  }
+
+  function renderProgress(doc) {
+    const state = getProgressState(doc);
+    if (!state) return null;
+    const isRecovery = state.tone === "amber";
+    const boxClass = isRecovery
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-sky-200 bg-sky-50 text-sky-900";
+    const trackClass = isRecovery ? "bg-amber-100" : "bg-sky-100";
+    const barClass = isRecovery ? "bg-amber-500" : "bg-sky-500";
+    return (
+      <div className={`mb-4 rounded-2xl border p-3 ${boxClass}`}>
+        <div className="flex items-center justify-between gap-3 text-xs font-semibold">
+          <span>{state.label}</span>
+          <span>{Math.round(state.progress)}%</span>
+        </div>
+        <div className={`mt-2 h-2 overflow-hidden rounded-full ${trackClass}`}>
+          <div
+            className={`h-full rounded-full transition-all ${barClass}`}
+            style={{ width: `${Math.max(5, Math.min(100, state.progress))}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  async function waitForRecoveredDocument(doc) {
+    let current = doc;
+    for (let attempt = 0; attempt < 180; attempt += 1) {
+      const progress = Math.min(96, 20 + attempt);
+      setRecoveryState(current, { progress, label: "Generation relancee cote serveur..." });
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      current = await refreshGeneratedDocument(current);
+      await reload();
+      if (current.status === "done") {
+        setRecoveryState(current, { progress: 100, label: "Document pret." });
+        setTimeout(() => clearRecoveryState(current), 2500);
+        return current;
+      }
+      if (["error", "rejected", "cancelled"].includes(current.status)) return current;
+    }
+    return current;
+  }
+
+  async function regenerateLostJob(doc, { waitUntilDone = false } = {}) {
+    setRecoveryState(doc, { progress: 5, label: "Ancien job perdu, relance en preparation..." });
+    const regenerated = await regenerateGeneratedDocument(doc, {
+      onProgress: ({ progress, label }) => setRecoveryState(doc, { progress, label }),
+    });
+    await reload();
+    if (!waitUntilDone) return regenerated;
+    return waitForRecoveredDocument(regenerated);
+  }
+
   async function refreshOne(doc) {
     setBusy((prev) => ({ ...prev, [doc.id]: "refresh" }));
     setMessage("");
@@ -78,7 +185,17 @@ export default function GeneratedDocumentsPage() {
       await refreshGeneratedDocument(doc);
       await reload();
     } catch (error) {
-      setMessage(String(error?.message || error));
+      if (isRecoverableLostJobError(error)) {
+        try {
+          await regenerateLostJob(doc, { waitUntilDone: false });
+          setMessage("La generation precedente etait introuvable. Une nouvelle generation vient d'etre lancee sans repaiement.");
+        } catch (recoveryError) {
+          clearRecoveryState(doc);
+          setMessage(String(recoveryError?.message || recoveryError));
+        }
+      } else {
+        setMessage(String(error?.message || error));
+      }
     } finally {
       setBusy((prev) => ({ ...prev, [doc.id]: null }));
     }
@@ -89,7 +206,14 @@ export default function GeneratedDocumentsPage() {
     setMessage("");
     try {
       let latest = doc;
-      if (doc.status !== "done") latest = await refreshGeneratedDocument(doc);
+      if (doc.status !== "done") {
+        try {
+          latest = await refreshGeneratedDocument(doc);
+        } catch (error) {
+          if (!isRecoverableLostJobError(error)) throw error;
+          latest = await regenerateLostJob(doc, { waitUntilDone: true });
+        }
+      }
       if (latest.status !== "done") {
         setMessage("Le document n'est pas encore prêt. Réessaie dans quelques minutes.");
         await reload();
@@ -110,8 +234,13 @@ export default function GeneratedDocumentsPage() {
       if (["queued", "running"].includes(doc.status)) {
         try {
           await refreshGeneratedDocument(doc);
-        } catch {
-          // keep other documents refreshable
+        } catch (error) {
+          if (isRecoverableLostJobError(error) && !recoveryProgressRef.current[doc.id || doc.jobId]) {
+            void regenerateLostJob(doc, { waitUntilDone: false }).catch((recoveryError) => {
+              clearRecoveryState(doc);
+              setMessage(String(recoveryError?.message || recoveryError));
+            });
+          }
         }
       }
     }
@@ -204,6 +333,7 @@ export default function GeneratedDocumentsPage() {
         <div className="mt-6 grid grid-cols-1 gap-4">
           {documents.map((doc) => (
             <article key={doc.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              {renderProgress(doc)}
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">

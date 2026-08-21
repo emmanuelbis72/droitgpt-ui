@@ -204,6 +204,13 @@ try {
     resultUrl,
     apiBase: apiBase,
     paymentOrderNumber,
+    regeneration: {
+      method: "POST",
+      url: `${endpoint}?async=1`,
+      body: payload,
+      statusUrlTemplate: `${apiBase}/generate-academic/licence-memoire/jobs/{jobId}`,
+      resultUrlTemplate: `${apiBase}/generate-academic/licence-memoire/jobs/{jobId}/result`,
+    },
   });
   if (paymentOrderNumber) {
     clearStoredPayment("memoire");
