@@ -203,15 +203,29 @@ export function clearGeneratedDocuments(apiBase) {
 
 export async function readResponseError(response) {
   try {
+    let message = "";
     const ct = (response?.headers?.get?.("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
       const json = await response.json();
-      return json?.details || json?.error || json?.message || JSON.stringify(json);
+      message = json?.details || json?.error || json?.message || JSON.stringify(json);
+    } else {
+      message = (await response.text()) || "";
     }
-    return (await response.text()) || "";
+    return humanizeDocumentError(message);
   } catch (error) {
-    return String(error?.message || error);
+    return humanizeDocumentError(String(error?.message || error));
   }
+}
+
+function humanizeDocumentError(message) {
+  const text = String(message || "").trim();
+  if (/JOB_NOT_FOUND/i.test(text)) {
+    return "Cette generation n'est plus disponible cote serveur. Si le paiement avait ete valide, relancez la generation depuis la page du document : le paiement deja consomme sera accepte si l'ancien job a ete perdu.";
+  }
+  if (/RESULT_EXPIRED/i.test(text)) {
+    return "Le fichier temporaire a expire cote serveur. Relancez la generation depuis votre compte pour recuperer un nouveau fichier sans repayer si le job precedent a ete perdu.";
+  }
+  return text;
 }
 
 export async function refreshGeneratedDocument(record) {
