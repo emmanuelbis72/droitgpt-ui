@@ -96,10 +96,10 @@ useEffect(() => {
       return;
     }
 
-    // ✅ Fake progress bar 20 minutes (1200s)
+    // Progress estimate: keep the UI informative while the server job continues.
     setProgress(0);
     setProgressElapsed(0);
-    const totalSec = 1200;
+    const totalSec = 900;
     let elapsed = 0;
 
     progressTimerRef.current = setInterval(() => {
@@ -286,6 +286,17 @@ if (!ct.includes("application/pdf")) {
     return "Standard.";
   }, [mode]);
 
+  const guideFields = [
+    { label: "sujet du mémoire", value: form.topic },
+    { label: "université", value: form.university },
+    { label: "année académique", value: form.academicYear },
+    { label: "problématique", value: form.problemStatement },
+    { label: "objectifs", value: form.objectives },
+  ];
+  const completedGuideFields = guideFields.filter((field) => String(field.value || "").trim()).length;
+  const formCompletion = Math.round((completedGuideFields / guideFields.length) * 100);
+  const nextGuideField = guideFields.find((field) => !String(field.value || "").trim())?.label;
+
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 px-4 py-6">
       <div className="mx-auto w-full max-w-4xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl overflow-hidden">
@@ -305,9 +316,32 @@ if (!ct.includes("application/pdf")) {
             disabled={isGenerating}
             resetSignal={paymentResetSignal}
             openSignal={paymentOpenSignal}
+            className="hidden"
             onRequirementChange={setPaymentRequired}
             onPaymentReady={setPaymentOrderNumber}
           />
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <QuickSetting title="Langue du document" hint="Français par défaut. Choisissez English si vous voulez recevoir le mémoire en anglais.">
+              <ChoiceButton active={lang === "fr"} disabled={isGenerating} onClick={() => setLang("fr")}>
+                Français
+              </ChoiceButton>
+              <ChoiceButton active={lang === "en"} disabled={isGenerating} onClick={() => setLang("en")}>
+                English
+              </ChoiceButton>
+            </QuickSetting>
+
+            <QuickSetting title="Format académique" hint="Le document est généré en PDF stable, avec une structure complète de mémoire de licence.">
+              <div className="rounded-xl border border-emerald-400/60 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-100">
+                PDF stable
+              </div>
+              <div className="rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm font-semibold text-slate-300">
+                Environ 70 pages
+              </div>
+            </QuickSetting>
+          </div>
+
+          <FormProgress completion={formCompletion} nextLabel={nextGuideField} />
 
           {/* Mode toggle */}
           <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
@@ -394,23 +428,14 @@ if (!ct.includes("application/pdf")) {
             <textarea name="plan" value={form.plan} onChange={onChange} className={`${INPUT} min-h-[90px]`} placeholder="INTRO... Chapitre 1... Chapitre 2... Conclusion..." />
           </Field>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Field label="Langue du document généré">
-              <select value={lang} onChange={(e) => setLang(e.target.value)} className={INPUT}>
-                <option value="fr">Français</option>
-                <option value="en">English</option>
-              </select>
-            </Field>
-</div>
-
           {/* Actions */}
 
-          {/* ✅ Progress bar 20 minutes */}
+          {/* Progress bar */}
           {isGenerating && (
             <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-              <div className="text-xs text-slate-300">Génération du mémoire (~30 minutes)</div>
+              <div className="text-xs text-slate-300">Génération du mémoire (~15 minutes)</div>
               <div className="mt-1 text-[11px] text-slate-400">
-                Temps restant estimé : {formatTime(Math.max(0, 1800 - progressElapsed))} / 30:00
+                Temps restant estimé : {formatTime(Math.max(0, 900 - progressElapsed))} / 15:00
               </div>
               <div className="mt-2 h-3 w-full rounded-full bg-white/10 overflow-hidden">
                 <div className="h-full bg-emerald-400/80" style={{ width: `${progress}%`, transition: "width 1s linear" }} />
@@ -420,13 +445,25 @@ if (!ct.includes("application/pdf")) {
           )}
 
           <div className="flex flex-col gap-3">
+            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 text-xs leading-5 text-slate-300">
+              <div>
+                Prix : <b className="text-emerald-300">3 USD</b>.
+              </div>
+              <div>
+                Génération moyenne : environ <b className="text-slate-100">15 minutes</b> pour obtenir un mémoire professionnel et structuré.
+              </div>
+              <div>
+                Langue actuelle : <b className="text-slate-100">{lang === "en" ? "English" : "Français"}</b>.
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={paymentRequired && !paymentOrderNumber ? () => setPaymentOpenSignal((value) => value + 1) : generateMemoire}
               disabled={isGenerating}
               className="rounded-2xl px-5 py-3 font-semibold border border-white/10 bg-white/10 hover:bg-white/15 transition disabled:opacity-60"
             >
-              {isGenerating ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Payer et générer le mémoire" : "Générer & Télécharger (PDF)"}
+              {isGenerating ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Payer puis générer le mémoire" : "Générer & Télécharger"}
             </button>
 
             {lastPdfUrl && (
@@ -485,6 +522,60 @@ if (!ct.includes("application/pdf")) {
           © {new Date().getFullYear()} DroitGPT • Mémoire Licence
         </div>
       </div>
+    </div>
+  );
+}
+
+function QuickSetting({ title, hint, children }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+      <div className="text-sm font-semibold text-slate-100">{title}</div>
+      <p className="mt-1 text-xs leading-5 text-slate-400">{hint}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2">{children}</div>
+    </div>
+  );
+}
+
+function ChoiceButton({ active, disabled, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+        active
+          ? "border-emerald-400 bg-emerald-400 text-slate-950"
+          : "border-white/10 bg-slate-950/60 text-slate-200 hover:bg-white/10"
+      } disabled:opacity-60`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FormProgress({ completion, nextLabel }) {
+  const value = Math.max(0, Math.min(100, Number(completion) || 0));
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">Saisie progressive</p>
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            Remplissez d'abord les informations essentielles. Le plan et les détails optionnels peuvent être ajoutés ensuite.
+          </p>
+        </div>
+        <div className="text-sm font-bold text-emerald-300">{value}% prêt</div>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${value}%` }} />
+      </div>
+      {nextLabel ? (
+        <p className="mt-2 text-xs text-slate-400">
+          Prochaine information utile : <span className="font-semibold text-slate-100">{nextLabel}</span>.
+        </p>
+      ) : (
+        <p className="mt-2 text-xs font-semibold text-emerald-300">Les informations clés sont remplies.</p>
+      )}
     </div>
   );
 }

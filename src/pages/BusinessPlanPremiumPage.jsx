@@ -1302,14 +1302,22 @@ strategicPartnerships:
                 disabled={loading}
                 resetSignal={paymentResetSignal}
                 openSignal={paymentOpenSignal}
-                className="mt-6"
+                className="hidden"
                 onRequirementChange={setPaymentRequired}
                 onPaymentReady={setPaymentOrderNumber}
               />
 
               <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-                <div className="text-xs text-slate-400">
-                  Sortie actuelle : <b>{outputLabel(form.output)}</b>.
+                <div className="space-y-1 text-xs text-slate-400">
+                  <div>
+                    Prix : <b className="text-emerald-300">3 USD</b>.
+                  </div>
+                  <div>
+                    Génération moyenne : environ <b className="text-slate-200">15 minutes</b> pour obtenir un document professionnel et bancable.
+                  </div>
+                  <div>
+                    Sortie actuelle : <b>{outputLabel(form.output)}</b>.
+                  </div>
                 </div>
 
                 <div className="flex flex-col items-end">
@@ -1480,14 +1488,22 @@ strategicPartnerships:
                 disabled={loading}
                 resetSignal={paymentResetSignal}
                 openSignal={paymentOpenSignal}
-                className="mt-6"
+                className="hidden"
                 onRequirementChange={setPaymentRequired}
                 onPaymentReady={setPaymentOrderNumber}
               />
 
               <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-                <div className="text-xs text-slate-400">
-                  Sortie : <b>{outputLabel(form.output)}</b>.
+                <div className="space-y-1 text-xs text-slate-400">
+                  <div>
+                    Prix : <b className="text-emerald-300">3 USD</b>.
+                  </div>
+                  <div>
+                    Correction moyenne : environ <b className="text-slate-200">15 minutes</b> pour obtenir un document professionnel et bancable.
+                  </div>
+                  <div>
+                    Sortie : <b>{outputLabel(form.output)}</b>.
+                  </div>
                 </div>
 
                 <div className="flex flex-col items-end">

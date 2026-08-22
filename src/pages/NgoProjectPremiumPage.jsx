@@ -119,11 +119,11 @@ export default function NgoProjectPremiumPage() {
   const lastDownloadUrlRef = useRef(null);
   const [lastFile, setLastFile] = useState(null);
 
-  function startFakeProgress() {
+  function startFakeProgress(liteMode = false) {
     setProgress(1);
-    setStatusText("Préparation…");
+    setStatusText(liteMode ? "Mode Lite : préparation rapide…" : "Préparation…");
     const start = Date.now();
-    const DURATION_MS = 21 * 60 * 1000;
+    const DURATION_MS = liteMode ? 7 * 60 * 1000 : 15 * 60 * 1000;
 
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     progressTimerRef.current = setInterval(() => {
@@ -194,7 +194,7 @@ export default function NgoProjectPremiumPage() {
     }
 
     setLoading(true);
-    startFakeProgress();
+    startFakeProgress(form.lite);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -349,6 +349,18 @@ export default function NgoProjectPremiumPage() {
     }
   }
 
+  const guideFields = [
+    { label: "titre du projet", value: form.projectTitle },
+    { label: "organisation", value: form.organization },
+    { label: "secteur", value: form.sector },
+    { label: "problème à résoudre", value: form.problem },
+    { label: "bénéficiaires", value: form.targetGroups },
+    { label: "objectifs", value: form.overallGoal || form.specificObjectives },
+  ];
+  const completedGuideFields = guideFields.filter((field) => String(field.value || "").trim()).length;
+  const formCompletion = Math.round((completedGuideFields / guideFields.length) * 100);
+  const nextGuideField = guideFields.find((field) => !String(field.value || "").trim())?.label;
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -368,24 +380,35 @@ export default function NgoProjectPremiumPage() {
         disabled={loading}
         resetSignal={paymentResetSignal}
         openSignal={paymentOpenSignal}
+        className="hidden"
         onRequirementChange={setPaymentRequired}
         onPaymentReady={setPaymentOrderNumber}
       />
 
       <form onSubmit={onSubmit} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Langue du document généré">
-            <select
-              value={form.lang}
-              onChange={(e) => setForm((f) => ({ ...f, lang: e.target.value }))}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-              disabled={loading}
-            >
-              <option value="fr">Français</option>
-              <option value="en">English</option>
-            </select>
-          </Field>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <QuickSetting title="Langue du document" hint="Français par défaut. Choisissez English pour recevoir le projet ONG en anglais.">
+            <ChoiceButton active={form.lang === "fr"} disabled={loading} onClick={() => setForm((f) => ({ ...f, lang: "fr" }))}>
+              Français
+            </ChoiceButton>
+            <ChoiceButton active={form.lang === "en"} disabled={loading} onClick={() => setForm((f) => ({ ...f, lang: "en" }))}>
+              English
+            </ChoiceButton>
+          </QuickSetting>
 
+          <QuickSetting title="Niveau de détail" hint="Lite génère plus vite une proposition courte. Complet reste conseillé pour un bailleur.">
+            <ChoiceButton active={!form.lite} disabled={loading} onClick={() => setForm((f) => ({ ...f, lite: false }))}>
+              Complet
+            </ChoiceButton>
+            <ChoiceButton active={form.lite} disabled={loading} onClick={() => setForm((f) => ({ ...f, lite: true }))}>
+              Lite rapide
+            </ChoiceButton>
+          </QuickSetting>
+        </div>
+
+        <FormProgress completion={formCompletion} nextLabel={nextGuideField} />
+
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Style bailleur">
             <select
               value={form.donorStyle}
@@ -577,16 +600,18 @@ export default function NgoProjectPremiumPage() {
           </div>
         </div>
 
-        <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={form.lite}
-              onChange={(e) => setForm((f) => ({ ...f, lite: e.target.checked }))}
-              disabled={loading}
-            />
-            Mode rapide (Lite)
-          </label>
+        <div className="mt-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
+            <div>
+              Prix : <b className="text-slate-900">3 USD</b>.
+            </div>
+            <div>
+              Génération moyenne : environ <b className="text-slate-900">15 minutes</b> pour obtenir un projet ONG professionnel au format bailleur.
+            </div>
+            <div>
+              Mode actuel : <b className="text-slate-900">{form.lite ? "Lite rapide" : "Complet"}</b>.
+            </div>
+          </div>
 
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
             <button
@@ -595,7 +620,7 @@ export default function NgoProjectPremiumPage() {
               disabled={loading}
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
             >
-              {paymentRequired && !paymentOrderNumber ? "Payer et générer le projet" : "Générer & Télécharger (PDF)"}
+              {loading ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Payer puis générer le projet ONG" : "Générer & Télécharger"}
             </button>
             <button
               type="button"
@@ -648,6 +673,60 @@ export default function NgoProjectPremiumPage() {
           </div>
         )}
       </form>
+    </div>
+  );
+}
+
+function QuickSetting({ title, hint, children }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      <p className="mt-1 text-xs leading-5 text-slate-600">{hint}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2">{children}</div>
+    </div>
+  );
+}
+
+function ChoiceButton({ active, disabled, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+        active
+          ? "border-slate-900 bg-slate-900 text-white"
+          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+      } disabled:opacity-60`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FormProgress({ completion, nextLabel }) {
+  const value = Math.max(0, Math.min(100, Number(completion) || 0));
+  return (
+    <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-slate-900">Saisie progressive</p>
+          <p className="mt-1 text-xs leading-5 text-slate-600">
+            Remplissez d'abord les informations essentielles. Les champs optionnels améliorent le dossier, mais ne bloquent pas la génération.
+          </p>
+        </div>
+        <div className="text-sm font-bold text-emerald-700">{value}% prêt</div>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+        <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${value}%` }} />
+      </div>
+      {nextLabel ? (
+        <p className="mt-2 text-xs text-slate-600">
+          Prochaine information utile : <span className="font-semibold text-slate-900">{nextLabel}</span>.
+        </p>
+      ) : (
+        <p className="mt-2 text-xs font-semibold text-emerald-700">Les informations clés sont remplies.</p>
+      )}
     </div>
   );
 }
