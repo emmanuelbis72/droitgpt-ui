@@ -395,7 +395,7 @@ if (!ct.includes("application/pdf")) {
           </Field>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Field label="Langue">
+            <Field label="Langue du document généré">
               <select value={lang} onChange={(e) => setLang(e.target.value)} className={INPUT}>
                 <option value="fr">Français</option>
                 <option value="en">English</option>

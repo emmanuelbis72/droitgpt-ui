@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
+import BusinessPlanPackOffer from "../components/businessPlanPack/BusinessPlanPackOffer.jsx";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
 import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
@@ -828,7 +829,7 @@ strategicPartnerships:
         <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 md:p-6 shadow-xl">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <Select
-              label="Langue"
+              label="Langue du document généré"
               value={form.lang}
               onChange={(v) => updateField("lang", v)}
               disabled={loading}
@@ -836,6 +837,7 @@ strategicPartnerships:
                 { value: "fr", label: "Français" },
                 { value: "en", label: "English" },
               ]}
+              hint="Français par défaut. Choisissez English si vous voulez recevoir le document en anglais."
             />
 
             <Select
@@ -928,21 +930,22 @@ strategicPartnerships:
 
         {/* MODE 1: GENERATE */}
         {mode === "generate" ? (
-          <form onSubmit={onSubmitGenerate} className="mt-6">
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 md:p-6 shadow-xl">
-              <SectionTitle
-                title="A) Informations simples"
-                subtitle="Commence ici. Même si tu ne sais pas tout, remplis le maximum."
-              />
-
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field
-                  label="Nom de l’entreprise *"
-                  value={form.companyName}
-                  onChange={(v) => updateField("companyName", v)}
-                  disabled={loading}
-                  placeholder="Ex: GOMA LUXURY GEMS"
+          <>
+            <form onSubmit={onSubmitGenerate} className="mt-6">
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 md:p-6 shadow-xl">
+                <SectionTitle
+                  title="A) Informations simples"
+                  subtitle="Commence ici. Même si tu ne sais pas tout, remplis le maximum."
                 />
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Field
+                    label="Nom de l’entreprise *"
+                    value={form.companyName}
+                    onChange={(v) => updateField("companyName", v)}
+                    disabled={loading}
+                    placeholder="Ex: GOMA LUXURY GEMS"
+                  />
 
                 <Field
                   label="Secteur (activité) *"
@@ -1261,7 +1264,10 @@ strategicPartnerships:
                 </div>
               </div>
             </div>
-          </form>
+            </form>
+
+            <BusinessPlanPackOffer compact variant="dark" className="mt-6" />
+          </>
         ) : null}
 
         {/* MODE 2: REWRITE */}

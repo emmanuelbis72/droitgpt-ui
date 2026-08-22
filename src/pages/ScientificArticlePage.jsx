@@ -252,7 +252,7 @@ export default function ScientificArticlePage() {
             </label>
 
             <label className="text-sm">
-              <span className="text-slate-300">Langue</span>
+              <span className="text-slate-300">Langue du document généré</span>
               <select
                 className="mt-1 w-full rounded-xl bg-slate-950/70 border border-white/10 px-3 py-2"
                 value={form.lang}

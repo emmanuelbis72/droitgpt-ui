@@ -374,7 +374,7 @@ export default function NgoProjectPremiumPage() {
 
       <form onSubmit={onSubmit} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Langue">
+          <Field label="Langue du document généré">
             <select
               value={form.lang}
               onChange={(e) => setForm((f) => ({ ...f, lang: e.target.value }))}

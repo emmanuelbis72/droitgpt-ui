@@ -188,7 +188,7 @@ export default function ExcelAppsPage() {
                   <input value={appName} onChange={(e) => setAppName(e.target.value)} className="mt-1 w-full rounded-xl bg-slate-950/70 border border-white/10 p-3 text-sm outline-none" />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-300">Langue</label>
+                  <label className="text-xs text-slate-300">Langue du document généré</label>
                   <select value={lang} onChange={(e) => setLang(e.target.value)} className="mt-1 w-full rounded-xl bg-slate-950/70 border border-white/10 p-3 text-sm outline-none">
                     <option value="fr">Français</option>
                     <option value="en">English</option>

@@ -1,5 +1,8 @@
 export const BUSINESS_PLAN_PACK_SUMMARY = {
   "total": 248,
+  "businessPlans": 170,
+  "pitchDecks": 78,
+  "totalFiles": 248,
   "docx": 110,
   "pptx": 78,
   "pdf": 60,
