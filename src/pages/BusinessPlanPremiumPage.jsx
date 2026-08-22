@@ -92,6 +92,38 @@ function clampText(s, max = 6000) {
   return x.slice(0, max) + "…";
 }
 
+function getOutputFormats(output) {
+  const value = String(output || "pdf").toLowerCase();
+  if (value === "doc" || value === "word") return [{ format: "doc", ext: "doc", label: "Word" }];
+  if (value === "both") {
+    return [
+      { format: "pdf", ext: "pdf", label: "PDF" },
+      { format: "doc", ext: "doc", label: "Word" },
+    ];
+  }
+  return [{ format: "pdf", ext: "pdf", label: "PDF" }];
+}
+
+function outputLabel(output) {
+  const labels = getOutputFormats(output).map((item) => item.label);
+  return labels.join(" + ");
+}
+
+function withResultFormat(url, format) {
+  if (String(url || "").includes("{jobId}")) {
+    const joiner = String(url || "").includes("?") ? "&" : "?";
+    return `${url}${joiner}format=${encodeURIComponent(format || "pdf")}`;
+  }
+  try {
+    const next = new URL(url, window.location.origin);
+    next.searchParams.set("format", format || "pdf");
+    return next.toString();
+  } catch {
+    const joiner = String(url || "").includes("?") ? "&" : "?";
+    return `${url}${joiner}format=${encodeURIComponent(format || "pdf")}`;
+  }
+}
+
 function buildMultiline(label, value) {
   const v = String(value || "").trim();
   if (!v) return "";
@@ -156,7 +188,7 @@ export default function BusinessPlanPremiumPage() {
     fundingAsk: "",
 
     // Sortie
-    output: "pdf", // PDF par défaut (stable)
+    output: "pdf",
     lite: false,
 
     // Mode rewrite
@@ -367,7 +399,7 @@ export default function BusinessPlanPremiumPage() {
       finAssumptions: clampText(form.finAssumptions, 4500),
       fundingAsk: clampText(form.fundingAsk, 4500),
 
-      output: "pdf", // PDF only (stable). Si tu réactives DOCX côté backend, change ici.
+      output: form.output,
       lite: form.lite,
     };
   }
@@ -405,6 +437,35 @@ export default function BusinessPlanPremiumPage() {
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  async function downloadResultFiles({ resultUrl, formats, baseName, kind, signal }) {
+    let lastFileName = "";
+    const selectedFormats = formats?.length ? formats : getOutputFormats("pdf");
+
+    for (let index = 0; index < selectedFormats.length; index += 1) {
+      const item = selectedFormats[index];
+      const fileName = `${baseName}.${item.ext}`;
+      const response = await fetch(withResultFormat(resultUrl, item.format), { signal });
+
+      if (!response.ok) {
+        let details = "";
+        try {
+          const json = await response.json();
+          details = json?.details || json?.error || JSON.stringify(json);
+        } catch {
+          details = await response.text();
+        }
+        throw new Error(details || `HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      lastFileName = fileName;
+      if (index === selectedFormats.length - 1) setPersistentDownload(kind, blob, fileName);
+      else await downloadBlob(blob, fileName);
+    }
+
+    return lastFileName;
   }
 
 
@@ -463,14 +524,18 @@ export default function BusinessPlanPremiumPage() {
 
       const statusUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}`;
       const resultUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}/result`;
-      const fname = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}.pdf`;
+      const outputFormats = getOutputFormats(form.output);
+      const primaryFormat = outputFormats[0];
+      const baseFileName = `${safeFilename(form.companyName)}_BusinessPlan_Premium_${prettyDate()}`;
+      const fname = `${baseFileName}.${primaryFormat.ext}`;
+      const historyResultUrl = withResultFormat(resultUrl, primaryFormat.format);
       upsertGeneratedDocument({
         documentType: "businessplan",
         title: form.companyName || "Business Plan",
         fileName: fname,
         jobId,
         statusUrl,
-        resultUrl,
+        resultUrl: historyResultUrl,
         apiBase: API_BASE,
         paymentOrderNumber,
         regeneration: {
@@ -478,7 +543,10 @@ export default function BusinessPlanPremiumPage() {
           url: `${endpointGenerate}?async=1`,
           body: payload,
           statusUrlTemplate: `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/{jobId}`,
-          resultUrlTemplate: `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/{jobId}/result`,
+          resultUrlTemplate: withResultFormat(
+            `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/{jobId}/result`,
+            primaryFormat.format
+          ),
         },
       });
       if (paymentOrderNumber) {
@@ -501,25 +569,22 @@ export default function BusinessPlanPremiumPage() {
         await new Promise((r) => setTimeout(r, 4000));
       }
 
-      // 3) Download PDF
-      const pdfRes = await fetch(resultUrl, { signal: controller.signal });
-      if (!pdfRes.ok) {
-        let details = "";
-        try {
-          const j = await pdfRes.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await pdfRes.text();
-        }
-        throw new Error(details || `HTTP ${pdfRes.status}`);
-      }
-
-      const blob = await pdfRes.blob();
-      setPersistentDownload("generate", blob, fname);
-      updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
+      const downloadedName = await downloadResultFiles({
+        resultUrl,
+        formats: outputFormats,
+        baseName: baseFileName,
+        kind: "generate",
+        signal: controller.signal,
+      });
+      updateGeneratedDocument(jobId, {
+        status: "done",
+        fileName: fname,
+        resultUrl: historyResultUrl,
+        downloadedAt: new Date().toISOString(),
+      });
 
       stopFakeProgress("Téléchargement prêt ✅");
-      setSuccessHint("Ton business plan a été généré et téléchargé.");
+      setSuccessHint(`Ton business plan a été généré en ${outputLabel(form.output)}. Dernier fichier : ${downloadedName}.`);
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -577,7 +642,7 @@ export default function BusinessPlanPremiumPage() {
       fd.append("sector", form.sector || "");
       fd.append("stage", STAGES.find((s) => s.value === form.stage)?.label || form.stage);
       fd.append("notes", form.rewriteNotes || "");
-      fd.append("output", "pdf"); // stable
+      fd.append("output", form.output || "pdf");
 
       if (draftFile) fd.append("file", draftFile);
       if (!draftFile) fd.append("text", form.rewriteTextFallback || "");
@@ -605,16 +670,20 @@ export default function BusinessPlanPremiumPage() {
       const jobId = started?.jobId;
       if (!jobId) throw new Error("JOB_ID manquant pour la correction.");
 
-      const fname = `${safeFilename(form.companyName)}_BusinessPlan_CORRIGE_${prettyDate()}.pdf`;
+      const outputFormats = getOutputFormats(form.output);
+      const primaryFormat = outputFormats[0];
+      const baseFileName = `${safeFilename(form.companyName)}_BusinessPlan_CORRIGE_${prettyDate()}`;
+      const fname = `${baseFileName}.${primaryFormat.ext}`;
       const statusUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}`;
       const resultUrl = `${API_BASE.replace(/\/$/, "")}/generate-business-plan/premium/jobs/${jobId}/result`;
+      const historyResultUrl = withResultFormat(resultUrl, primaryFormat.format);
       upsertGeneratedDocument({
         documentType: "businessplan_rewrite",
         title: `${form.companyName || "Business Plan"} - correction`,
         fileName: fname,
         jobId,
         statusUrl,
-        resultUrl,
+        resultUrl: historyResultUrl,
         apiBase: API_BASE,
         paymentOrderNumber,
       });
@@ -638,24 +707,22 @@ export default function BusinessPlanPremiumPage() {
         await new Promise((r) => setTimeout(r, 4000));
       }
 
-      const res = await fetch(resultUrl, { signal: controller.signal });
-      if (!res.ok) {
-        let details = "";
-        try {
-          const j = await res.json();
-          details = j?.details || j?.error || JSON.stringify(j);
-        } catch {
-          details = await res.text();
-        }
-        throw new Error(details || `HTTP ${res.status}`);
-      }
-
-      const blob = await res.blob();
-      setPersistentDownload("rewrite", blob, fname);
-      updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
+      const downloadedName = await downloadResultFiles({
+        resultUrl,
+        formats: outputFormats,
+        baseName: baseFileName,
+        kind: "rewrite",
+        signal: controller.signal,
+      });
+      updateGeneratedDocument(jobId, {
+        status: "done",
+        fileName: fname,
+        resultUrl: historyResultUrl,
+        downloadedAt: new Date().toISOString(),
+      });
 
       stopFakeProgress("Téléchargement prêt ✅");
-      setSuccessHint("Ton brouillon a été corrigé et converti en version professionnelle.");
+      setSuccessHint(`Ton brouillon a été corrigé en ${outputLabel(form.output)}. Dernier fichier : ${downloadedName}.`);
     } catch (err) {
       const msg =
         err?.name === "AbortError"
@@ -737,6 +804,17 @@ strategicPartnerships:
   }
 
   const audienceHint = AUDIENCES.find((a) => a.value === form.audience)?.hint;
+  const guideFields = [
+    { label: "nom de l'entreprise", value: form.companyName },
+    { label: "secteur", value: form.sector },
+    { label: "solution ou produit", value: form.solution || form.product },
+    { label: "clients", value: form.customers },
+    { label: "prix / revenus", value: form.pricing },
+    { label: "besoin de financement", value: form.fundingAsk },
+  ];
+  const completedGuideFields = guideFields.filter((field) => String(field.value || "").trim()).length;
+  const formCompletion = Math.round((completedGuideFields / guideFields.length) * 100);
+  const nextGuideField = guideFields.find((field) => !String(field.value || "").trim())?.label;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -773,7 +851,7 @@ strategicPartnerships:
           </div>
         </div>
 
-        <div className="mb-6 grid gap-3 lg:grid-cols-2">
+        <div className="mb-6 grid gap-3 xl:grid-cols-3">
           <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
             <div className="text-sm font-semibold text-emerald-100">Langue du document</div>
             <p className="mt-1 text-xs text-emerald-100/80">
@@ -802,7 +880,7 @@ strategicPartnerships:
           </div>
 
           <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-4">
-            <div className="text-sm font-semibold text-sky-100">Format de génération</div>
+            <div className="text-sm font-semibold text-sky-100">Niveau de détail</div>
             <p className="mt-1 text-xs text-sky-100/80">
               Lite génère plus vite un dossier court : résumé, canvas, SWOT, finances et demande de financement.
             </p>
@@ -831,6 +909,34 @@ strategicPartnerships:
               >
                 Lite rapide
               </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
+            <div className="text-sm font-semibold text-amber-100">Format du fichier</div>
+            <p className="mt-1 text-xs text-amber-100/80">
+              Téléchargez le business plan en PDF, en Word, ou dans les deux formats.
+            </p>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {[
+                { value: "pdf", label: "PDF" },
+                { value: "doc", label: "Word" },
+                { value: "both", label: "PDF + Word" },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => updateField("output", option.value)}
+                  disabled={loading}
+                  className={`rounded-xl border px-3 py-3 text-sm font-semibold transition ${
+                    form.output === option.value
+                      ? "border-amber-300 bg-amber-300 text-slate-950"
+                      : "border-white/10 bg-slate-950/60 text-slate-200 hover:bg-slate-900"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -884,121 +990,6 @@ strategicPartnerships:
           </div>
         ) : null}
 
-        <MobileMoneyPayment
-          apiBase={API_BASE}
-          documentType="businessplan"
-          variant="dark"
-          disabled={loading}
-          resetSignal={paymentResetSignal}
-          openSignal={paymentOpenSignal}
-          className="mb-6"
-          onRequirementChange={setPaymentRequired}
-          onPaymentReady={setPaymentOrderNumber}
-        />
-
-        {/* Controls top (common) */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 md:p-6 shadow-xl">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Select
-              label="Langue du document généré"
-              value={form.lang}
-              onChange={(v) => updateField("lang", v)}
-              disabled={loading}
-              options={[
-                { value: "fr", label: "Français" },
-                { value: "en", label: "English" },
-              ]}
-              hint="Français par défaut. Choisissez English si vous voulez recevoir le document en anglais."
-            />
-
-            <Select
-              label="Audience (pour qui ?)"
-              value={form.audience}
-              onChange={(v) => updateField("audience", v)}
-              disabled={loading}
-              options={AUDIENCES.map((a) => ({ value: a.value, label: a.label }))}
-              hint={audienceHint}
-            />
-
-            <Select
-              label="Type de dossier"
-              value={form.docType}
-              onChange={(v) => updateField("docType", v)}
-              disabled={loading}
-              options={DOCTYPES}
-            />
-
-            <div>
-              <label className="text-sm text-slate-300">Sortie</label>
-              <div className="mt-1 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  className={`rounded-xl border px-3 py-2 text-sm ${
-                    true
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
-                      : "border-slate-800 bg-slate-950 text-slate-300"
-                  }`}
-                  disabled
-                  title="PDF est la sortie stable (production)."
-                >
-                  PDF (stable)
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-500"
-                  disabled
-                  title="DOCX désactivé pour stabilité (réactivation plus tard)."
-                >
-                  DOCX (bientôt)
-                </button>
-              </div>
-              <p className="mt-1 text-xs text-slate-400">
-                Sortie actuelle : <b>PDF</b>.
-              </p>
-            </div>
-          </div>
-
-          {/* Lite + progress */}
-          <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <label className="inline-flex items-center gap-2 text-slate-200">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={form.lite}
-                onChange={(e) => updateField("lite", e.target.checked)}
-                disabled={loading}
-              />
-              Mode Lite (plus rapide)
-              <span className="text-slate-400 text-xs">(réduit certaines sections)</span>
-            </label>
-
-            {loading ? (
-              <button
-                type="button"
-                onClick={onCancel}
-                className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-200 hover:bg-slate-900"
-              >
-                Annuler
-              </button>
-            ) : null}
-          </div>
-
-          {loading ? (
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-sm text-slate-300">
-                <span>{statusText || "Traitement en cours…"}</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="mt-2 h-2 w-full rounded-full bg-slate-800">
-                <div
-                  className="h-2 rounded-full bg-emerald-500 transition-all"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-          ) : null}
-        </div>
-
         {/* MODE 1: GENERATE */}
         {mode === "generate" ? (
           <>
@@ -1008,6 +999,8 @@ strategicPartnerships:
                   title="A) Informations simples"
                   subtitle="Commence ici. Même si tu ne sais pas tout, remplis le maximum."
                 />
+
+                <FormProgress completion={formCompletion} nextLabel={nextGuideField} />
 
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field
@@ -1121,6 +1114,23 @@ strategicPartnerships:
                     ) : null}
                   </div>
                 </div>
+
+                <Select
+                  label="Audience (pour qui ?)"
+                  value={form.audience}
+                  onChange={(v) => updateField("audience", v)}
+                  disabled={loading}
+                  options={AUDIENCES.map((a) => ({ value: a.value, label: a.label }))}
+                  hint={audienceHint}
+                />
+
+                <Select
+                  label="Type de dossier"
+                  value={form.docType}
+                  onChange={(v) => updateField("docType", v)}
+                  disabled={loading}
+                  options={DOCTYPES}
+                />
               </div>
 
               <div className="mt-8">
@@ -1285,9 +1295,21 @@ strategicPartnerships:
                 </div>
               </details>
 
+              <MobileMoneyPayment
+                apiBase={API_BASE}
+                documentType="businessplan"
+                variant="dark"
+                disabled={loading}
+                resetSignal={paymentResetSignal}
+                openSignal={paymentOpenSignal}
+                className="mt-6"
+                onRequirementChange={setPaymentRequired}
+                onPaymentReady={setPaymentOrderNumber}
+              />
+
               <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
                 <div className="text-xs text-slate-400">
-                  Sortie actuelle : <b>PDF</b> (stable production).
+                  Sortie actuelle : <b>{outputLabel(form.output)}</b>.
                 </div>
 
                 <div className="flex flex-col items-end">
@@ -1297,10 +1319,9 @@ strategicPartnerships:
                     disabled={loading}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
-                    {loading ? "Génération…" : paymentRequired && !paymentOrderNumber ? "Payer et générer le document" : "Générer & Télécharger"}
+                    {loading ? "Génération…" : paymentRequired && !paymentOrderNumber ? "Payer puis générer le document" : "Générer & Télécharger"}
                   </button>
 
-                  {/* Progress bar (14 minutes fake progress) */}
                   {loading ? (
                     <div className="mt-3 w-[260px] max-w-full">
                       <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
@@ -1312,10 +1333,17 @@ strategicPartnerships:
                       <div className="mt-2 text-xs text-slate-300">
                         {statusText ? `${statusText} ` : ""}{progress ? `${progress}%` : ""}
                       </div>
+                      <button
+                        type="button"
+                        onClick={onCancel}
+                        className="mt-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-900"
+                      >
+                        Annuler sur cet écran
+                      </button>
                     </div>
                   ) : null}
 
-                  {/* Re-download last generated PDF (no regeneration) */}
+                  {/* Re-download last generated file (no regeneration) */}
                   {lastGenerateFile?.url && !loading ? (
                     <button
                       type="button"
@@ -1445,9 +1473,21 @@ strategicPartnerships:
                 />
               </div>
 
+              <MobileMoneyPayment
+                apiBase={API_BASE}
+                documentType="businessplan"
+                variant="dark"
+                disabled={loading}
+                resetSignal={paymentResetSignal}
+                openSignal={paymentOpenSignal}
+                className="mt-6"
+                onRequirementChange={setPaymentRequired}
+                onPaymentReady={setPaymentOrderNumber}
+              />
+
               <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
                 <div className="text-xs text-slate-400">
-                  Sortie : <b>PDF</b> (stable production).
+                  Sortie : <b>{outputLabel(form.output)}</b>.
                 </div>
 
                 <div className="flex flex-col items-end">
@@ -1457,10 +1497,9 @@ strategicPartnerships:
                     disabled={loading}
                     className="rounded-xl bg-emerald-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
                   >
-                    {loading ? "Correction…" : paymentRequired && !paymentOrderNumber ? "Payer et corriger le document" : "Corriger & Télécharger"}
+                    {loading ? "Correction…" : paymentRequired && !paymentOrderNumber ? "Payer puis corriger le document" : "Corriger & Télécharger"}
                   </button>
 
-                  {/* Progress bar (14 minutes fake progress) */}
                   {loading ? (
                     <div className="mt-3 w-[260px] max-w-full">
                       <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
@@ -1472,10 +1511,17 @@ strategicPartnerships:
                       <div className="mt-2 text-xs text-slate-300">
                         {statusText ? `${statusText} ` : ""}{progress ? `${progress}%` : ""}
                       </div>
+                      <button
+                        type="button"
+                        onClick={onCancel}
+                        className="mt-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-900"
+                      >
+                        Annuler sur cet écran
+                      </button>
                     </div>
                   ) : null}
 
-                  {/* Re-download last corrected PDF (no regeneration) */}
+                  {/* Re-download last corrected file (no regeneration) */}
                   {lastRewriteFile?.url && !loading ? (
                     <button
                       type="button"
@@ -1522,6 +1568,33 @@ function SectionTitle({ title, subtitle }) {
     <div>
       <div className="text-lg font-semibold text-slate-100">{title}</div>
       {subtitle ? <div className="text-sm text-slate-400 mt-1">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function FormProgress({ completion, nextLabel }) {
+  const value = Math.max(0, Math.min(100, Number(completion) || 0));
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">Saisie progressive</p>
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            Remplis d'abord les champs essentiels. Le reste améliore la qualité, mais tu peux avancer étape par étape.
+          </p>
+        </div>
+        <div className="text-sm font-bold text-emerald-300">{value}% prêt</div>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
+        <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${value}%` }} />
+      </div>
+      {nextLabel ? (
+        <p className="mt-2 text-xs text-slate-400">
+          Prochaine information utile : <span className="font-semibold text-slate-200">{nextLabel}</span>.
+        </p>
+      ) : (
+        <p className="mt-2 text-xs font-semibold text-emerald-300">Les informations clés sont remplies.</p>
+      )}
     </div>
   );
 }

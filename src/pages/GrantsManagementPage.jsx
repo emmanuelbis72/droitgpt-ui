@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import BusinessPlanPackOffer from "../components/businessPlanPack/BusinessPlanPackOffer.jsx";
+import { listGrantOpportunities } from "../services/grantsApi.js";
 import {
   STATIC_OPPORTUNITIES,
   STATIC_OPPORTUNITIES_LAST_UPDATED,
@@ -22,14 +23,32 @@ const STATUS_OPTIONS = [
 export default function GrantsManagementPage() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [selected, setSelected] = useState(null);
+  const [liveRows, setLiveRows] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listGrantOpportunities({ status: "open", limit: 100 })
+      .then((data) => {
+        if (cancelled) return;
+        const rows = Array.isArray(data?.rows) ? data.rows : [];
+        setLiveRows(rows.map(normalizeIndexedOpportunity).filter(Boolean));
+      })
+      .catch(() => {
+        if (!cancelled) setLiveRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const rows = useMemo(() => {
-    return STATIC_OPPORTUNITIES.filter(isCurrentOpportunity)
+    return dedupeOpportunities([...liveRows, ...STATIC_OPPORTUNITIES])
+      .filter(isCurrentOpportunity)
       .filter((item) => filters.category === "all" || item.category === filters.category)
       .filter((item) => filters.status === "all" || item.status === filters.status)
       .filter((item) => matchesQuery(item, filters.q))
       .sort(sortByDeadline);
-  }, [filters]);
+  }, [filters, liveRows]);
 
   const openCount = rows.filter((item) => item.status === "open").length;
   const continuousCount = rows.filter((item) => item.status === "continuous").length;
@@ -44,7 +63,7 @@ export default function GrantsManagementPage() {
             <h1 className="mt-4 text-4xl font-black leading-tight sm:text-5xl">Opportunités</h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
               Annuaire simple pour trouver des opportunités utiles aux entrepreneurs et entreprises en RDC :
-              financements, concours, accélérateurs, appels d'offres et offres d'emploi. Les annonces expirées sont masquées automatiquement.
+              financements, concours, accélérateurs, fonds d'investissement, incubateurs, appels d'offres et offres d'emploi. Les annonces expirées sont masquées automatiquement.
             </p>
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
               <Metric value={openCount} label="ouvertes" />
@@ -52,7 +71,7 @@ export default function GrantsManagementPage() {
               <Metric value={next?.deadline ? formatDate(next.deadline) : "-"} label="prochaine deadline" small />
             </div>
             <p className="mt-5 text-xs leading-5 text-slate-400">
-              Dernière revue manuelle : {formatDate(STATIC_OPPORTUNITIES_LAST_UPDATED)}. Chaque carte garde son lien source pour vérification.
+              Dernière revue manuelle : {formatDate(STATIC_OPPORTUNITIES_LAST_UPDATED)}. Les opportunités indexées par le backend s'ajoutent automatiquement quand elles sont disponibles.
             </p>
           </div>
 
@@ -66,7 +85,7 @@ export default function GrantsManagementPage() {
             <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">Annuaire RDC</p>
             <h2 className="mt-1 text-2xl font-black">Opportunités à consulter maintenant</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              Liste statique, claire et contrôlée. Les sources continues servent de points de veille; les opportunités datées disparaissent automatiquement après leur deadline.
+              Liste claire et contrôlée, enrichie automatiquement par les opportunités backend déjà indexées. Les sources continues servent de points de veille; les opportunités datées disparaissent automatiquement après leur deadline.
             </p>
           </div>
           <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">{rows.length} résultat(s)</div>
@@ -76,7 +95,7 @@ export default function GrantsManagementPage() {
           <input
             value={filters.q}
             onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))}
-            placeholder="Rechercher : startup, santé, construction, agriculture, appel d'offres..."
+            placeholder="Rechercher : startup, santé, construction, agriculture, appel d'offres, fonds..."
             className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
           />
           <select
@@ -258,10 +277,63 @@ function statusLabel(status) {
 }
 
 function categoryLabel(category) {
+  if (category === "funds") return "Fonds";
   if (category === "jobs") return "Offre d'emploi";
   if (category === "tenders") return "Appel d'offres";
   if (category === "entrepreneurs") return "Entrepreneurs";
   return "Opportunité";
+}
+
+function normalizeIndexedOpportunity(item) {
+  if (!item?.sourceUrl && !item?.source_url) return null;
+  const type = String(item.type || item.opportunityType || "").toLowerCase();
+  const category =
+    type.includes("tender") || type.includes("appel d") || type.includes("procurement")
+      ? "tenders"
+      : type.includes("job") || type.includes("emploi")
+      ? "jobs"
+      : type.includes("fund") || type.includes("investment") || type.includes("investissement") || type.includes("incubator")
+      ? "funds"
+      : "entrepreneurs";
+
+  return {
+    id: item.id || `live-${btoa(String(item.sourceUrl || item.source_url)).slice(0, 18)}`,
+    category,
+    status: normalizeStatus(item.status),
+    title: item.title || "Opportunité",
+    organization: item.organization || item.sourceName || item.source_name || "Organisation à confirmer",
+    type: item.type || "Opportunité indexée",
+    deadline: item.deadline || null,
+    deadlineText: item.deadlineText || item.deadline_text || "",
+    countries: Array.isArray(item.countries) ? item.countries : [],
+    sectors: Array.isArray(item.sectors) ? item.sectors : [],
+    summary: item.summary || item.description || "",
+    eligibility: item.eligibility || "",
+    amount: item.amount || "",
+    sourceName: item.sourceName || item.source_name || "",
+    sourceUrl: item.sourceUrl || item.source_url,
+    verificationNotes: item.verificationNotes || item.verification_notes || "Résultat indexé automatiquement par le backend DroitGPT; vérifier la source avant candidature.",
+  };
+}
+
+function normalizeStatus(status) {
+  const value = String(status || "").toLowerCase();
+  if (value === "open") return "open";
+  if (value === "expired" || value === "hidden") return value;
+  if (value === "unknown" || value === "draft_review" || value === "review") return "review";
+  return "review";
+}
+
+function dedupeOpportunities(items) {
+  const seen = new Set();
+  const rows = [];
+  for (const item of items) {
+    const key = String(item?.sourceUrl || item?.id || "").trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    rows.push(item);
+  }
+  return rows;
 }
 
 function matchesQuery(item, query) {
