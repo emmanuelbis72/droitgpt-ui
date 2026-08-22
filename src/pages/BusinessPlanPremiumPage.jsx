@@ -221,9 +221,9 @@ export default function BusinessPlanPremiumPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function startFakeProgress(kind = "generate") {
-    // 14 minutes fake progress (840s) that caps at 95% until backend responds
-    const DURATION_MS = 840000;
+  function startFakeProgress(kind = "generate", liteMode = false) {
+    // Lite uses fewer backend sections, so the client-side progress should also feel faster.
+    const DURATION_MS = liteMode ? 360000 : 840000;
     const CAP = 95;
 
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
@@ -240,6 +240,15 @@ export default function BusinessPlanPremiumPage() {
             { at: 48, text: "Amélioration du style (niveau banque/investisseur)…" },
             { at: 70, text: "Reconstruction des sections manquantes…" },
             { at: 86, text: "Finances (Y1–Y5) & cohérence…" },
+            { at: 95, text: "Finalisation & export…" },
+          ]
+        : liteMode
+        ? [
+            { at: 10, text: "Mode Lite : cadrage rapide…" },
+            { at: 25, text: "Résumé exécutif…" },
+            { at: 45, text: "Canvas & SWOT…" },
+            { at: 70, text: "Finances essentielles…" },
+            { at: 88, text: "Demande de financement…" },
             { at: 95, text: "Finalisation & export…" },
           ]
         : [
@@ -413,7 +422,7 @@ export default function BusinessPlanPremiumPage() {
     }
 
     setLoading(true);
-    startFakeProgress("generate");
+    startFakeProgress("generate", form.lite);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -761,6 +770,68 @@ strategicPartnerships:
             >
               Réinitialiser
             </button>
+          </div>
+        </div>
+
+        <div className="mb-6 grid gap-3 lg:grid-cols-2">
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+            <div className="text-sm font-semibold text-emerald-100">Langue du document</div>
+            <p className="mt-1 text-xs text-emerald-100/80">
+              Français par défaut. Choisissez English pour générer le business plan en anglais.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {[
+                { value: "fr", label: "Français" },
+                { value: "en", label: "English" },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => updateField("lang", option.value)}
+                  disabled={loading}
+                  className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                    form.lang === option.value
+                      ? "border-emerald-400 bg-emerald-400 text-slate-950"
+                      : "border-white/10 bg-slate-950/60 text-slate-200 hover:bg-slate-900"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-4">
+            <div className="text-sm font-semibold text-sky-100">Format de génération</div>
+            <p className="mt-1 text-xs text-sky-100/80">
+              Lite génère plus vite un dossier court : résumé, canvas, SWOT, finances et demande de financement.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => updateField("lite", false)}
+                disabled={loading}
+                className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                  !form.lite
+                    ? "border-sky-300 bg-sky-300 text-slate-950"
+                    : "border-white/10 bg-slate-950/60 text-slate-200 hover:bg-slate-900"
+                }`}
+              >
+                Complet
+              </button>
+              <button
+                type="button"
+                onClick={() => updateField("lite", true)}
+                disabled={loading}
+                className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                  form.lite
+                    ? "border-sky-300 bg-sky-300 text-slate-950"
+                    : "border-white/10 bg-slate-950/60 text-slate-200 hover:bg-slate-900"
+                }`}
+              >
+                Lite rapide
+              </button>
+            </div>
           </div>
         </div>
 

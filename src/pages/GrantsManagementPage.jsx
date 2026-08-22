@@ -44,7 +44,7 @@ export default function GrantsManagementPage() {
             <h1 className="mt-4 text-4xl font-black leading-tight sm:text-5xl">Opportunités</h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
               Annuaire simple pour trouver des opportunités utiles aux entrepreneurs et entreprises en RDC :
-              financements, concours, accélérateurs et appels d'offres. Les annonces expirées sont masquées automatiquement.
+              financements, concours, accélérateurs, appels d'offres et offres d'emploi. Les annonces expirées sont masquées automatiquement.
             </p>
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
               <Metric value={openCount} label="ouvertes" />
@@ -131,7 +131,7 @@ function OpportunityCard({ opportunity, onDetails }) {
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={opportunity.status} />
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">{opportunity.type}</span>
-        <span className="ml-auto rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">RDC</span>
+        <span className="ml-auto rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">{categoryLabel(opportunity.category)}</span>
       </div>
       <h3 className="mt-4 line-clamp-3 text-lg font-black leading-snug">{opportunity.title}</h3>
       <p className="mt-2 text-sm font-bold text-emerald-700">{opportunity.organization}</p>
@@ -255,6 +255,13 @@ function statusLabel(status) {
   if (status === "continuous") return "Continu";
   if (status === "review") return "A vérifier";
   return "A vérifier";
+}
+
+function categoryLabel(category) {
+  if (category === "jobs") return "Offre d'emploi";
+  if (category === "tenders") return "Appel d'offres";
+  if (category === "entrepreneurs") return "Entrepreneurs";
+  return "Opportunité";
 }
 
 function matchesQuery(item, query) {

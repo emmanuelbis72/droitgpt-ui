@@ -4,6 +4,7 @@ export const STATIC_OPPORTUNITY_CATEGORIES = [
   { id: "all", label: "Toutes" },
   { id: "entrepreneurs", label: "Entrepreneurs" },
   { id: "tenders", label: "Appels d'offres" },
+  { id: "jobs", label: "Offres d'emploi" },
 ];
 
 export const STATIC_OPPORTUNITIES = [
@@ -156,6 +157,69 @@ export const STATIC_OPPORTUNITIES = [
       "Portail général retenu comme source de veille manuelle; ne pas assimiler chaque programme à une opportunité RDC sans vérification.",
   },
   {
+    id: "who-afro-impact-grants-2026",
+    category: "entrepreneurs",
+    status: "review",
+    title: "WHO AFRO Impact Grant 2026",
+    organization: "WHO Regional Office for Africa",
+    type: "Grant / santé publique",
+    deadline: "2026-09-08T21:59:59.000Z",
+    deadlineText: "8 septembre 2026",
+    countries: ["RDC", "Afrique"],
+    sectors: ["Santé", "Innovation", "Impact", "ONG"],
+    summary:
+      "Appel repéré sur Opportunities for Youth pour soutenir des initiatives à impact dans le secteur santé en Afrique.",
+    eligibility:
+      "Vérifier sur la page source les conditions exactes, le pays d'implémentation, le profil d'organisation et les pièces demandées.",
+    amount: "A confirmer sur la page source",
+    sourceName: "Opportunities for Youth",
+    sourceUrl: "https://opportunitiesforyouth.org/2026/08/22/who-afro-impact-grant-2026/",
+    verificationNotes:
+      "Source OFY repérée avec deadline future. Marqué à vérifier car l'éligibilité RDC doit être confirmée dans les critères complets.",
+  },
+  {
+    id: "interledger-nextgen-higher-ed-2026",
+    category: "entrepreneurs",
+    status: "review",
+    title: "Interledger NextGen Higher Education Grant 2026",
+    organization: "Interledger Foundation",
+    type: "Grant / innovation numérique",
+    deadline: "2026-09-12T21:59:59.000Z",
+    deadlineText: "12 septembre 2026",
+    countries: ["RDC", "International"],
+    sectors: ["Fintech", "Education", "Paiements numériques", "Innovation"],
+    summary:
+      "Grant international pour des initiatives liées à l'éducation supérieure, aux paiements ouverts et à l'écosystème Interledger.",
+    eligibility:
+      "Vérifier les critères institutionnels et techniques sur la page source avant de préparer une candidature depuis la RDC.",
+    amount: "Jusqu'à 50 000 USD selon l'annonce OFY",
+    sourceName: "Opportunities for Youth",
+    sourceUrl: "https://opportunitiesforyouth.org/2026/08/20/interledger-nextgen-higher-education-grant-2026-up-to-50000/",
+    verificationNotes:
+      "Opportunité internationale avec deadline future; garder en revue tant que l'éligibilité exacte RDC n'est pas validée.",
+  },
+  {
+    id: "founders-of-the-future-africa-2026",
+    category: "entrepreneurs",
+    status: "review",
+    title: "Founders of the Future 2026 - 30 African Founders",
+    organization: "Founders of the Future",
+    type: "Reconnaissance / réseau entrepreneurs",
+    deadline: null,
+    deadlineText: "A vérifier sur la page source",
+    countries: ["RDC", "Afrique"],
+    sectors: ["Entrepreneuriat", "Startups", "Leadership", "Réseau"],
+    summary:
+      "Sélection de fondateurs africains à fort potentiel, utile pour visibilité, réseau et crédibilité entrepreneuriale.",
+    eligibility:
+      "Fondateurs africains; vérifier l'ouverture de la cohorte, les critères d'âge/profil et le formulaire officiel.",
+    amount: "Non précisé",
+    sourceName: "Opportunities for Youth",
+    sourceUrl: "https://opportunitiesforyouth.org/2026/08/21/founders-of-the-future-2026-30-african-founders/",
+    verificationNotes:
+      "Ajouté comme piste OFY à vérifier, car la deadline exacte n'a pas été confirmée dans les résultats consultés.",
+  },
+  {
     id: "ungm-lab-equipment-rdc-2026",
     category: "tenders",
     status: "open",
@@ -280,6 +344,284 @@ export const STATIC_OPPORTUNITIES = [
     sourceUrl: "https://projects.worldbank.org/en/projects-operations/procurement",
     verificationNotes:
       "Portail officiel Banque mondiale; l'utilisateur doit filtrer par pays/projet RDC pour voir les avis ouverts.",
+  },
+  {
+    id: "tala-oms-cafeteria-traiteur-2026",
+    category: "tenders",
+    status: "open",
+    title: "Consultation pour la gestion d'un service de cafétéria et traiteur",
+    organization: "OMS / WHO RDC",
+    type: "Appel d'offres / services",
+    deadline: "2026-08-24T21:59:59.000Z",
+    deadlineText: "24 août 2026",
+    countries: ["RDC"],
+    sectors: ["Services", "Cafétéria", "Traiteur", "Institutions internationales"],
+    summary:
+      "Appel repéré sur Tala pour la gestion d'un service de cafétéria et de traiteur au profit de l'OMS.",
+    eligibility:
+      "Prestataires de services traiteur/cafétéria. Vérifier cahier des charges, lieu, documents administratifs et modalités de dépôt sur Tala.",
+    amount: "Non précisé",
+    sourceName: "Tala",
+    sourceUrl:
+      "https://www.tala-com.com/appels-doffres/consultation-pour-la-gestion-dun-service-de-cafeteria-et-traiteur-au-profit-de-loms/",
+    verificationNotes:
+      "Résultat Tala avec date d'expiration 24/08/2026, future au 22 août 2026.",
+  },
+  {
+    id: "tala-peqip-selection-partenaire-2026",
+    category: "tenders",
+    status: "open",
+    title: "Sélection d'un partenaire de mise en œuvre pour le programme PEQIP",
+    organization: "Programme PEQIP",
+    type: "Appel d'offres / mise en œuvre projet",
+    deadline: "2026-09-29T21:59:59.000Z",
+    deadlineText: "29 septembre 2026",
+    countries: ["RDC"],
+    sectors: ["Education", "Gestion de projet", "ONG", "Développement"],
+    summary:
+      "Appel à manifestation ou sélection de partenaire de mise en œuvre pour le programme PEQIP, publié sur Tala.",
+    eligibility:
+      "Organisations capables de mettre en œuvre un programme éducatif/développement. Vérifier termes de référence et documents exigés.",
+    amount: "Non précisé",
+    sourceName: "Tala",
+    sourceUrl:
+      "https://www.tala-com.com/appels-doffres/selection-dun-partenaire-de-mise-en-oeuvre-pour-le-programme-peqip/",
+    verificationNotes:
+      "Résultat Tala avec date d'expiration 29/09/2026, future au 22 août 2026.",
+  },
+  {
+    id: "tala-hackathons-e-gov-2026",
+    category: "tenders",
+    status: "open",
+    title: "Recrutement d'une firme pour organiser des hackathons sur l'e-gouvernement",
+    organization: "UG-PTN",
+    type: "Appel d'offres / événement tech",
+    deadline: "2026-08-26T21:59:59.000Z",
+    deadlineText: "26 août 2026",
+    countries: ["RDC"],
+    sectors: ["Numérique", "E-gouvernement", "Hackathons", "Innovation"],
+    summary:
+      "Appel pour recruter une firme chargée d'organiser des hackathons sur l'e-gouvernement dans le cadre de la transformation numérique.",
+    eligibility:
+      "Firmes événementielles/tech capables d'organiser des hackathons et de gérer les livrables. Vérifier TdR et dépôt sur Tala.",
+    amount: "Non précisé",
+    sourceName: "Tala",
+    sourceUrl:
+      "https://www.tala-com.com/appels-doffres/recrutement-dune-firme-pour-lorganisation-des-hackathons-sur-le-gouvernement-electronique/",
+    verificationNotes:
+      "Résultat Tala avec date d'expiration 26/08/2026, future au 22 août 2026.",
+  },
+  {
+    id: "mediacongo-equipement-communication-expertise-france-2026",
+    category: "tenders",
+    status: "open",
+    title: "Fourniture et installation d'équipements de communication et animation",
+    organization: "Expertise France",
+    type: "Appel d'offres / équipements",
+    deadline: "2026-09-15T21:59:59.000Z",
+    deadlineText: "15 septembre 2026",
+    countries: ["RDC"],
+    sectors: ["Communication", "Equipements", "Animation", "Services"],
+    summary:
+      "Appel MediaCongo pour la fourniture et l'installation d'équipements de communication et d'animation.",
+    eligibility:
+      "Fournisseurs et prestataires capables de fournir, installer et documenter les équipements demandés. Vérifier le dossier complet sur MediaCongo.",
+    amount: "Non précisé",
+    sourceName: "MediaCongo",
+    sourceUrl:
+      "https://www.mediacongo.net/appel-societe-44575_expertise_france_fourniture_et_installation_d_equipements_de_communication_et_animation.html",
+    verificationNotes:
+      "Annonce MediaCongo avec date limite 15/09/2026, future au 22 août 2026.",
+  },
+  {
+    id: "mediacongo-achat-bus-expertise-france-2026",
+    category: "tenders",
+    status: "open",
+    title: "Achat d'un bus pour Expertise France",
+    organization: "Expertise France",
+    type: "Appel d'offres / véhicule",
+    deadline: "2026-09-03T21:59:59.000Z",
+    deadlineText: "3 septembre 2026",
+    countries: ["RDC"],
+    sectors: ["Véhicules", "Fournitures", "Transport"],
+    summary:
+      "Appel MediaCongo relatif à l'achat d'un bus pour Expertise France.",
+    eligibility:
+      "Fournisseurs automobiles/distributeurs. Vérifier spécifications techniques, garanties et modalités de soumission.",
+    amount: "Non précisé",
+    sourceName: "MediaCongo",
+    sourceUrl: "https://www.mediacongo.net/appel-societe-44396_expertise_france_achat_d_un_bus.html",
+    verificationNotes:
+      "Annonce MediaCongo avec date limite 03/09/2026, future au 22 août 2026.",
+  },
+  {
+    id: "mediacongo-equipment-medicaux-icap-2026",
+    category: "tenders",
+    status: "open",
+    title: "Fourniture des équipements médicaux",
+    organization: "ICAP",
+    type: "Appel d'offres / équipements médicaux",
+    deadline: "2026-09-01T21:59:59.000Z",
+    deadlineText: "1er septembre 2026",
+    countries: ["RDC"],
+    sectors: ["Santé", "Equipements médicaux", "Fournitures"],
+    summary:
+      "Appel MediaCongo pour la fourniture d'équipements médicaux au profit d'ICAP.",
+    eligibility:
+      "Fournisseurs d'équipements médicaux. Vérifier liste des équipements, documents administratifs et dépôt sur MediaCongo.",
+    amount: "Non précisé",
+    sourceName: "MediaCongo",
+    sourceUrl:
+      "https://www.mediacongo.net/appel-societe-44453_icap_fourniture_des_equipements_medicaux.html",
+    verificationNotes:
+      "Annonce MediaCongo avec date limite 01/09/2026, future au 22 août 2026.",
+  },
+  {
+    id: "tala-acf-responsable-conformite-2026",
+    category: "jobs",
+    status: "open",
+    title: "Responsable conformité",
+    organization: "Action contre la Faim",
+    type: "Offre d'emploi",
+    deadline: "2026-09-08T21:59:59.000Z",
+    deadlineText: "8 septembre 2026",
+    countries: ["RDC"],
+    sectors: ["Conformité", "ONG", "Audit", "Finance"],
+    summary:
+      "Offre d'emploi publiée sur Tala pour un poste de Responsable conformité à Kinshasa.",
+    eligibility:
+      "Profil conformité/audit/gestion des risques; vérifier expérience, diplôme, localisation et pièces à soumettre sur Tala.",
+    amount: "Salaire non précisé",
+    sourceName: "Tala",
+    sourceUrl: "https://www.tala-com.com/offres-emploi/poste-de-responsable-conformite/",
+    verificationNotes:
+      "Résultat Tala avec date d'expiration 08/09/2026, future au 22 août 2026.",
+  },
+  {
+    id: "tala-acf-responsable-achats-2026",
+    category: "jobs",
+    status: "open",
+    title: "Responsable achats",
+    organization: "Action contre la Faim",
+    type: "Offre d'emploi",
+    deadline: "2026-09-08T21:59:59.000Z",
+    deadlineText: "8 septembre 2026",
+    countries: ["RDC"],
+    sectors: ["Achats", "Logistique", "ONG", "Procurement"],
+    summary:
+      "Offre d'emploi publiée sur Tala pour un poste de Responsable achats à Kinshasa.",
+    eligibility:
+      "Profil achats/procurement/logistique. Vérifier niveau d'expérience et exigences administratives sur la source.",
+    amount: "Salaire non précisé",
+    sourceName: "Tala",
+    sourceUrl: "https://www.tala-com.com/offres-emploi/poste-de-responsable-achats/",
+    verificationNotes:
+      "Résultat Tala avec date d'expiration 08/09/2026, future au 22 août 2026.",
+  },
+  {
+    id: "tala-wcs-biomonitoring-officer-2026",
+    category: "jobs",
+    status: "open",
+    title: "Biomonitoring Officer",
+    organization: "Wildlife Conservation Society",
+    type: "Offre d'emploi",
+    deadline: "2026-08-31T21:59:59.000Z",
+    deadlineText: "31 août 2026",
+    countries: ["RDC"],
+    sectors: ["Environnement", "Conservation", "Biodiversité", "Sud-Kivu"],
+    summary:
+      "Offre d'emploi WCS publiée sur Tala pour un poste de Biomonitoring Officer, base indiquée au Sud-Kivu.",
+    eligibility:
+      "Profil conservation/biomonitoring/environnement. Vérifier expérience terrain et compétences techniques demandées.",
+    amount: "Salaire non précisé",
+    sourceName: "Tala",
+    sourceUrl: "https://www.tala-com.com/offres-emploi/biomonitoring-officer/",
+    verificationNotes:
+      "Résultat Tala avec date d'expiration 31/08/2026, future au 22 août 2026.",
+  },
+  {
+    id: "tala-superviseur-inventaires-fmcg-2026",
+    category: "jobs",
+    status: "open",
+    title: "Superviseur inventaires FMCG",
+    organization: "Entreprise FMCG",
+    type: "Offre d'emploi",
+    deadline: "2026-08-31T21:59:59.000Z",
+    deadlineText: "31 août 2026",
+    countries: ["RDC"],
+    sectors: ["Logistique", "Inventaire", "FMCG", "Kinshasa"],
+    summary:
+      "Offre Tala pour un superviseur inventaires dans le secteur FMCG à Kinshasa.",
+    eligibility:
+      "Profil gestion stock/inventaire/supply chain. Vérifier détails de l'employeur et conditions de candidature sur Tala.",
+    amount: "Salaire non précisé",
+    sourceName: "Tala",
+    sourceUrl: "https://www.tala-com.com/offres-emploi/superviseur-inventaires-fmcg/",
+    verificationNotes:
+      "Résultat Tala avec date d'expiration 31/08/2026, future au 22 août 2026.",
+  },
+  {
+    id: "mediacongo-consultant-chauffeur-chemonics-2026",
+    category: "jobs",
+    status: "open",
+    title: "Consultant Chauffeur",
+    organization: "Chemonics",
+    type: "Offre d'emploi / consultance",
+    deadline: "2026-08-24T21:59:59.000Z",
+    deadlineText: "24 août 2026",
+    countries: ["RDC"],
+    sectors: ["Transport", "Logistique", "Consultance", "Kinshasa"],
+    summary:
+      "Offre MediaCongo pour un consultant chauffeur basé à Kinshasa.",
+    eligibility:
+      "Profil chauffeur professionnel/consultant; vérifier permis, expérience, documents et mode de candidature sur MediaCongo.",
+    amount: "Rémunération non précisée",
+    sourceName: "MediaCongo",
+    sourceUrl: "https://www.mediacongo.net/emploi-societe-44461_chemonics_consultant_chauffeur.html",
+    verificationNotes:
+      "Annonce MediaCongo avec date limite 24/08/2026, future au 22 août 2026.",
+  },
+  {
+    id: "mediacongo-meal-officer-icap-2026",
+    category: "jobs",
+    status: "open",
+    title: "M&EAL Officer",
+    organization: "ICAP",
+    type: "Offre d'emploi",
+    deadline: "2026-08-26T21:59:59.000Z",
+    deadlineText: "26 août 2026",
+    countries: ["RDC"],
+    sectors: ["Suivi-évaluation", "Santé", "ONG", "Data"],
+    summary:
+      "Offre MediaCongo pour un poste M&EAL Officer au sein d'ICAP.",
+    eligibility:
+      "Profil suivi-évaluation, collecte/analyse de données et programmes santé. Vérifier responsabilités et pièces à fournir.",
+    amount: "Salaire non précisé",
+    sourceName: "MediaCongo",
+    sourceUrl: "https://www.mediacongo.net/emploi-societe-44417_icap_m_eal_officer.html",
+    verificationNotes:
+      "Annonce MediaCongo avec date limite 26/08/2026, future au 22 août 2026.",
+  },
+  {
+    id: "mediacongo-traduction-actt-cn-2026",
+    category: "jobs",
+    status: "open",
+    title: "Spécialiste en traduction",
+    organization: "ACTT-CN",
+    type: "Offre d'emploi",
+    deadline: "2026-09-07T21:59:59.000Z",
+    deadlineText: "7 septembre 2026",
+    countries: ["RDC"],
+    sectors: ["Traduction", "Communication", "Administration"],
+    summary:
+      "Offre MediaCongo pour un spécialiste en traduction.",
+    eligibility:
+      "Profil traduction/interprétation/communication. Vérifier langues, expérience et livrables attendus sur MediaCongo.",
+    amount: "Salaire non précisé",
+    sourceName: "MediaCongo",
+    sourceUrl: "https://www.mediacongo.net/emploi-societe-44499_actt_cn_specialiste_en_traduction.html",
+    verificationNotes:
+      "Annonce MediaCongo avec date limite 07/09/2026, future au 22 août 2026.",
   },
   {
     id: "linkedin-rdc-opportunities-watch",
