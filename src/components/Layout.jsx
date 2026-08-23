@@ -1,6 +1,6 @@
 // src/components/Layout.jsx
 import React from "react";
-import { Outlet } from "react-router-dom";
+import { Link, Outlet } from "react-router-dom";
 import Navbar from "./Navbar.jsx";
 
 export default function Layout() {
@@ -17,7 +17,10 @@ export default function Layout() {
           <a className="underline hover:text-slate-900" href="tel:+243816307451">
             +243816307451
           </a>
-          {" "}• ETS ROBOTECH
+          {" "}• ETS ROBOTECH •{" "}
+          <Link className="underline hover:text-slate-900" to="/privacy">
+            Confidentialité
+          </Link>
         </div>
       </footer>
     </div>
