@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { fetchPaymentStatus, saveStoredPayment } from "../../services/paymentsApi.js";
+import { fetchPaymentStatus, recoverPaymentByPhone, saveStoredPayment } from "../../services/paymentsApi.js";
 
 const DOCUMENT_LABELS = {
   businessplan: "business plan",
@@ -40,7 +40,9 @@ export default function ExistingPaymentRecovery({
   className = "",
 }) {
   const [orderNumber, setOrderNumber] = useState("");
+  const [phone, setPhone] = useState("");
   const [checking, setChecking] = useState(false);
+  const [checkingPhone, setCheckingPhone] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -51,6 +53,7 @@ export default function ExistingPaymentRecovery({
   useEffect(() => {
     if (!resetSignal) return;
     setOrderNumber("");
+    setPhone("");
     setMessage("");
     setError("");
   }, [resetSignal]);
@@ -98,6 +101,36 @@ export default function ExistingPaymentRecovery({
     }
   }
 
+  async function recoverByPhone() {
+    const cleanPhone = phone.trim();
+    setError("");
+    setMessage("");
+
+    if (!cleanPhone) {
+      setError("Saisissez le numéro Mobile Money utilisé pour payer.");
+      return;
+    }
+
+    setCheckingPhone(true);
+    try {
+      const data = await recoverPaymentByPhone(apiBase, {
+        documentType: normalizedType,
+        phone: cleanPhone,
+      });
+      const payment = data?.payment || null;
+      if (!payment?.orderNumber) {
+        throw new Error("Aucun paiement confirmé n'a été trouvé avec ce numéro.");
+      }
+      saveStoredPayment(normalizedType, payment);
+      onPaymentReady?.(payment.orderNumber);
+      setMessage("Paiement retrouvé et validé. Vous pouvez générer ce document sans repayer.");
+    } catch (err) {
+      setError(String(err?.message || err || "Impossible de retrouver ce paiement."));
+    } finally {
+      setCheckingPhone(false);
+    }
+  }
+
   const shell = isDark
     ? "border-white/10 bg-slate-950/40 text-slate-100"
     : "border-slate-200 bg-slate-50 text-slate-900";
@@ -115,7 +148,7 @@ export default function ExistingPaymentRecovery({
       <div className="mt-3 space-y-3">
         <p className={`text-xs leading-5 ${muted}`}>
           Si le paiement a été débité mais que le {documentLabel} n'a pas été généré ou téléchargé,
-          collez le numéro de transaction FlexPay. Le serveur vérifiera le paiement avant d'autoriser une relance sans nouveau paiement.
+          utilisez le numéro de transaction FlexPay. Si vous ne l'avez plus, utilisez le numéro Mobile Money qui a payé.
         </p>
 
         {currentOrderNumber ? (
@@ -140,6 +173,31 @@ export default function ExistingPaymentRecovery({
           >
             {checking ? "Vérification..." : "Utiliser ce paiement"}
           </button>
+        </div>
+
+        <div className={`rounded-xl border p-3 ${isDark ? "border-white/10 bg-white/5" : "border-slate-200 bg-white"}`}>
+          <div className={`text-xs font-semibold ${muted}`}>Je n'ai pas le numéro de transaction</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <input
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              disabled={disabled || checkingPhone}
+              className={`rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400/30 disabled:opacity-60 ${input}`}
+              placeholder="Téléphone utilisé : 997123456 ou 243997123456"
+              inputMode="numeric"
+            />
+            <button
+              type="button"
+              onClick={recoverByPhone}
+              disabled={disabled || checkingPhone || !phone.trim()}
+              className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-60"
+            >
+              {checkingPhone ? "Recherche..." : "Retrouver mon paiement"}
+            </button>
+          </div>
+          <p className={`mt-2 text-[11px] leading-4 ${muted}`}>
+            Cette recherche vérifie uniquement les paiements DroitGPT confirmés et correspondant à ce service.
+          </p>
         </div>
 
         {message ? (

@@ -1,3 +1,5 @@
+import { generationHeaders } from "../utils/generationClient.js";
+
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 
 function normalizeBase(apiBase) {
@@ -29,14 +31,25 @@ export async function fetchPaymentConfig(apiBase) {
 export async function startMobileMoneyPayment(apiBase, payload) {
   const response = await fetch(`${normalizeBase(apiBase)}/payments/mobile-money`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: generationHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload || {}),
+  });
+  return readJsonResponse(response);
+}
+
+export async function recoverPaymentByPhone(apiBase, payload) {
+  const response = await fetch(`${normalizeBase(apiBase)}/payments/recover`, {
+    method: "POST",
+    headers: generationHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload || {}),
   });
   return readJsonResponse(response);
 }
 
 export async function fetchPaymentStatus(apiBase, orderNumber) {
-  const response = await fetch(`${normalizeBase(apiBase)}/payments/status/${encodeURIComponent(orderNumber)}`);
+  const response = await fetch(`${normalizeBase(apiBase)}/payments/status/${encodeURIComponent(orderNumber)}`, {
+    headers: generationHeaders(),
+  });
   return readJsonResponse(response);
 }
 
