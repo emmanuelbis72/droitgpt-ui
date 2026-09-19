@@ -242,10 +242,7 @@ export default function MobileMoneyPayment({
 
             {payment?.orderNumber ? (
               <div className={`mt-5 rounded-2xl border px-4 py-4 text-sm ${isDark ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
-                <div className="font-medium">Commande : {payment.orderNumber}</div>
-                <div className={`mt-1 text-xs ${muted}`}>
-                  Conservez ce numéro. Il permet de récupérer votre paiement si la connexion coupe ou si le document n'est pas généré.
-                </div>
+                <div className="font-medium">Paiement Mobile Money enregistré</div>
                 <div className={`mt-1 ${muted}`}>
                   {payment.status === "paid"
                     ? paidMessage

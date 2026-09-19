@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { fetchPaymentStatus, recoverPaymentByPhone, saveStoredPayment } from "../../services/paymentsApi.js";
+import { recoverPaymentByPhone, saveStoredPayment } from "../../services/paymentsApi.js";
 
 const DOCUMENT_LABELS = {
   businessplan: "business plan",
@@ -39,9 +39,7 @@ export default function ExistingPaymentRecovery({
   onPaymentReady,
   className = "",
 }) {
-  const [orderNumber, setOrderNumber] = useState("");
   const [phone, setPhone] = useState("");
-  const [checking, setChecking] = useState(false);
   const [checkingPhone, setCheckingPhone] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -52,54 +50,12 @@ export default function ExistingPaymentRecovery({
 
   useEffect(() => {
     if (!resetSignal) return;
-    setOrderNumber("");
     setPhone("");
     setMessage("");
     setError("");
   }, [resetSignal]);
 
   if (!visible) return null;
-
-  async function recoverPayment() {
-    const cleanOrder = orderNumber.trim();
-    setError("");
-    setMessage("");
-
-    if (!cleanOrder) {
-      setError("Saisissez le numéro de transaction FlexPay reçu après le paiement.");
-      return;
-    }
-
-    setChecking(true);
-    try {
-      const data = await fetchPaymentStatus(apiBase, cleanOrder);
-      const payment = data?.payment || null;
-      if (!payment?.orderNumber) {
-        throw new Error("Transaction introuvable. Vérifiez le numéro saisi.");
-      }
-
-      if (payment.status !== "paid") {
-        throw new Error("Ce paiement n'est pas encore confirmé par FlexPay.");
-      }
-
-      const actualType = normalizeDocumentType(payment.documentType);
-      if (actualType && normalizedType && actualType !== normalizedType) {
-        throw new Error("Cette transaction correspond à un autre service DroitGPT.");
-      }
-
-      saveStoredPayment(normalizedType, payment);
-      onPaymentReady?.(payment.orderNumber);
-      setMessage(
-        payment.consumedAt
-          ? "Paiement retrouvé. Relancez la génération; le serveur autorisera la reprise si l'ancien job n'est plus disponible."
-          : "Paiement confirmé. Vous pouvez générer ce document sans repayer."
-      );
-    } catch (err) {
-      setError(String(err?.message || err || "Impossible de vérifier ce paiement."));
-    } finally {
-      setChecking(false);
-    }
-  }
 
   async function recoverByPhone() {
     const cleanPhone = phone.trim();
@@ -148,35 +104,17 @@ export default function ExistingPaymentRecovery({
       <div className="mt-3 space-y-3">
         <p className={`text-xs leading-5 ${muted}`}>
           Si le paiement a été débité mais que le {documentLabel} n'a pas été généré ou téléchargé,
-          utilisez le numéro de transaction FlexPay. Si vous ne l'avez plus, utilisez le numéro Mobile Money qui a payé.
+          saisissez uniquement le numéro Mobile Money utilisé pour payer.
         </p>
 
         {currentOrderNumber ? (
           <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300">
-            Numéro validé : {currentOrderNumber}
+            Paiement retrouvé et prêt à utiliser.
           </div>
         ) : null}
 
-        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-          <input
-            value={orderNumber}
-            onChange={(event) => setOrderNumber(event.target.value)}
-            disabled={disabled || checking}
-            className={`rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400/30 disabled:opacity-60 ${input}`}
-            placeholder="Numéro de transaction FlexPay"
-          />
-          <button
-            type="button"
-            onClick={recoverPayment}
-            disabled={disabled || checking || !orderNumber.trim()}
-            className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-60"
-          >
-            {checking ? "Vérification..." : "Utiliser ce paiement"}
-          </button>
-        </div>
-
         <div className={`rounded-xl border p-3 ${isDark ? "border-white/10 bg-white/5" : "border-slate-200 bg-white"}`}>
-          <div className={`text-xs font-semibold ${muted}`}>Je n'ai pas le numéro de transaction</div>
+          <div className={`text-xs font-semibold ${muted}`}>Retrouver le paiement par téléphone</div>
           <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
             <input
               value={phone}
