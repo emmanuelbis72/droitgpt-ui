@@ -1137,416 +1137,416 @@ export const BUSINESS_PLAN_PACK_ITEMS = [
   },
   {
     "id": "bp-pack-158",
-    "title": "AGRO CONGO BUSINESS",
+    "title": "Production et commercialisation de semences certifiées locales à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-159",
-    "title": "ATELIER DE MENUISERIE MODERNE",
+    "title": "Atelier de menuiserie moderne et fabrication de meubles sur mesure à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Commerce & services"
   },
   {
     "id": "bp-pack-160",
-    "title": "AVOCADO BUSINESS",
+    "title": "Production locale d’huile d’avocat par extraction à froid à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-161",
-    "title": "BANANA TRANSFORMATION",
+    "title": "Transformation des fibres de bananier en textiles, cordages et papier écologique",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Environnement & énergie"
   },
   {
     "id": "bp-pack-162",
-    "title": "BANQUE D AVENIR",
+    "title": "Banque commerciale hybride avec agences et services digitaux en RDC",
     "format": "PDF",
     "folder": "5",
     "category": "Finance & services professionnels"
   },
   {
     "id": "bp-pack-163",
-    "title": "BIO FERTILISANT",
-    "format": "PDF",
-    "folder": "5",
-    "category": "Autres opportunités business"
-  },
-  {
-    "id": "bp-pack-164",
-    "title": "CABINET D AVOCATS BROTHERS",
+    "title": "Production de biofertilisants organiques à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Agriculture & agro-industrie"
   },
   {
+    "id": "bp-pack-164",
+    "title": "Cabinet d’avocats pour conseil, contentieux et contrats à Kinshasa",
+    "format": "PDF",
+    "folder": "5",
+    "category": "Finance & services professionnels"
+  },
+  {
     "id": "bp-pack-165",
-    "title": "CENTRE BIBLIQUE MISSION ACCOMPLIE",
+    "title": "Académie biblique moderne avec cours présentiels et modules numériques à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "ONG & impact social"
   },
   {
     "id": "bp-pack-166",
-    "title": "CHIPS TOP",
+    "title": "Production locale de chips de plantain, pomme de terre et gingembre",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-167",
-    "title": "CHOCOCONGO",
+    "title": "Transformation du cacao en chocolat premium congolais à Goma",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-168",
-    "title": "CONGO ACCOUNTANT ASSOCIATES",
+    "title": "Cabinet comptable et fiscal pour PME à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Finance & services professionnels"
   },
   {
     "id": "bp-pack-169",
-    "title": "CONGO BUSINESS SOLUTIONS",
+    "title": "Marketplace e-commerce pour digitaliser les marchés villageois",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Digital & médias"
   },
   {
     "id": "bp-pack-170",
-    "title": "CONGO BUTTERS",
+    "title": "Production industrielle de beurre d’arachide à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-171",
-    "title": "CONGO ELECTRIC LTD",
+    "title": "Mini-réseaux solaires et kits solaires commerciaux à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Environnement & énergie"
   },
   {
     "id": "bp-pack-172",
-    "title": "CONGO ELENGI",
+    "title": "Production de confitures locales à base de fruits congolais",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-173",
-    "title": "CONGO EMBALLAGES",
+    "title": "Production d’emballages biodégradables pour commerce et restauration",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Environnement & énergie"
   },
   {
     "id": "bp-pack-174",
-    "title": "CONGO FRUITS INTERNATIONAL",
+    "title": "Collecte, conditionnement et distribution de fruits et légumes frais à Goma",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-175",
-    "title": "CONGO FRUITS LTD",
+    "title": "Production et commercialisation de fruits séchés naturels à Goma",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-176",
-    "title": "CONGO INTERNET",
+    "title": "Fourniture d’abonnements Internet haut débit à Matadi",
     "format": "PDF",
     "folder": "5",
     "category": "Digital & médias"
   },
   {
     "id": "bp-pack-177",
-    "title": "CONGO LABORATORY CENTER",
+    "title": "Laboratoire d’analyses médicales moderne à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Santé & professions réglementées"
   },
   {
     "id": "bp-pack-178",
-    "title": "CONGO LOGISTICS",
+    "title": "Services logistiques intégrés, import-export et livraison à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-179",
-    "title": "CONGO MAKAMBO",
+    "title": "Radio communautaire FM et streaming à Kisangani",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Digital & médias"
   },
   {
     "id": "bp-pack-180",
-    "title": "CONGO MARKETING LTD",
+    "title": "Agence de marketing digital et communication pour PME à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Digital & médias"
   },
   {
     "id": "bp-pack-181",
-    "title": "CONGO MEDICAL EQUIPMENTS",
+    "title": "Vente et location d’équipements médicaux à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Santé & professions réglementées"
   },
   {
     "id": "bp-pack-182",
-    "title": "CONGO METALLIC",
+    "title": "Fabrication et installation de portes et fenêtres en aluminium à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Mines & industrie"
+    "category": "Immobilier & infrastructure"
   },
   {
     "id": "bp-pack-183",
-    "title": "CONGO METALLURGIE",
+    "title": "Recyclage de tôles usagées et valorisation des métaux à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Mines & industrie"
+    "category": "Environnement & énergie"
   },
   {
     "id": "bp-pack-184",
-    "title": "CONGO MOBILE",
+    "title": "Transport urbain structuré par motos avec application mobile à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Digital & médias"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-185",
-    "title": "CONGO MOVING COMPANY",
+    "title": "Services professionnels de déménagement structuré à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-186",
-    "title": "CONGO NATUREL SARL",
+    "title": "Apiculture, production et commercialisation de miel local à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-187",
-    "title": "CONGO OIL SOLUTIONS",
+    "title": "Production d’huiles essentielles naturelles à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-188",
-    "title": "CONGO PRO MAINTENANCE",
+    "title": "Services professionnels de maintenance électrique et plomberie à Lubumbashi",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-189",
-    "title": "CONGO PROT INES",
+    "title": "Élevage et transformation de mouches soldats noires pour protéines animales",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-190",
-    "title": "CONGO RECYCLAGE",
+    "title": "Recyclage de pneus usagés en pavés, granulats et produits utilitaires",
     "format": "PDF",
     "folder": "5",
     "category": "Environnement & énergie"
   },
   {
     "id": "bp-pack-191",
-    "title": "CONGO SPICES",
+    "title": "Production et commercialisation d’épices locales conditionnées",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-192",
-    "title": "CONGO SUR",
+    "title": "Compagnie d’assurance accessible pour particuliers, PME et entreprises",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Finance & services professionnels"
   },
   {
     "id": "bp-pack-193",
-    "title": "CONGO TOMATO",
+    "title": "Transformation locale de tomates en concentré, purée et sauces",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-194",
-    "title": "CONGO TOP IMMO",
+    "title": "Gestion locative moderne et optimisation Airbnb à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Immobilier & infrastructure"
   },
   {
     "id": "bp-pack-195",
-    "title": "COOPERATIVE AGRICOLE MAENDELEO",
+    "title": "Coopérative agricole d’appui technique et commercialisation collective à Goma",
     "format": "PDF",
     "folder": "5",
     "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-196",
-    "title": "ETOILE DE KIN",
+    "title": "Club de football structuré avec centre de formation à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-197",
-    "title": "FONDATION CONGO ESPOIR",
+    "title": "Programmes sociaux d’éducation, santé et autonomisation économique en RDC",
     "format": "PDF",
     "folder": "5",
     "category": "ONG & impact social"
   },
   {
     "id": "bp-pack-198",
-    "title": "KASAI TOBONGA",
+    "title": "Élevage amélioré de chèvres et moutons dans le Kasaï",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-199",
-    "title": "KAWA YA CONGO",
+    "title": "Torréfaction premium du café arabica d’Idjwi",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-200",
-    "title": "KIN CONSTRUCT LTD",
+    "title": "Entreprise de construction et travaux immobiliers à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Immobilier & infrastructure"
   },
   {
     "id": "bp-pack-201",
-    "title": "KIN GROUP MOTORS",
+    "title": "Location de camions pour transport urbain et interprovincial à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-202",
-    "title": "KIN PHARMA LTD",
+    "title": "Pharmacie et dépôt pharmaceutique avec distribution en gros à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Santé & professions réglementées"
   },
   {
     "id": "bp-pack-203",
-    "title": "KIN SAPATO",
+    "title": "Atelier de fabrication de chaussures en cuir à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-204",
-    "title": "KIN TECH SOLUTIONS",
+    "title": "Réparation professionnelle d’appareils électroniques à Kinshasa",
+    "format": "PDF",
+    "folder": "5",
+    "category": "Commerce & services"
+  },
+  {
+    "id": "bp-pack-205",
+    "title": "Chaîne de télévision professionnelle et plateforme digitale à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Digital & médias"
   },
   {
-    "id": "bp-pack-205",
-    "title": "KIN TOSOLOLA",
-    "format": "PDF",
-    "folder": "5",
-    "category": "Autres opportunités business"
-  },
-  {
     "id": "bp-pack-206",
-    "title": "KIVU BREAD",
+    "title": "Fabrication de pain et biscuits à base de patate douce à Goma",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-207",
-    "title": "MAENDELEO",
+    "title": "Plateforme de tontine digitale sécurisée à Bukavu",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Finance & services professionnels"
   },
   {
     "id": "bp-pack-208",
-    "title": "MBONGO NA MABOKO",
+    "title": "Bureau de change formel, sécurisé et transparent à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "ONG & impact social"
+    "category": "Finance & services professionnels"
   },
   {
     "id": "bp-pack-209",
-    "title": "MUCHIBWE BIO",
+    "title": "Production de vins locaux à base de banane et sorgho à Bukavu",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-210",
-    "title": "MUSUNI GROUP",
+    "title": "Espaces de grillades de brochettes de chèvre et porc à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Commerce & services"
   },
   {
     "id": "bp-pack-211",
-    "title": "NDAKO IMMO",
+    "title": "Agence immobilière formalisée et gestion locative à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Immobilier & infrastructure"
   },
   {
     "id": "bp-pack-212",
-    "title": "NYAMA BIO ENTERPRISES",
+    "title": "Abattoir moderne et réseau de boucheries propres à Goma",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-213",
-    "title": "P CHERIE DU KIVU",
+    "title": "Pêche et mise en conserve de fretins du lac Kivu à Bukavu",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Agriculture & agro-industrie"
   },
   {
     "id": "bp-pack-214",
-    "title": "PARTI DE DEVELOPPEMENT A LA BASE",
+    "title": "Structuration d’un parti politique orienté développement local à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "ONG & impact social"
   },
   {
     "id": "bp-pack-215",
-    "title": "ROBOTECH",
+    "title": "Cabinet IA et automatisation d’entreprises à Kinshasa",
     "format": "PDF",
     "folder": "5",
     "category": "Digital & médias"
   },
   {
     "id": "bp-pack-216",
-    "title": "TOP MUSIC COMPANY",
+    "title": "Studio musical moderne, production audio et accompagnement artistique à Kinshasa",
     "format": "PDF",
     "folder": "5",
-    "category": "Autres opportunités business"
+    "category": "Digital & médias"
   },
   {
     "id": "bp-pack-217",
@@ -1641,7 +1641,7 @@ export const BUSINESS_PLAN_PACK_ITEMS = [
   },
   {
     "id": "bp-pack-230",
-    "title": "nettoyage",
+    "title": "Agence de services de nettoyage professionnel à Kinshasa",
     "format": "PDF",
     "folder": "",
     "category": "Commerce & services"

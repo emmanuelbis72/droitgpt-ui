@@ -1,199 +1,144 @@
 import React from "react";
 import { Link } from "react-router-dom";
 
+const services = [
+  {
+    to: "/candidature-financement",
+    eyebrow: "Priorite 1",
+    title: "Assistant de candidature aux financements",
+    text: "Transforme un appel a projets et les questions du bailleur en brouillon professionnel, avec alertes sur les informations manquantes.",
+    meta: "Subventions, concours, accelerateurs, bailleurs",
+    tone: "border-amber-300 bg-amber-50",
+  },
+  {
+    to: "/bp",
+    eyebrow: "3 USD",
+    title: "Business plan bancable",
+    text: "Dossier structure pour banque, investisseur ou incubateur, avec hypotheses a valider et export PDF/DOCX selon le choix.",
+    meta: "En moyenne 15 minutes pour un document professionnel",
+    tone: "border-emerald-300 bg-emerald-50",
+  },
+  {
+    to: "/ong",
+    eyebrow: "3 USD",
+    title: "Projet ONG / Fondation",
+    text: "Narratif bailleur, logique d'intervention, resultats, budget, risques et suivi-evaluation.",
+    meta: "Francais ou anglais",
+    tone: "border-sky-300 bg-sky-50",
+  },
+  {
+    to: "/memoire",
+    eyebrow: "3 USD",
+    title: "Memoire universitaire",
+    text: "Plan, chapitres, methodologie et redaction academique avec controles de coherence du plan.",
+    meta: "Licence, option droit congolais disponible",
+    tone: "border-fuchsia-300 bg-fuchsia-50",
+  },
+];
+
+const examples = [
+  "Un exemple de reponse a une question de bailleur avant de lancer une candidature complete.",
+  "Un apercu du business plan attendu : resume executif, marche, modele economique, operations et finances.",
+  "Un espace Mes documents pour retrouver les generations longues apres reconnexion.",
+];
+
 export default function Home() {
   return (
-    <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 flex items-center justify-center px-4 py-6">
-      <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-2xl shadow-2xl flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="px-6 py-6 border-b border-white/10 bg-slate-950/70 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.25em] text-slate-300 font-bold">
-              <strong>Assistant juridique congolais</strong>
+    <div className="min-h-screen bg-[#f7f1e6] text-slate-950">
+      <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+        <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="bg-[radial-gradient(circle_at_18%_12%,rgba(16,185,129,0.22),transparent_30%),linear-gradient(135deg,#061b18,#0f172a_58%,#431407)] p-6 text-white sm:p-9 lg:p-10">
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-amber-200">DroitGPT Congo</p>
+            <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight sm:text-5xl">
+              Generer des dossiers professionnels sans partir d'une page blanche.
+            </h1>
+            <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-200">
+              Business plans, projets ONG, memoires et candidatures aux financements. DroitGPT aide a structurer,
+              verifier les informations manquantes et produire des livrables utiles pour banques, bailleurs et incubateurs.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Link to="/candidature-financement" className="rounded-full bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-amber-50">
+                Voir l'assistant prioritaire
+              </Link>
+              <Link to="/documents" className="rounded-full border border-white/25 px-5 py-3 text-sm font-black text-white hover:bg-white/10">
+                Mes documents
+              </Link>
             </div>
-            <h1 className="text-3xl font-semibold mt-1">DroitGPT</h1>
-            <p className="mt-1 text-sm text-slate-300">
-              Créez des dossiers professionnels et échangez avec un assistant intelligent.
+          </div>
+
+          <div className="p-6 sm:p-9 lg:p-10">
+            <div className="rounded-[1.7rem] border border-slate-200 bg-slate-50 p-5">
+              <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-700">Avant de payer</p>
+              <h2 className="mt-2 text-2xl font-black">Montrez la valeur au client</h2>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                Chaque service doit afficher ce que l'utilisateur obtient, les donnees necessaires, le prix, les formats,
+                les limites et un exemple consultable.
+              </p>
+              <div className="mt-5 space-y-3">
+                {examples.map((item) => (
+                  <div key={item} className="rounded-2xl bg-white px-4 py-3 text-sm font-bold leading-5 text-slate-700 shadow-sm">
+                    {item}
+                  </div>
+                ))}
+              </div>
+              <Link to="/candidature-financement#exemple" className="mt-5 inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
+                Voir un exemple public
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-6 grid gap-4 md:grid-cols-2">
+        {services.map((service) => (
+          <ServiceCard key={service.to} {...service} />
+        ))}
+      </section>
+
+      <section className="mt-6 grid gap-4 lg:grid-cols-[1fr_1fr]">
+        <Link to="/grants" className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-700">Annuaire</p>
+          <h2 className="mt-2 text-2xl font-black">Opportunites en RDC</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            Consultez les opportunites entrepreneuriales, appels d'offres, bourses, fonds d'investissement,
+            incubateurs, accelerateurs et offres d'emploi valides pour la RDC.
+          </p>
+        </Link>
+
+        <Link to="/documents" className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-700">Projet client</p>
+          <h2 className="mt-2 text-2xl font-black">Mes documents</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            Retrouvez les generations en cours ou terminees apres une coupure Internet, une reconnexion ou une relance.
+          </p>
+        </Link>
+      </section>
+
+      <section className="mt-6 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Assistant juridique</p>
+            <h2 className="mt-2 text-2xl font-black">Chatbot juridique</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              Posez des questions juridiques et obtenez une explication claire. Les dossiers confidentiels restent a traiter dans un compte utilisateur.
             </p>
           </div>
-
-          <div className="flex flex-col items-end gap-1 text-right">
-            <span className="inline-flex items-center gap-2 text-[11px] text-slate-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              Disponible 24h/24 • RDC 🇨🇩
-            </span>
-            <a
-              href="https://droitgpt.com"
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs font-medium text-emerald-300 hover:text-emerald-200 hover:underline"
-            >
-              www.droitgpt.com
-            </a>
-          </div>
+          <Link to="/chat" className="rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
+            Ouvrir le chatbot
+          </Link>
         </div>
-
-        {/* 👉 GROS CTA CRÉER UN COMPTE */}
-        <div className="px-6 py-6 bg-gradient-to-r from-indigo-950/60 via-slate-900/60 to-emerald-950/60 border-b border-white/10">
-          <div className="flex flex-col items-center text-center gap-3">
-            <h2 className="text-xl font-semibold">Accédez à toutes les fonctionnalités de DroitGPT</h2>
-            <p className="text-sm text-slate-300 max-w-xl">
-              Créez gratuitement votre compte pour discuter avec l’assistant juridique et générer des documents
-              professionnels en quelques secondes.
-            </p>
-
-            <Link
-              to="/register"
-              className="mt-2 inline-flex items-center justify-center px-8 py-4 rounded-2xl
-                         bg-gradient-to-r from-indigo-500 to-emerald-500
-                         hover:from-indigo-600 hover:to-emerald-600
-                         text-white font-semibold text-lg
-                         shadow-2xl shadow-emerald-500/40
-                         transition"
-            >
-              🚀 Créer un compte gratuitement
-            </Link>
-
-            <p className="text-[11px] text-slate-400">Compte gratuit • Paiement Mobile Money seulement avant génération premium</p>
-          </div>
-        </div>
-
-        {/* Options */}
-        <div className="px-6 py-8 bg-slate-950/60">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 0) 🧾 Business Plan Premium (EN PREMIER) */}
-            <Link
-              to="/bp"
-              className="group rounded-2xl border border-emerald-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-emerald-300 hover:bg-slate-900 transition shadow-lg shadow-emerald-500/10"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xl">🧾</span>
-                <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-emerald-200">
-                  Premium
-                </span>
-              </div>
-
-              <h2 className="text-lg font-semibold">
-                REDACTION BUSINESS PLAN <span className="text-xs">(professionnel)</span>
-              </h2>
-
-              <p className="text-xs text-slate-300">
-                Génération automatique de business plans complets (banque / investisseur / incubateur) en PDF ou Word.
-              </p>
-
-              <div className="flex flex-wrap gap-2 pt-1">
-                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-                  🏦 Banque
-                </span>
-                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-                  💼 Investisseur
-                </span>
-                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-                  🧠 Incubateur
-                </span>
-              </div>
-            </Link>
-
-
-            {/* ✅ PROJET ONG / NGO Premium */}
-            <Link
-              to="/ong"
-              className="group rounded-2xl border border-sky-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-sky-300 hover:bg-slate-900 transition shadow-lg shadow-sky-500/10"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xl">🌍</span>
-                <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-sky-200">
-                  Premium
-                </span>
-              </div>
-
-              <h2 className="text-lg font-semibold">
-                PROJET ONG <span className="text-xs">(bailleurs)</span>
-              </h2>
-
-              <p className="text-xs text-slate-300">
-                Génération automatique de projets conformes bailleurs : narratif, LogFrame, budget, M&amp;E, risques, PDF.
-              </p>
-
-              <div className="flex flex-wrap gap-2 pt-1">
-                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-                  🤝 Bailleurs
-                </span>
-                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-                  📊 LogFrame
-                </span>
-                <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-                  🧾 PDF
-                </span>
-              </div>
-            </Link>
-
-
-
-{/* 🎓 Rédaction Mémoire de Licence */}
-<Link
-  to="/memoire"
-  className="group rounded-2xl border border-fuchsia-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-2 hover:border-fuchsia-300 hover:bg-slate-900 transition shadow-lg shadow-fuchsia-500/10"
->
-  <div className="flex items-center justify-between">
-    <span className="text-xl">🎓</span>
-    <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-fuchsia-200">
-      Licence
-    </span>
-  </div>
-
-  <h2 className="text-lg font-semibold">
-    REDACTION MEMOIRE <span className="text-xs">(Licence)</span>
-  </h2>
-
-  <p className="text-xs text-slate-300">
-    Rédaction automatique d’un mémoire complet en PDF. Option spéciale “Droit congolais” avec sources listées.
-  </p>
-
-  <div className="flex flex-wrap gap-2 pt-1">
-    <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-      📚 Plan & chapitres
-    </span>
-    <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-      🔎 Sources
-    </span>
-    <span className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-200">
-      🧾 PDF
-    </span>
-  </div>
-</Link>
-
-            <Link
-              to="/documents"
-              className="group rounded-2xl border border-sky-400/70 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-sky-300 hover:bg-slate-900 transition"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xl">📂</span>
-                <span className="text-[10px] uppercase tracking-[0.18em] text-sky-300">Suivi</span>
-              </div>
-              <h2 className="mt-1 text-lg font-semibold">Mes documents générés</h2>
-              <p className="text-xs text-slate-300">
-                Retrouvez les générations en cours ou terminées après une coupure Internet ou une reconnexion.
-              </p>
-            </Link>
-
-            {/* Chatbot juridique en bas de la page */}
-            <Link
-              to="/chat"
-              className="group rounded-2xl border border-white/10 bg-slate-900/80 px-5 py-4 flex flex-col gap-1 hover:border-emerald-400/70 hover:bg-slate-900 transition md:col-span-2"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xl">💬</span>
-                <span className="text-[10px] uppercase tracking-[0.18em] text-emerald-300">Assistant</span>
-              </div>
-              <h2 className="mt-1 text-lg font-semibold">Chatbot juridique</h2>
-              <p className="text-xs text-slate-300">
-                Posez vos questions et recevez des explications claires basées sur le droit congolais.
-              </p>
-            </Link>
-          </div>
-        </div>
-      </div>
+      </section>
     </div>
+  );
+}
+
+function ServiceCard({ to, eyebrow, title, text, meta, tone }) {
+  return (
+    <Link to={to} className={`rounded-[2rem] border p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${tone}`}>
+      <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-600">{eyebrow}</p>
+      <h2 className="mt-2 text-2xl font-black leading-tight text-slate-950">{title}</h2>
+      <p className="mt-3 text-sm leading-6 text-slate-700">{text}</p>
+      <p className="mt-5 rounded-full bg-white/80 px-4 py-2 text-xs font-black text-slate-700 ring-1 ring-black/5">{meta}</p>
+    </Link>
   );
 }

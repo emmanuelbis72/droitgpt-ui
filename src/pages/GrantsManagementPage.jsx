@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import BusinessPlanPackOffer from "../components/businessPlanPack/BusinessPlanPackOffer.jsx";
 import { listGrantOpportunities } from "../services/grantsApi.js";
 import {
@@ -76,6 +77,21 @@ export default function GrantsManagementPage() {
           </div>
 
           <BusinessPlanPackOffer />
+        </div>
+      </section>
+
+      <section className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-800">Nouveau service prioritaire</p>
+            <h2 className="mt-1 text-2xl font-black">Assistant de candidature aux financements</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-950/80">
+              Collez l'appel a projets et les questions du bailleur. DroitGPT prepare un brouillon professionnel et signale les informations manquantes a verifier avant depot.
+            </p>
+          </div>
+          <Link to="/candidature-financement" className="rounded-full bg-slate-950 px-5 py-3 text-center text-sm font-black text-white hover:bg-slate-800">
+            Preparer une candidature
+          </Link>
         </div>
       </section>
 

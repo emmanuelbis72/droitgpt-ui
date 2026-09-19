@@ -172,6 +172,8 @@ const timeoutMs = Number(import.meta.env.VITE_ACADEMIC_TIMEOUT_MS || 45 * 60 * 1
 const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
 let r;
+let jobId = "";
+let fileName = "";
 try {
   const startRes = await fetch(`${endpoint}?async=1`, {
     method: "POST",
@@ -189,12 +191,12 @@ try {
   }
 
   const started = await startRes.json();
-  const jobId = started?.jobId;
+  jobId = started?.jobId;
   if (!jobId) throw new Error("JOB_ID manquant (backend ?async=1 non actif).");
 
   const statusUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}`;
   const resultUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}/result`;
-  const fileName = `memoire_licence_${(form.topic || "droit").slice(0, 40).replace(/\s+/g, "_")}.pdf`;
+  fileName = `memoire_licence_${(form.topic || "droit").slice(0, 40).replace(/\s+/g, "_")}.pdf`;
   upsertGeneratedDocument({
     documentType: "memoire",
     title: form.topic || "Mémoire de licence",
@@ -219,7 +221,10 @@ try {
   }
 
   while (true) {
-    const statusRes = await fetch(statusUrl, { signal: controller.signal });
+    const statusRes = await fetch(statusUrl, {
+      headers: generationHeaders(),
+      signal: controller.signal,
+    });
     if (!statusRes.ok) {
       const txt = await readResponseError(statusRes);
       throw new Error(txt || `Erreur statut job (${statusRes.status})`);
@@ -232,7 +237,10 @@ try {
     await wait(4000);
   }
 
-  r = await fetch(resultUrl, { signal: controller.signal });
+  r = await fetch(resultUrl, {
+    headers: generationHeaders(),
+    signal: controller.signal,
+  });
 } finally {
   window.clearTimeout(timeoutId);
 }
