@@ -13,7 +13,7 @@ export default function Navbar() {
 
       { to: "/bp", label: "Business Plan" },
       { to: "/grants", label: "Opportunités" },
-      { to: "/candidature-financement", label: "Candidatures" },
+      { to: "/annuaire", label: "Annuaire" },
       { to: "/ong", label: "Projets ONG" }, // ✅ NEW
       { to: "/memoire", label: "Mémoire" },
       { to: "/documents", label: "Mes documents" },

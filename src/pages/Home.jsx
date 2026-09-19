@@ -3,11 +3,11 @@ import { Link } from "react-router-dom";
 
 const services = [
   {
-    to: "/candidature-financement",
-    eyebrow: "Priorite 1",
-    title: "Assistant de candidature aux financements",
-    text: "Transforme un appel a projets et les questions du bailleur en brouillon professionnel, avec alertes sur les informations manquantes.",
-    meta: "Subventions, concours, accelerateurs, bailleurs",
+    to: "/annuaire",
+    eyebrow: "Nouveau",
+    title: "Annuaire stratégique business",
+    text: "Retrouvez les entreprises FEC, contacts miniers, investisseurs et partenaires utiles pour prospecter en RDC.",
+    meta: "FEC, mines, fonds, investisseurs, contacts",
     tone: "border-amber-300 bg-amber-50",
   },
   {
@@ -53,12 +53,12 @@ export default function Home() {
               Generer des dossiers professionnels sans partir d'une page blanche.
             </h1>
             <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-200">
-              Business plans, projets ONG, memoires et candidatures aux financements. DroitGPT aide a structurer,
+              Business plans, projets ONG, memoires et annuaire stratégique. DroitGPT aide a structurer,
               verifier les informations manquantes et produire des livrables utiles pour banques, bailleurs et incubateurs.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
-              <Link to="/candidature-financement" className="rounded-full bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-amber-50">
-                Voir l'assistant prioritaire
+              <Link to="/annuaire" className="rounded-full bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-amber-50">
+                Ouvrir l'annuaire
               </Link>
               <Link to="/documents" className="rounded-full border border-white/25 px-5 py-3 text-sm font-black text-white hover:bg-white/10">
                 Mes documents
@@ -72,7 +72,7 @@ export default function Home() {
               <h2 className="mt-2 text-2xl font-black">Montrez la valeur au client</h2>
               <p className="mt-3 text-sm leading-6 text-slate-600">
                 Chaque service doit afficher ce que l'utilisateur obtient, les donnees necessaires, le prix, les formats,
-                les limites et un exemple consultable.
+                les limites et un exemple consultable. L'annuaire aide aussi a trouver des contacts business utiles.
               </p>
               <div className="mt-5 space-y-3">
                 {examples.map((item) => (
@@ -81,8 +81,8 @@ export default function Home() {
                   </div>
                 ))}
               </div>
-              <Link to="/candidature-financement#exemple" className="mt-5 inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
-                Voir un exemple public
+              <Link to="/annuaire" className="mt-5 inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800">
+                Explorer l'annuaire
               </Link>
             </div>
           </div>

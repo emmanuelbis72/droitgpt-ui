@@ -54,6 +54,7 @@ import LicenceMemoirePage from "./pages/LicenceMemoirePage.jsx";
 import NgoProjectPremiumPage from "./pages/NgoProjectPremiumPage.jsx";
 import GrantsManagementPage from "./pages/GrantsManagementPage.jsx";
 import FundingApplicationAssistantPage from "./pages/FundingApplicationAssistantPage.jsx";
+import AnnuairePage from "./pages/AnnuairePage.jsx";
 
 // ✅ Excel Apps (progiciels Excel)
 import ExcelAppsPage from "./pages/ExcelAppsPage.jsx";
@@ -84,6 +85,15 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/candidature-financement" element={<FundingApplicationAssistantPage />} />
+
+            <Route
+              path="/annuaire"
+              element={
+                <ProtectedRoute>
+                  <AnnuairePage />
+                </ProtectedRoute>
+              }
+            />
 
             {/* ✅ Business Plan Premium (protégé) */}
             <Route
