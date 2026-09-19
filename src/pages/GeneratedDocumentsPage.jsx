@@ -43,6 +43,16 @@ function formatDate(value) {
   }
 }
 
+function canRegenerateWithoutPayment(doc) {
+  const regeneration = doc?.regeneration || {};
+  return Boolean(
+    doc?.status !== "done" &&
+      doc?.paymentOrderNumber &&
+      regeneration?.url &&
+      regeneration?.body
+  );
+}
+
 export default function GeneratedDocumentsPage() {
   const { user } = useAuth();
   const [documents, setDocuments] = useState(() => listGeneratedDocuments());
@@ -178,6 +188,20 @@ export default function GeneratedDocumentsPage() {
     return waitForRecoveredDocument(regenerated);
   }
 
+  async function regenerateOne(doc) {
+    setBusy((prev) => ({ ...prev, [doc.id]: "regenerate" }));
+    setMessage("");
+    try {
+      await regenerateLostJob(doc, { waitUntilDone: false });
+      setMessage("Une nouvelle génération vient d'être lancée sans nouveau paiement.");
+    } catch (error) {
+      clearRecoveryState(doc);
+      setMessage(String(error?.message || error));
+    } finally {
+      setBusy((prev) => ({ ...prev, [doc.id]: null }));
+    }
+  }
+
   async function refreshOne(doc) {
     setBusy((prev) => ({ ...prev, [doc.id]: "refresh" }));
     setMessage("");
@@ -222,6 +246,23 @@ export default function GeneratedDocumentsPage() {
       await downloadGeneratedDocument(latest);
       await reload();
     } catch (error) {
+      if (isRecoverableLostJobError(error)) {
+        try {
+          const recovered = await regenerateLostJob(doc, { waitUntilDone: true });
+          if (recovered.status === "done") {
+            await downloadGeneratedDocument(recovered);
+            await reload();
+            return;
+          }
+          setMessage("Le fichier précédent n'est plus disponible. Une régénération sans repaiement a été lancée.");
+          await reload();
+          return;
+        } catch (recoveryError) {
+          clearRecoveryState(doc);
+          setMessage(String(recoveryError?.message || recoveryError));
+          return;
+        }
+      }
       setMessage(String(error?.message || error));
     } finally {
       setBusy((prev) => ({ ...prev, [doc.id]: null }));
@@ -360,6 +401,16 @@ export default function GeneratedDocumentsPage() {
                   >
                     {busy[doc.id] === "refresh" ? "Vérification..." : "Vérifier"}
                   </button>
+                  {canRegenerateWithoutPayment(doc) ? (
+                    <button
+                      type="button"
+                      onClick={() => regenerateOne(doc)}
+                      disabled={Boolean(busy[doc.id])}
+                      className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+                    >
+                      {busy[doc.id] === "regenerate" ? "Relance..." : "Régénérer sans payer"}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => downloadOne(doc)}
