@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
+import ExistingPaymentRecovery from "../components/payments/ExistingPaymentRecovery.jsx";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
 import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
@@ -326,6 +327,17 @@ if (!ct.includes("application/pdf")) {
             openSignal={paymentOpenSignal}
             className="hidden"
             onRequirementChange={setPaymentRequired}
+            onPaymentReady={setPaymentOrderNumber}
+          />
+
+          <ExistingPaymentRecovery
+            apiBase={API_BASE}
+            documentType="memoire"
+            variant="dark"
+            visible={paymentRequired}
+            disabled={isGenerating}
+            currentOrderNumber={paymentOrderNumber}
+            resetSignal={paymentResetSignal}
             onPaymentReady={setPaymentOrderNumber}
           />
 

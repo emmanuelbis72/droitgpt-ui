@@ -1,5 +1,6 @@
 // src/pages/ExcelAppsPage.jsx
 import React, { useEffect, useRef, useState } from "react";
+import ExistingPaymentRecovery from "../components/payments/ExistingPaymentRecovery.jsx";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
 import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
@@ -168,6 +169,18 @@ export default function ExcelAppsPage() {
             resetSignal={paymentResetSignal}
             openSignal={paymentOpenSignal}
             onRequirementChange={setPaymentRequired}
+            onPaymentReady={setPaymentOrderNumber}
+            className="mb-6"
+          />
+
+          <ExistingPaymentRecovery
+            apiBase={API_BASE}
+            documentType="excel_app"
+            variant="dark"
+            visible={paymentRequired}
+            disabled={status === "starting" || status === "running"}
+            currentOrderNumber={paymentOrderNumber}
+            resetSignal={paymentResetSignal}
             onPaymentReady={setPaymentOrderNumber}
             className="mb-6"
           />

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generationHeaders } from "../utils/generationClient.js";
 import BusinessPlanPackOffer from "../components/businessPlanPack/BusinessPlanPackOffer.jsx";
+import ExistingPaymentRecovery from "../components/payments/ExistingPaymentRecovery.jsx";
 import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
 import { clearStoredPayment } from "../services/paymentsApi.js";
 import { updateGeneratedDocument, upsertGeneratedDocument } from "../services/generatedDocuments.js";
@@ -1307,6 +1308,18 @@ strategicPartnerships:
                 onPaymentReady={setPaymentOrderNumber}
               />
 
+              <ExistingPaymentRecovery
+                apiBase={API_BASE}
+                documentType="businessplan"
+                variant="dark"
+                visible={paymentRequired}
+                disabled={loading}
+                currentOrderNumber={paymentOrderNumber}
+                resetSignal={paymentResetSignal}
+                onPaymentReady={setPaymentOrderNumber}
+                className="mt-4"
+              />
+
               <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
                 <div className="space-y-1 text-xs text-slate-400">
                   <div>
@@ -1491,6 +1504,18 @@ strategicPartnerships:
                 className="hidden"
                 onRequirementChange={setPaymentRequired}
                 onPaymentReady={setPaymentOrderNumber}
+              />
+
+              <ExistingPaymentRecovery
+                apiBase={API_BASE}
+                documentType="businessplan"
+                variant="dark"
+                visible={paymentRequired}
+                disabled={loading}
+                currentOrderNumber={paymentOrderNumber}
+                resetSignal={paymentResetSignal}
+                onPaymentReady={setPaymentOrderNumber}
+                className="mt-4"
               />
 
               <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">

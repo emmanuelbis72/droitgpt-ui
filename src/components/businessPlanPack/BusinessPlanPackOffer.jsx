@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import ExistingPaymentRecovery from "../payments/ExistingPaymentRecovery.jsx";
 import MobileMoneyPayment from "../payments/MobileMoneyPayment.jsx";
 import {
   BUSINESS_PLAN_PACK_ITEMS,
@@ -116,6 +117,14 @@ export default function BusinessPlanPackOffer({ compact = false, variant = "ligh
           launcherTitle="Paiement du pack"
           launcherHint="Paiement unique. Après confirmation, le téléchargement se débloque automatiquement."
           paidMessage="Paiement confirmé. Vous pouvez télécharger le pack."
+          onPaymentReady={setPackOrder}
+        />
+
+        <ExistingPaymentRecovery
+          apiBase={API_BASE}
+          documentType="businessplan_pack"
+          variant={isDark ? "dark" : "light"}
+          currentOrderNumber={packOrder}
           onPaymentReady={setPackOrder}
         />
 
