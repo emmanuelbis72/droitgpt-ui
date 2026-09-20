@@ -31,11 +31,13 @@ export default function ExcelAppsPage() {
   const [error, setError] = useState(null);
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentRecoveryReason, setPaymentRecoveryReason] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
   const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
   const startTimeRef = useRef(null);
   const progressTimerRef = useRef(null);
+  const paidJobRef = useRef(false);
 
   const selected = TEMPLATES.find((t) => t.id === template);
 
@@ -52,6 +54,7 @@ export default function ExcelAppsPage() {
     setError(null);
     setDownloadUrl(null);
     setProgress(0);
+    setPaymentRecoveryReason("");
 
     if (paymentRequired && !paymentOrderNumber) {
       setError("Valide d'abord le paiement Mobile Money avant de lancer la génération.");
@@ -59,6 +62,8 @@ export default function ExcelAppsPage() {
     }
 
     setStatus("starting");
+    const usedPaymentOrderNumber = paymentOrderNumber;
+    paidJobRef.current = Boolean(usedPaymentOrderNumber);
 
     const payload = {
       lang,
@@ -79,6 +84,11 @@ export default function ExcelAppsPage() {
       body: JSON.stringify(payload),
     }).catch((e) => {
       setError(String(e?.message || e));
+      if (usedPaymentOrderNumber) {
+        setPaymentRecoveryReason(
+          "Votre paiement a été validé, mais le progiciel Excel n'a pas été rendu disponible. Retrouvez votre paiement avec le numéro Mobile Money utilisé, puis relancez la génération sans repayer."
+        );
+      }
       setStatus("error");
       return null;
     });
@@ -88,6 +98,11 @@ export default function ExcelAppsPage() {
     const data = await res.json().catch(() => null);
     if (!data?.jobId) {
       setError(data?.message || "Impossible de démarrer la génération.");
+      if (usedPaymentOrderNumber) {
+        setPaymentRecoveryReason(
+          "Votre paiement a été validé, mais le progiciel Excel n'a pas été rendu disponible. Retrouvez votre paiement avec le numéro Mobile Money utilisé, puis relancez la génération sans repayer."
+        );
+      }
       setStatus("error");
       return;
     }
@@ -135,6 +150,11 @@ export default function ExcelAppsPage() {
         if (progressTimerRef.current) clearInterval(progressTimerRef.current);
         setStatus("error");
         setError(j.error || "Erreur inconnue");
+        if (paidJobRef.current) {
+          setPaymentRecoveryReason(
+            "Votre paiement a été validé, mais le progiciel Excel n'a pas été rendu disponible. Retrouvez votre paiement avec le numéro Mobile Money utilisé, puis relancez la génération sans repayer."
+          );
+        }
         return;
       }
 
@@ -144,6 +164,8 @@ export default function ExcelAppsPage() {
         setProgress(100);
         setStatus("done");
         setDownloadUrl(`${API_BASE}/generate-excel-app/jobs/${jobId}/result`);
+        setPaymentRecoveryReason("");
+        paidJobRef.current = false;
         updateGeneratedDocument(jobId, { status: "done", doneAt: new Date().toISOString() });
       }
     }, 4000);
@@ -177,11 +199,16 @@ export default function ExcelAppsPage() {
             apiBase={API_BASE}
             documentType="excel_app"
             variant="dark"
-            visible={paymentRequired}
+            visible={Boolean(paymentRecoveryReason)}
             disabled={status === "starting" || status === "running"}
             currentOrderNumber={paymentOrderNumber}
+            reason={paymentRecoveryReason}
+            prominent
             resetSignal={paymentResetSignal}
-            onPaymentReady={setPaymentOrderNumber}
+            onPaymentReady={(orderNumber) => {
+              setPaymentOrderNumber(orderNumber);
+              setError(null);
+            }}
             className="mb-6"
           />
 

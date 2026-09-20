@@ -108,6 +108,7 @@ const [mode, setMode] = useState("standard"); // standard | droit_congolais
   const [lastDownloadFiles, setLastDownloadFiles] = useState([]);
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentRecoveryReason, setPaymentRecoveryReason] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
   const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
@@ -187,12 +188,14 @@ if (elapsed >= totalSec) {
   async function generateMemoire() {
     setError("");
     setSourcesUsed([]);
+    setPaymentRecoveryReason("");
     revokeLastPdfUrl();
     if (paymentRequired && !paymentOrderNumber) {
       setError("Valide d'abord le paiement Mobile Money avant de lancer la génération.");
       return;
     }
     setIsGenerating(true);
+    const usedPaymentOrderNumber = paymentOrderNumber;
 
     try {
       const payload = {
@@ -347,6 +350,7 @@ try {
 }
 
       setProgress(100);
+      setPaymentRecoveryReason("");
 
       updateGeneratedDocument(jobId, { status: "done", fileName, downloadedAt: new Date().toISOString() });
 } catch (e) {
@@ -354,6 +358,11 @@ try {
     ? "La génération a dépassé le temps limite. Réessaye (ou augmente le timeout côté frontend)."
     : (e?.message || e));
   setError(msg);
+  if (usedPaymentOrderNumber) {
+    setPaymentRecoveryReason(
+      "Votre paiement a été validé, mais le mémoire n'a pas été rendu disponible. Retrouvez votre paiement avec le numéro Mobile Money utilisé, puis relancez la génération sans repayer."
+    );
+  }
 } finally {
       setIsGenerating(false);
     }
@@ -405,11 +414,16 @@ try {
             apiBase={API_BASE}
             documentType="memoire"
             variant="dark"
-            visible={paymentRequired}
+            visible={Boolean(paymentRecoveryReason)}
             disabled={isGenerating}
             currentOrderNumber={paymentOrderNumber}
+            reason={paymentRecoveryReason}
+            prominent
             resetSignal={paymentResetSignal}
-            onPaymentReady={setPaymentOrderNumber}
+            onPaymentReady={(orderNumber) => {
+              setPaymentOrderNumber(orderNumber);
+              setError("");
+            }}
           />
 
           <div className="grid gap-3 md:grid-cols-2">

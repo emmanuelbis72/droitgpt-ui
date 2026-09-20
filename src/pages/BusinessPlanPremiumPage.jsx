@@ -207,6 +207,7 @@ export default function BusinessPlanPremiumPage() {
   const [successHint, setSuccessHint] = useState("");
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentRecoveryReason, setPaymentRecoveryReason] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
   const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
@@ -475,6 +476,7 @@ export default function BusinessPlanPremiumPage() {
     e.preventDefault();
     setError("");
     setSuccessHint("");
+    setPaymentRecoveryReason("");
 
     if (!String(form.companyName).trim()) return setError("Le nom de l’entreprise est requis.");
     if (!generateDraftFile && !String(form.sector).trim()) return setError("Le secteur est requis.");
@@ -489,6 +491,7 @@ export default function BusinessPlanPremiumPage() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const usedPaymentOrderNumber = paymentOrderNumber;
 
     // ✅ Mode JOB (anti-timeout / anti-veille). On garde un timeout large côté client.
     const timeoutId = setTimeout(() => controller.abort(), 1800000); // 30 min
@@ -602,6 +605,7 @@ export default function BusinessPlanPremiumPage() {
       });
 
       stopFakeProgress("Téléchargement prêt ✅");
+      setPaymentRecoveryReason("");
       setSuccessHint(`Ton business plan a été généré en ${outputLabel(form.output)}. Dernier fichier : ${downloadedName}.`);
     } catch (err) {
       const msg =
@@ -609,6 +613,11 @@ export default function BusinessPlanPremiumPage() {
           ? "Opération interrompue (timeout local). Réessaie."
           : String(err?.message || err);
       setError(msg);
+      if (usedPaymentOrderNumber) {
+        setPaymentRecoveryReason(
+          "Votre paiement a été validé, mais le business plan n'a pas été rendu disponible. Retrouvez votre paiement avec le numéro Mobile Money utilisé, puis relancez la génération sans repayer."
+        );
+      }
       setStatusText("Erreur.");
       setProgress(0);
     } finally {
@@ -624,6 +633,7 @@ export default function BusinessPlanPremiumPage() {
     e.preventDefault();
     setError("");
     setSuccessHint("");
+    setPaymentRecoveryReason("");
 
     if (!draftFile && !String(form.rewriteTextFallback || "").trim()) {
       setError("Importe un fichier (PDF/DOCX) OU colle le texte de ton brouillon.");
@@ -645,6 +655,7 @@ export default function BusinessPlanPremiumPage() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const usedPaymentOrderNumber = paymentOrderNumber;
 
     // Timeout 15 min
     const timeoutId = setTimeout(() => controller.abort(), 900000);
@@ -740,6 +751,7 @@ export default function BusinessPlanPremiumPage() {
       });
 
       stopFakeProgress("Téléchargement prêt ✅");
+      setPaymentRecoveryReason("");
       setSuccessHint(`Ton brouillon a été corrigé en ${outputLabel(form.output)}. Dernier fichier : ${downloadedName}.`);
     } catch (err) {
       const msg =
@@ -747,6 +759,11 @@ export default function BusinessPlanPremiumPage() {
           ? "La correction a dépassé le délai (15 min). Réessaie ou colle uniquement le résumé (mode Lite)."
           : String(err?.message || err);
       setError(msg);
+      if (usedPaymentOrderNumber) {
+        setPaymentRecoveryReason(
+          "Votre paiement a été validé, mais la correction du business plan n'a pas été rendue disponible. Retrouvez votre paiement avec le numéro Mobile Money utilisé, puis relancez la correction sans repayer."
+        );
+      }
       setStatusText("Erreur.");
       setProgress(0);
     } finally {
@@ -1374,11 +1391,16 @@ strategicPartnerships:
                 apiBase={API_BASE}
                 documentType="businessplan"
                 variant="dark"
-                visible={paymentRequired}
+                visible={Boolean(paymentRecoveryReason)}
                 disabled={loading}
                 currentOrderNumber={paymentOrderNumber}
+                reason={paymentRecoveryReason}
+                prominent
                 resetSignal={paymentResetSignal}
-                onPaymentReady={setPaymentOrderNumber}
+                onPaymentReady={(orderNumber) => {
+                  setPaymentOrderNumber(orderNumber);
+                  setError("");
+                }}
                 className="mt-4"
               />
 
@@ -1572,11 +1594,16 @@ strategicPartnerships:
                 apiBase={API_BASE}
                 documentType="businessplan"
                 variant="dark"
-                visible={paymentRequired}
+                visible={Boolean(paymentRecoveryReason)}
                 disabled={loading}
                 currentOrderNumber={paymentOrderNumber}
+                reason={paymentRecoveryReason}
+                prominent
                 resetSignal={paymentResetSignal}
-                onPaymentReady={setPaymentOrderNumber}
+                onPaymentReady={(orderNumber) => {
+                  setPaymentOrderNumber(orderNumber);
+                  setError("");
+                }}
                 className="mt-4"
               />
 

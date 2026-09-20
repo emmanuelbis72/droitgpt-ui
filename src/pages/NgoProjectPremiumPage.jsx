@@ -111,6 +111,7 @@ export default function NgoProjectPremiumPage() {
   const [progress, setProgress] = useState(0);
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
+  const [paymentRecoveryReason, setPaymentRecoveryReason] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
   const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
@@ -187,6 +188,7 @@ export default function NgoProjectPremiumPage() {
     e.preventDefault();
     setError("");
     setSuccessHint("");
+    setPaymentRecoveryReason("");
 
     if (!String(form.projectTitle).trim()) return setError("Le titre du projet est requis.");
     if (!String(form.organization).trim()) return setError("Le nom de l’ONG / organisation est requis.");
@@ -199,6 +201,7 @@ export default function NgoProjectPremiumPage() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const usedPaymentOrderNumber = paymentOrderNumber;
 
     const timeoutId = setTimeout(() => controller.abort(), 1800000);
 
@@ -324,6 +327,7 @@ export default function NgoProjectPremiumPage() {
       updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
 
       stopFakeProgress("Téléchargement prêt ✅");
+      setPaymentRecoveryReason("");
       setSuccessHint("Ton projet ONG Premium a été généré et téléchargé.");
     } catch (err) {
       const msg =
@@ -331,6 +335,11 @@ export default function NgoProjectPremiumPage() {
           ? "Opération interrompue (timeout local). Réessaie."
           : String(err?.message || err);
       setError(msg);
+      if (usedPaymentOrderNumber) {
+        setPaymentRecoveryReason(
+          "Votre paiement a été validé, mais le projet ONG n'a pas été rendu disponible. Retrouvez votre paiement avec le numéro Mobile Money utilisé, puis relancez la génération sans repayer."
+        );
+      }
       setStatusText("Erreur.");
       setProgress(0);
     } finally {
@@ -390,11 +399,16 @@ export default function NgoProjectPremiumPage() {
         apiBase={API_BASE}
         documentType="ngo_project"
         variant="light"
-        visible={paymentRequired}
+        visible={Boolean(paymentRecoveryReason)}
         disabled={loading}
         currentOrderNumber={paymentOrderNumber}
+        reason={paymentRecoveryReason}
+        prominent
         resetSignal={paymentResetSignal}
-        onPaymentReady={setPaymentOrderNumber}
+        onPaymentReady={(orderNumber) => {
+          setPaymentOrderNumber(orderNumber);
+          setError("");
+        }}
       />
 
       <form onSubmit={onSubmit} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
