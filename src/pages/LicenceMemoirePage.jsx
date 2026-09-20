@@ -34,6 +34,40 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function safeFilename(name) {
+  return String(name || "memoire_licence")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .slice(0, 80) || "memoire_licence";
+}
+
+function getMemoireOutputFormats(output) {
+  const value = String(output || "pdf").toLowerCase();
+  if (value === "doc" || value === "word") return [{ format: "doc", ext: "doc", label: "Word" }];
+  if (value === "both") {
+    return [
+      { format: "pdf", ext: "pdf", label: "PDF" },
+      { format: "doc", ext: "doc", label: "Word" },
+    ];
+  }
+  return [{ format: "pdf", ext: "pdf", label: "PDF" }];
+}
+
+function outputLabel(output) {
+  return getMemoireOutputFormats(output).map((item) => item.label).join(" + ");
+}
+
+function withResultFormat(url, format) {
+  try {
+    const next = new URL(url, window.location.origin);
+    next.searchParams.set("format", format || "pdf");
+    return next.toString();
+  } catch {
+    const joiner = String(url || "").includes("?") ? "&" : "?";
+    return `${url}${joiner}format=${encodeURIComponent(format || "pdf")}`;
+  }
+}
+
 export default function LicenceMemoirePage() {
   
   function formatTime(sec) {
@@ -44,6 +78,8 @@ export default function LicenceMemoirePage() {
   }
 const [mode, setMode] = useState("standard"); // standard | droit_congolais
   const [lang, setLang] = useState("fr");
+  const [output, setOutput] = useState("pdf");
+  const [draftFile, setDraftFile] = useState(null);
   const citationStyle = "footnotes"; // ✅ fixed: footnotes by default
 
   const [form, setForm] = useState({
@@ -69,22 +105,32 @@ const [mode, setMode] = useState("standard"); // standard | droit_congolais
   const [error, setError] = useState("");
   const [sourcesUsed, setSourcesUsed] = useState([]);
   const [lastPdfUrl, setLastPdfUrl] = useState("");
+  const [lastDownloadFiles, setLastDownloadFiles] = useState([]);
   const [paymentRequired, setPaymentRequired] = useState(false);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);
   const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
 
   const lastPdfUrlRef = useRef("");
+  const lastDownloadFilesRef = useRef([]);
   const revokeLastPdfUrl = () => {
     const u = lastPdfUrlRef.current || lastPdfUrl;
     if (u) URL.revokeObjectURL(u);
     lastPdfUrlRef.current = "";
     setLastPdfUrl("");
+    for (const file of lastDownloadFilesRef.current || []) {
+      if (file?.url) URL.revokeObjectURL(file.url);
+    }
+    lastDownloadFilesRef.current = [];
+    setLastDownloadFiles([]);
   };
 
   useEffect(() => {
     return () => {
       if (lastPdfUrlRef.current) URL.revokeObjectURL(lastPdfUrlRef.current);
+      for (const file of lastDownloadFilesRef.current || []) {
+        if (file?.url) URL.revokeObjectURL(file.url);
+      }
     };
   }, []);
 useEffect(() => {
@@ -152,6 +198,7 @@ if (elapsed >= totalSec) {
       const payload = {
         mode,
         language: lang,
+        output,
         // ✅ footnotes always on (no UI field)
         citationStyle: "footnotes",
         ...form,
@@ -172,17 +219,32 @@ const controller = new AbortController();
 const timeoutMs = Number(import.meta.env.VITE_ACADEMIC_TIMEOUT_MS || 45 * 60 * 1000);
 const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
-let r;
 let jobId = "";
 let fileName = "";
 try {
+  const hasDraftUpload = Boolean(draftFile);
+  const requestHeaders = generationHeaders(
+    hasDraftUpload
+      ? {
+          ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+        }
+      : {
+          "Content-Type": "application/json",
+          ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+        }
+  );
+  const requestBody = hasDraftUpload ? new FormData() : JSON.stringify(payload);
+  if (hasDraftUpload) {
+    Object.entries(payload).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) requestBody.append(key, String(value));
+    });
+    requestBody.append("file", draftFile);
+  }
+
   const startRes = await fetch(`${endpoint}?async=1`, {
     method: "POST",
-    headers: generationHeaders({
-      "Content-Type": "application/json",
-      ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
-    }),
-    body: JSON.stringify(payload),
+    headers: requestHeaders,
+    body: requestBody,
     signal: controller.signal,
   });
 
@@ -197,14 +259,17 @@ try {
 
   const statusUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}`;
   const resultUrl = `${apiBase}/generate-academic/licence-memoire/jobs/${encodeURIComponent(jobId)}/result`;
-  fileName = `memoire_licence_${(form.topic || "droit").slice(0, 40).replace(/\s+/g, "_")}.pdf`;
+  const outputFormats = getMemoireOutputFormats(output);
+  const primaryFormat = outputFormats[0];
+  const baseFileName = `memoire_licence_${safeFilename((form.topic || "droit").slice(0, 40))}`;
+  fileName = `${baseFileName}.${primaryFormat.ext}`;
   upsertGeneratedDocument({
     documentType: "memoire",
     title: form.topic || "Mémoire de licence",
     fileName,
     jobId,
     statusUrl,
-    resultUrl,
+    resultUrl: withResultFormat(resultUrl, primaryFormat.format),
     apiBase: apiBase,
     paymentOrderNumber,
     regeneration: {
@@ -212,7 +277,7 @@ try {
       url: `${endpoint}?async=1`,
       body: payload,
       statusUrlTemplate: `${apiBase}/generate-academic/licence-memoire/jobs/{jobId}`,
-      resultUrlTemplate: `${apiBase}/generate-academic/licence-memoire/jobs/{jobId}/result`,
+      resultUrlTemplate: withResultFormat(`${apiBase}/generate-academic/licence-memoire/jobs/{jobId}/result`, primaryFormat.format),
     },
   });
   if (paymentOrderNumber) {
@@ -238,46 +303,52 @@ try {
     await wait(4000);
   }
 
-  r = await fetch(resultUrl, {
-    headers: generationHeaders(),
-    signal: controller.signal,
-  });
+  const downloaded = [];
+  for (let index = 0; index < outputFormats.length; index += 1) {
+    const item = outputFormats[index];
+    const response = await fetch(withResultFormat(resultUrl, item.format), {
+      headers: generationHeaders(),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const txt = await readResponseError(response);
+      throw new Error(txt || `Erreur serveur (${response.status})`);
+    }
+
+    const hdr = response.headers.get("x-sources-used");
+    if (hdr && index === 0) {
+      try {
+        const parsed = JSON.parse(hdr);
+        if (Array.isArray(parsed)) setSourcesUsed(parsed);
+      } catch (_) {}
+    }
+
+    const blob = await response.blob();
+    const downloadName = `${baseFileName}.${item.ext}`;
+    const url = URL.createObjectURL(blob);
+    downloaded.push({ url, name: downloadName, label: item.label });
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = downloadName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  lastDownloadFilesRef.current = downloaded;
+  setLastDownloadFiles(downloaded);
+  if (downloaded[0]?.url && outputFormats[0]?.format === "pdf") {
+    lastPdfUrlRef.current = downloaded[0].url;
+    setLastPdfUrl(downloaded[0].url);
+  }
 } finally {
   window.clearTimeout(timeoutId);
 }
 
-if (!r.ok) {
-  const txt = await readResponseError(r);
-  throw new Error(txt || `Erreur serveur (${r.status})`);
-}
-
-const ct = (r.headers.get("content-type") || "").toLowerCase();
-if (!ct.includes("application/pdf")) {
-  const txt = await readResponseError(r);
-  throw new Error(txt || `Réponse inattendue (Content-Type: ${ct || "inconnu"})`);
-}
-
-      const hdr = r.headers.get("x-sources-used");
-      if (hdr) {
-        try {
-          const parsed = JSON.parse(hdr);
-          if (Array.isArray(parsed)) setSourcesUsed(parsed);
-        } catch (_) {}
-      }
-
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      lastPdfUrlRef.current = url;
-      setLastPdfUrl(url);
       setProgress(100);
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      updateGeneratedDocument(jobId, { status: "done", downloadedAt: new Date().toISOString() });
+      updateGeneratedDocument(jobId, { status: "done", fileName, downloadedAt: new Date().toISOString() });
 } catch (e) {
   const msg = String(e?.name === "AbortError"
     ? "La génération a dépassé le temps limite. Réessaye (ou augmente le timeout côté frontend)."
@@ -351,17 +422,74 @@ if (!ct.includes("application/pdf")) {
               </ChoiceButton>
             </QuickSetting>
 
-            <QuickSetting title="Format académique" hint="Le document est généré en PDF stable, avec une structure complète de mémoire de licence.">
-              <div className="rounded-xl border border-emerald-400/60 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-100">
-                PDF stable
-              </div>
-              <div className="rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm font-semibold text-slate-300">
-                Environ 70 pages
-              </div>
+            <QuickSetting title="Format de sortie" hint="Choisissez PDF, Word, ou les deux formats pour votre mémoire.">
+              <ChoiceButton active={output === "pdf"} disabled={isGenerating} onClick={() => setOutput("pdf")}>
+                PDF
+              </ChoiceButton>
+              <ChoiceButton active={output === "doc"} disabled={isGenerating} onClick={() => setOutput("doc")}>
+                Word
+              </ChoiceButton>
+              <button
+                type="button"
+                onClick={() => setOutput("both")}
+                disabled={isGenerating}
+                className={`col-span-2 rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                  output === "both"
+                    ? "border-emerald-400 bg-emerald-400 text-slate-950"
+                    : "border-white/10 bg-slate-950/60 text-slate-200 hover:bg-white/10"
+                } disabled:opacity-60`}
+              >
+                PDF + Word
+              </button>
             </QuickSetting>
           </div>
 
           <FormProgress completion={formCompletion} nextLabel={nextGuideField} />
+
+          <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-cyan-100">Brouillon de mémoire (optionnel)</div>
+                <p className="mt-1 text-xs leading-5 text-cyan-100/80">
+                  Si l'étudiant a déjà un brouillon, un plan avancé ou un ancien fichier, importez-le ici.
+                  Le système l'utilisera comme base factuelle, puis améliorera la structure et la rédaction.
+                </p>
+              </div>
+              {draftFile ? (
+                <button
+                  type="button"
+                  onClick={() => setDraftFile(null)}
+                  disabled={isGenerating}
+                  className="rounded-xl border border-cyan-200/30 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/10"
+                >
+                  Retirer
+                </button>
+              ) : null}
+            </div>
+            <input
+              type="file"
+              accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+              disabled={isGenerating}
+              onChange={(event) => {
+                const file = event.target.files?.[0] || null;
+                if (file && file.size > 25 * 1024 * 1024) {
+                  setError("Le brouillon ne doit pas dépasser 25 MB.");
+                  event.target.value = "";
+                  return;
+                }
+                setError("");
+                setDraftFile(file);
+              }}
+              className="mt-3 w-full rounded-xl border border-cyan-200/20 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 file:mr-4 file:rounded-lg file:border-0 file:bg-cyan-300 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-950"
+            />
+            {draftFile ? (
+              <p className="mt-2 text-xs font-semibold text-cyan-100">
+                Fichier sélectionné : <span className="font-mono">{draftFile.name}</span>
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-cyan-100/70">Formats acceptés : PDF, Word DOCX ou TXT.</p>
+            )}
+          </div>
 
           {/* Mode toggle */}
           <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
@@ -475,6 +603,9 @@ if (!ct.includes("application/pdf")) {
               <div>
                 Langue actuelle : <b className="text-slate-100">{lang === "en" ? "English" : "Français"}</b>.
               </div>
+              <div>
+                Sortie actuelle : <b className="text-slate-100">{outputLabel(output)}</b>.
+              </div>
             </div>
 
             <button
@@ -486,22 +617,27 @@ if (!ct.includes("application/pdf")) {
               {isGenerating ? "Génération en cours…" : paymentRequired && !paymentOrderNumber ? "Payer puis générer le mémoire" : "Générer & Télécharger"}
             </button>
 
-            {lastPdfUrl && (
-              <button
-                type="button"
-                onClick={() => {
-                  const a = document.createElement("a");
-                  a.href = lastPdfUrl;
-                  a.download = `memoire_licence_${(form.topic || "droit").slice(0, 40).replace(/\s+/g, "_")}.pdf`;
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                }}
-                className="rounded-2xl px-5 py-3 font-semibold border border-white/10 bg-slate-900/70 hover:bg-slate-900 transition"
-              >
-                Télécharger à nouveau
-              </button>
-            )}
+            {lastDownloadFiles?.length ? (
+              <div className="grid gap-2 md:grid-cols-2">
+                {lastDownloadFiles.map((file) => (
+                  <button
+                    key={file.name}
+                    type="button"
+                    onClick={() => {
+                      const a = document.createElement("a");
+                      a.href = file.url;
+                      a.download = file.name;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                    }}
+                    className="rounded-2xl px-5 py-3 font-semibold border border-white/10 bg-slate-900/70 hover:bg-slate-900 transition"
+                  >
+                    Télécharger à nouveau ({file.label})
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             {error && (
               <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 text-rose-100 px-4 py-3 text-sm">{error}</div>

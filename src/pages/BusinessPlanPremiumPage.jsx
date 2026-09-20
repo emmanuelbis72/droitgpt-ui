@@ -198,6 +198,7 @@ export default function BusinessPlanPremiumPage() {
   });
 
   const [draftFile, setDraftFile] = useState(null);
+  const [generateDraftFile, setGenerateDraftFile] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -476,8 +477,8 @@ export default function BusinessPlanPremiumPage() {
     setSuccessHint("");
 
     if (!String(form.companyName).trim()) return setError("Le nom de l’entreprise est requis.");
-    if (!String(form.sector).trim()) return setError("Le secteur est requis.");
-    if (!String(form.solution).trim() && !String(form.product).trim())
+    if (!generateDraftFile && !String(form.sector).trim()) return setError("Le secteur est requis.");
+    if (!generateDraftFile && !String(form.solution).trim() && !String(form.product).trim())
       return setError("Décris au moins la solution OU le produit/service.");
     if (paymentRequired && !paymentOrderNumber) {
       return setError("Valide d'abord le paiement Mobile Money avant de lancer la génération.");
@@ -494,15 +495,31 @@ export default function BusinessPlanPremiumPage() {
 
     try {
       const payload = buildPayloadForGenerate();
+      const hasDraftUpload = Boolean(generateDraftFile);
+      const requestHeaders = generationHeaders(
+        hasDraftUpload
+          ? {
+              ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+            }
+          : {
+              "Content-Type": "application/json",
+              ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
+            }
+      );
+      const requestBody = hasDraftUpload ? new FormData() : JSON.stringify(payload);
+
+      if (hasDraftUpload) {
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) requestBody.append(key, String(value));
+        });
+        requestBody.append("file", generateDraftFile);
+      }
 
       // 1) Start JOB
       const startRes = await fetch(`${endpointGenerate}?async=1`, {
         method: "POST",
-        headers: generationHeaders({
-          "Content-Type": "application/json",
-          ...(paymentOrderNumber ? { "X-Payment-Order": paymentOrderNumber } : {}),
-        }),
-        body: JSON.stringify(payload),
+        headers: requestHeaders,
+        body: requestBody,
         signal: controller.signal,
       });
 
@@ -1132,6 +1149,51 @@ strategicPartnerships:
                   disabled={loading}
                   options={DOCTYPES}
                 />
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-cyan-100">Brouillon existant (optionnel)</div>
+                    <p className="mt-1 text-xs leading-5 text-cyan-100/80">
+                      Si vous avez déjà un ancien business plan, une note de projet ou un brouillon, importez-le ici.
+                      DroitGPT en tiendra compte dans la génération.
+                    </p>
+                  </div>
+                  {generateDraftFile ? (
+                    <button
+                      type="button"
+                      onClick={() => setGenerateDraftFile(null)}
+                      disabled={loading}
+                      className="rounded-xl border border-cyan-200/30 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/10"
+                    >
+                      Retirer
+                    </button>
+                  ) : null}
+                </div>
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                  disabled={loading}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    if (file && file.size > 15 * 1024 * 1024) {
+                      setError("Le brouillon ne doit pas dépasser 15 MB.");
+                      event.target.value = "";
+                      return;
+                    }
+                    setError("");
+                    setGenerateDraftFile(file);
+                  }}
+                  className="mt-3 w-full rounded-xl border border-cyan-200/20 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 file:mr-4 file:rounded-lg file:border-0 file:bg-cyan-300 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-950"
+                />
+                {generateDraftFile ? (
+                  <p className="mt-2 text-xs font-semibold text-cyan-100">
+                    Fichier sélectionné : <span className="font-mono">{generateDraftFile.name}</span>
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-cyan-100/70">Formats acceptés : PDF, Word DOCX ou TXT.</p>
+                )}
               </div>
 
               <div className="mt-8">
