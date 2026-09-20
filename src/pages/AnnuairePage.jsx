@@ -7,11 +7,9 @@ const TAB_DEFINITIONS = [
   { id: "priority", label: "Prospection", hint: "Contacts exploitables" },
   { id: "mines", label: "Mines", hint: "Opérateurs et services" },
   { id: "finance", label: "Finance", hint: "Banques, fonds, assurances" },
-  { id: "arsp", label: "ARSP", hint: "Sociétés enregistrées" },
   { id: "health", label: "Santé", hint: "Médecins et structures" },
-  { id: "public", label: "Annuaires publics", hint: "Sources web" },
+  { id: "arsp", label: "ARSP", hint: "Entreprises enregistrées" },
   { id: "fec", label: "FEC", hint: "Entreprises FEC" },
-  { id: "emails", label: "Emails", hint: "Contact direct" },
 ];
 
 const CONTACT_FILTERS = [
@@ -28,6 +26,62 @@ const SORT_OPTIONS = [
   { value: "name", label: "Nom A-Z" },
   { value: "source", label: "Source" },
 ];
+
+const SOURCE_GROUPS = [
+  { label: "CAMI / DRCLicences", terms: ["cami", "drclicences", "cadastre minier"] },
+  { label: "CongoMines", terms: ["congomines"] },
+  { label: "ARSP", terms: ["arsp"] },
+  { label: "FEC", terms: ["fec"] },
+  { label: "MonCongo", terms: ["moncongo"] },
+  { label: "Documents importés", terms: ["document fourni", "annuaire fourni", "annuaire b2b", "contacts entreprises"] },
+  { label: "Chambres de commerce", terms: ["amcham", "chambre", "belgian chambers"] },
+  { label: "Recherche web officielle", terms: ["recherche web", "source officielle", "web officielle"] },
+];
+
+const LOCATION_ALIASES = {
+  kinshasa: "Kinshasa",
+  gombe: "Kinshasa / Gombe",
+  lubumbashi: "Lubumbashi",
+  kolwezi: "Kolwezi",
+  likasi: "Likasi",
+  matadi: "Matadi",
+  goma: "Goma",
+  bukavu: "Bukavu",
+  kisangani: "Kisangani",
+  tshikapa: "Tshikapa",
+  "mbuji mayi": "Mbuji-Mayi",
+  mbujimayi: "Mbuji-Mayi",
+  kananga: "Kananga",
+  kindu: "Kindu",
+  isiro: "Isiro",
+  bunia: "Bunia",
+  kalemie: "Kalemie",
+  "haut katanga": "Haut-Katanga",
+  lualaba: "Lualaba",
+  "kongo central": "Kongo Central",
+  "nord kivu": "Nord-Kivu",
+  "sud kivu": "Sud-Kivu",
+  "haut uele": "Haut-Uele",
+  "bas uele": "Bas-Uele",
+  tshopo: "Tshopo",
+  tanganyika: "Tanganyika",
+  ituri: "Ituri",
+  kasai: "Kasaï",
+  "kasai central": "Kasaï Central",
+  "kasai oriental": "Kasaï Oriental",
+  kwilu: "Kwilu",
+  kwango: "Kwango",
+  "mai ndombe": "Mai-Ndombe",
+  equateur: "Équateur",
+  tshuapa: "Tshuapa",
+  mongala: "Mongala",
+  "nord ubangi": "Nord-Ubangi",
+  "sud ubangi": "Sud-Ubangi",
+  sankuru: "Sankuru",
+  maniema: "Maniema",
+  lomami: "Lomami",
+  "haut lomami": "Haut-Lomami",
+};
 
 const PRIORITY_SECTOR_TERMS = [
   "mines",
@@ -131,6 +185,12 @@ function unique(values) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
+function titleCase(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/(^|[\s/-])([\p{L}])/gu, (match, separator, letter) => `${separator}${letter.toUpperCase()}`);
+}
+
 function compactText(parts) {
   return parts.map((item) => String(item || "").trim()).filter(Boolean).join(" · ");
 }
@@ -192,6 +252,52 @@ function recordMatchesSector(record, selectedSector) {
   return groupLabel === selectedSector || normalizeText(record.sector) === normalizeText(selectedSector);
 }
 
+function sourceGroupForRecord(record) {
+  const sourceText = normalizeText(
+    [record.source, record.sourceDocument, record.sourceUrl, ...(record.sourceLinks || [])].join(" ")
+  );
+  const match = SOURCE_GROUPS.find((group) =>
+    group.terms.some((term) => sourceText.includes(normalizeText(term)))
+  );
+  if (match) return match.label;
+  if (record.source || record.sourceDocument || record.sourceUrl) return "Autres sources";
+  return "";
+}
+
+function cleanLocation(value) {
+  const raw = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/^[,;:/\s-]+|[,;:/\s-]+$/g, "")
+    .trim();
+  if (!raw) return "";
+  if (raw.length > 42) return "";
+  if (/@|https?:|www\.|\+243|\d{3,}/i.test(raw)) return "";
+
+  const withoutPrefix = raw
+    .replace(/^(province|ville|commune|territoire|district)\s+(de|du|des|d')?\s*/i, "")
+    .replace(/^c\/\s*/i, "")
+    .trim();
+  const normalized = normalizeText(withoutPrefix).replace(/['’]/g, "").trim();
+  if (
+    !normalized ||
+    ["rdc", "drc", "congo", "republique democratique du congo", "non precise", "non precisee", "a verifier"].includes(
+      normalized
+    )
+  ) {
+    return "";
+  }
+  return LOCATION_ALIASES[normalized] || titleCase(withoutPrefix);
+}
+
+function recordLocations(record) {
+  return unique([cleanLocation(record.province), cleanLocation(record.city)]);
+}
+
+function recordMatchesLocation(record, selectedLocation) {
+  if (!selectedLocation) return true;
+  return recordLocations(record).includes(selectedLocation);
+}
+
 function isMine(record) {
   return record.category === "mines" || /mine|carri[eè]re|cobalt|cuivre|lithium|mineral|ressource/i.test(recordText(record));
 }
@@ -243,6 +349,32 @@ function matchesContactFilter(record, filter) {
   if (filter === "complete") return (record.emails || []).length > 0 && (record.phones || []).length > 0;
   if (filter === "website") return (record.websites || []).length > 0 || !!record.sourceUrl;
   return true;
+}
+
+function recordPassesFilters(record, filters, exclude = "") {
+  const q = normalizeText(filters.query).trim();
+  if (exclude !== "tab" && !recordMatchesTab(record, filters.activeTab)) return false;
+  if (exclude !== "sector" && !recordMatchesSector(record, filters.sector)) return false;
+  if (exclude !== "location" && !recordMatchesLocation(record, filters.location)) return false;
+  if (exclude !== "source" && filters.source && sourceGroupForRecord(record) !== filters.source) return false;
+  if (exclude !== "contact" && !matchesContactFilter(record, filters.contactFilter)) return false;
+  if (exclude !== "query" && q && !recordText(record).includes(q)) return false;
+  return true;
+}
+
+function countOptions(records, getValues, limit = 120) {
+  const counts = new Map();
+  for (const record of records) {
+    const values = Array.isArray(getValues(record)) ? getValues(record) : [getValues(record)];
+    for (const value of values) {
+      if (!value) continue;
+      counts.set(value, (counts.get(value) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([value, count]) => ({ value, label: value, count }));
 }
 
 function matchScore(record, query) {
@@ -324,56 +456,76 @@ export default function AnnuairePage() {
     };
   }, [records]);
 
+  const currentFilters = useMemo(
+    () => ({ activeTab, sector, location, source, contactFilter, query }),
+    [activeTab, contactFilter, location, query, sector, source]
+  );
+
+  const tabOptions = useMemo(() => {
+    const baseRecords = records.filter((record) => recordPassesFilters(record, currentFilters, "tab"));
+    return TAB_DEFINITIONS.map((tab) => ({
+      ...tab,
+      count: baseRecords.filter((record) => recordMatchesTab(record, tab.id)).length,
+    })).filter((tab) => tab.id === "all" || tab.id === activeTab || tab.count > 0);
+  }, [activeTab, currentFilters, records]);
+
   const filterOptions = useMemo(() => {
+    const sectorRecords = records.filter((record) => recordPassesFilters(record, currentFilters, "sector"));
+    const locationRecords = records.filter((record) => recordPassesFilters(record, currentFilters, "location"));
+    const sourceRecords = records.filter((record) => recordPassesFilters(record, currentFilters, "source"));
+    const contactRecords = records.filter((record) => recordPassesFilters(record, currentFilters, "contact"));
+
     return {
-      sectors: unique(records.map(sectorGroupForRecord)),
-      locations: unique(records.flatMap((record) => [record.province, record.city]).filter(Boolean)),
-      sources: unique(records.map((record) => record.source || record.sourceDocument)),
+      sectors: countOptions(sectorRecords, sectorGroupForRecord, 18),
+      locations: countOptions(locationRecords, recordLocations, 80),
+      sources: countOptions(sourceRecords, sourceGroupForRecord, 12),
+      contacts: CONTACT_FILTERS.map((option) => ({
+        ...option,
+        count: option.value
+          ? contactRecords.filter((record) => matchesContactFilter(record, option.value)).length
+          : contactRecords.length,
+      })).filter((option) => option.value === "" || option.value === contactFilter || option.count > 0),
     };
-  }, [records]);
+  }, [contactFilter, currentFilters, records]);
 
   const sectorChips = useMemo(() => {
-    const counts = new Map();
-    for (const record of records) {
-      const label = sectorGroupForRecord(record);
-      if (!label) continue;
-      const searchable = normalizeText(label);
-      if (!PRIORITY_SECTOR_TERMS.some((term) => searchable.includes(term))) continue;
-      counts.set(label, (counts.get(label) || 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([label, count]) => ({ label, count }));
-  }, [records]);
+    const priority = filterOptions.sectors.filter((option) =>
+      PRIORITY_SECTOR_TERMS.some((term) => normalizeText(option.value).includes(normalizeText(term)))
+    );
+    return (priority.length ? priority : filterOptions.sectors).slice(0, 8);
+  }, [filterOptions.sectors]);
 
   const filteredRecords = useMemo(() => {
     const q = normalizeText(query).trim();
     const result = records
       .filter((record) => {
-        if (!recordMatchesTab(record, activeTab)) return false;
-        if (!recordMatchesSector(record, sector)) return false;
-        if (source && (record.source || record.sourceDocument) !== source) return false;
-        if (location && record.province !== location && record.city !== location) return false;
-        if (!matchesContactFilter(record, contactFilter)) return false;
-        if (!q) return true;
-        return recordText(record).includes(q);
+        return recordPassesFilters(record, currentFilters);
       })
       .map((record) => ({ record, score: matchScore(record, q) }));
 
     result.sort((a, b) => {
       if (sortMode === "name") return String(a.record.name || "").localeCompare(String(b.record.name || ""));
       if (sortMode === "source") {
-        return String(a.record.source || a.record.sourceDocument || "").localeCompare(
-          String(b.record.source || b.record.sourceDocument || "")
-        );
+        return sourceGroupForRecord(a.record).localeCompare(sourceGroupForRecord(b.record));
       }
       if (sortMode === "quality") return recordQuality(b.record) - recordQuality(a.record);
       return b.score - a.score || recordQuality(b.record) - recordQuality(a.record);
     });
 
     return result.map((item) => item.record);
-  }, [activeTab, contactFilter, location, query, records, sector, sortMode, source]);
+  }, [currentFilters, query, records, sortMode]);
+
+  useEffect(() => {
+    if (sector && !filterOptions.sectors.some((option) => option.value === sector)) setSector("");
+  }, [filterOptions.sectors, sector]);
+
+  useEffect(() => {
+    if (location && !filterOptions.locations.some((option) => option.value === location)) setLocation("");
+  }, [filterOptions.locations, location]);
+
+  useEffect(() => {
+    if (source && !filterOptions.sources.some((option) => option.value === source)) setSource("");
+  }, [filterOptions.sources, source]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
@@ -427,7 +579,7 @@ export default function AnnuairePage() {
         </div>
 
         <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
-          {TAB_DEFINITIONS.map((tab) => (
+          {tabOptions.map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -439,7 +591,9 @@ export default function AnnuairePage() {
                   : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
               ].join(" ")}
             >
-              <span className="block text-sm font-black">{tab.label}</span>
+              <span className="block text-sm font-black">
+                {tab.label} <span className="text-xs opacity-70">{formatNumber(tab.count)}</span>
+              </span>
               <span className={activeTab === tab.id ? "mt-0.5 block text-[11px] font-bold text-slate-300" : "mt-0.5 block text-[11px] font-bold text-slate-400"}>
                 {tab.hint}
               </span>
@@ -451,19 +605,19 @@ export default function AnnuairePage() {
           <SelectField label="Secteur" value={sector} onChange={setSector} options={filterOptions.sectors} />
           <SelectField label="Ville / province" value={location} onChange={setLocation} options={filterOptions.locations} />
           <SelectField label="Source" value={source} onChange={setSource} options={filterOptions.sources} />
-          <SelectField label="Qualité contact" value={contactFilter} onChange={setContactFilter} options={CONTACT_FILTERS} asObjects />
-          <SelectField label="Tri" value={sortMode} onChange={setSortMode} options={SORT_OPTIONS} asObjects />
+          <SelectField label="Contact" value={contactFilter} onChange={setContactFilter} options={filterOptions.contacts} />
+          <SelectField label="Tri" value={sortMode} onChange={setSortMode} options={SORT_OPTIONS} hideCount includeAll={false} />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {sectorChips.map((chip) => (
             <button
-              key={chip.label}
+              key={chip.value}
               type="button"
-              onClick={() => setSector(chip.label)}
+              onClick={() => setSector(chip.value)}
               className={[
                 "rounded-full border px-3 py-2 text-xs font-black transition",
-                sector === chip.label
+                sector === chip.value
                   ? "border-slate-950 bg-slate-950 text-white"
                   : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white",
               ].join(" ")}
@@ -570,7 +724,15 @@ function Metric({ label, value, tone }) {
   );
 }
 
-function SelectField({ label, value, onChange, options, asObjects = false }) {
+function SelectField({ label, value, onChange, options, hideCount = false, includeAll = true }) {
+  const normalizedOptions = (options || []).map((option) =>
+    typeof option === "object" ? option : { value: option, label: option }
+  );
+  const finalOptions =
+    includeAll && !normalizedOptions.some((option) => option.value === "")
+      ? [{ value: "", label: "Tous" }, ...normalizedOptions]
+      : normalizedOptions;
+
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</span>
@@ -579,13 +741,14 @@ function SelectField({ label, value, onChange, options, asObjects = false }) {
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none transition focus:border-emerald-700 focus:bg-white focus:ring-4 focus:ring-emerald-900/10"
       >
-        {!asObjects && <option value="">Tous</option>}
-        {(options || []).map((option) => {
-          const optValue = asObjects ? option.value : option;
-          const optLabel = asObjects ? option.label : option;
+        {finalOptions.map((option) => {
+          const optValue = option.value;
+          const optLabel = option.label;
+          const countLabel = !hideCount && Number.isFinite(option.count) ? ` (${formatNumber(option.count)})` : "";
           return (
             <option key={optValue || "all"} value={optValue}>
               {optLabel}
+              {countLabel}
             </option>
           );
         })}
