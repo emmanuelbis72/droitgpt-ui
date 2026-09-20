@@ -1,14 +1,46 @@
 import React, { useEffect, useMemo, useState } from "react";
 
+const PAGE_SIZE = 96;
+
 const TAB_DEFINITIONS = [
-  { id: "all", label: "Tous les contacts" },
-  { id: "mines", label: "Mines" },
-  { id: "investors", label: "Fonds et investisseurs" },
-  { id: "fec", label: "Entreprises FEC" },
-  { id: "emails", label: "Contacts avec email" },
+  { id: "all", label: "Tous", hint: "Base complète" },
+  { id: "priority", label: "Prospection", hint: "Contacts exploitables" },
+  { id: "mines", label: "Mines", hint: "Opérateurs et services" },
+  { id: "finance", label: "Finance", hint: "Banques, fonds, assurances" },
+  { id: "public", label: "Annuaires publics", hint: "Sources web" },
+  { id: "fec", label: "FEC", hint: "Entreprises FEC" },
+  { id: "emails", label: "Emails", hint: "Contact direct" },
 ];
 
-const PAGE_SIZE = 120;
+const CONTACT_FILTERS = [
+  { value: "", label: "Tous les contacts" },
+  { value: "email", label: "Avec email" },
+  { value: "phone", label: "Avec téléphone" },
+  { value: "complete", label: "Email + téléphone" },
+  { value: "website", label: "Avec site web" },
+];
+
+const SORT_OPTIONS = [
+  { value: "relevance", label: "Pertinence" },
+  { value: "quality", label: "Qualité contact" },
+  { value: "name", label: "Nom A-Z" },
+  { value: "source", label: "Source" },
+];
+
+const PRIORITY_SECTOR_TERMS = [
+  "mines",
+  "finance",
+  "banque",
+  "btp",
+  "construction",
+  "industrie",
+  "transport",
+  "logistique",
+  "agriculture",
+  "services aux entreprises",
+  "télécommunication",
+  "immobilier",
+];
 
 function lower(value) {
   return String(value || "").toLowerCase();
@@ -18,69 +50,16 @@ function unique(values) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
-function hasInvestorSignal(record) {
-  const haystack = [
-    record.subCategory,
-    record.sector,
-    record.operation,
-    record.notes,
-    record.raw,
-  ]
-    .map(lower)
-    .join(" ");
-
-  return [
-    "investisseur",
-    "investment",
-    "finance",
-    "financement",
-    "dfi",
-    "fund",
-    "fonds",
-    "critical mineral",
-    "infrastructure",
-  ].some((term) => haystack.includes(term));
-}
-
-function recordMatchesTab(record, tab) {
-  if (tab === "mines") return record.category === "mines";
-  if (tab === "investors") return record.category === "mines" && hasInvestorSignal(record);
-  if (tab === "fec") return record.category === "fec";
-  if (tab === "emails") return (record.emails || []).length > 0;
-  return true;
-}
-
 function compactText(parts) {
   return parts.map((item) => String(item || "").trim()).filter(Boolean).join(" · ");
 }
 
-function csvValue(value) {
-  const text = Array.isArray(value) ? value.join(" | ") : String(value || "");
-  return `"${text.replace(/"/g, '""')}"`;
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString("fr-FR");
 }
 
-function exportCsv(records) {
-  const header = [
-    "Nom",
-    "Categorie",
-    "Sous-categorie",
-    "Secteur",
-    "Province",
-    "Ville",
-    "Operation",
-    "Adresse",
-    "Activite",
-    "Contact",
-    "Emails",
-    "Telephones",
-    "Sites",
-    "Source",
-    "Document",
-    "Page",
-    "Notes",
-  ];
-
-  const rows = records.map((record) => [
+function recordText(record) {
+  return [
     record.name,
     record.category,
     record.subCategory,
@@ -91,23 +70,88 @@ function exportCsv(records) {
     record.address,
     record.activity,
     record.contactPerson,
-    record.emails,
-    record.phones,
-    record.websites,
-    record.sourceUrl || record.source,
-    record.sourceDocument,
-    record.page,
     record.notes,
-  ]);
+    record.raw,
+    record.source,
+    record.sourceDocument,
+    ...(record.emails || []),
+    ...(record.phones || []),
+    ...(record.websites || []),
+  ]
+    .map(lower)
+    .join(" ");
+}
 
-  const csv = [header, ...rows].map((row) => row.map(csvValue).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `annuaire-droitgpt-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+function isMine(record) {
+  return record.category === "mines" || /mine|carri[eè]re|cobalt|cuivre|lithium|mineral|ressource/i.test(recordText(record));
+}
+
+function isFinance(record) {
+  return /banque|finance|assurance|fonds|invest|capital|cr[eé]dit|leasing|microfinance/i.test(recordText(record));
+}
+
+function isPublicDirectory(record) {
+  return lower(record.source).includes("moncongo") || record.category === "annuaire_public";
+}
+
+function hasInvestorSignal(record) {
+  return /investisseur|investment|financement|dfi|fund|fonds|capital|banque|infrastructure|venture|accelerator|private equity/i.test(
+    recordText(record)
+  );
+}
+
+function recordQuality(record) {
+  let score = 20;
+  if ((record.emails || []).length) score += 30;
+  if ((record.phones || []).length) score += 28;
+  if ((record.websites || []).length || record.sourceUrl) score += 12;
+  if (record.address) score += 6;
+  if (record.contactPerson) score += 4;
+  return Math.min(score, 100);
+}
+
+function recordMatchesTab(record, tab) {
+  if (tab === "priority") return recordQuality(record) >= 58 || hasInvestorSignal(record) || isMine(record);
+  if (tab === "mines") return isMine(record);
+  if (tab === "finance") return isFinance(record) || hasInvestorSignal(record);
+  if (tab === "public") return isPublicDirectory(record);
+  if (tab === "fec") return record.category === "fec";
+  if (tab === "emails") return (record.emails || []).length > 0;
+  return true;
+}
+
+function matchesContactFilter(record, filter) {
+  if (filter === "email") return (record.emails || []).length > 0;
+  if (filter === "phone") return (record.phones || []).length > 0;
+  if (filter === "complete") return (record.emails || []).length > 0 && (record.phones || []).length > 0;
+  if (filter === "website") return (record.websites || []).length > 0 || !!record.sourceUrl;
+  return true;
+}
+
+function matchScore(record, query) {
+  const q = lower(query).trim();
+  const quality = recordQuality(record);
+  if (!q) return quality;
+
+  let score = quality;
+  if (lower(record.name).includes(q)) score += 80;
+  if (lower(record.sector).includes(q)) score += 45;
+  if (lower(record.subCategory).includes(q)) score += 35;
+  if (lower(record.city).includes(q) || lower(record.province).includes(q)) score += 25;
+  if ((record.emails || []).some((email) => lower(email).includes(q))) score += 20;
+  if ((record.phones || []).some((phone) => lower(phone).includes(q))) score += 20;
+  if (recordText(record).includes(q)) score += 10;
+  return score;
+}
+
+function resetFilters(setters) {
+  setters.setQuery("");
+  setters.setActiveTab("all");
+  setters.setSector("");
+  setters.setLocation("");
+  setters.setSource("");
+  setters.setContactFilter("");
+  setters.setSortMode("relevance");
 }
 
 export default function AnnuairePage() {
@@ -119,7 +163,8 @@ export default function AnnuairePage() {
   const [sector, setSector] = useState("");
   const [location, setLocation] = useState("");
   const [source, setSource] = useState("");
-  const [onlyPhone, setOnlyPhone] = useState(false);
+  const [contactFilter, setContactFilter] = useState("");
+  const [sortMode, setSortMode] = useState("relevance");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   useEffect(() => {
@@ -148,14 +193,15 @@ export default function AnnuairePage() {
   const records = payload?.records || [];
 
   const stats = useMemo(() => {
-    const mines = records.filter((record) => record.category === "mines");
     return {
       total: records.length,
       fec: records.filter((record) => record.category === "fec").length,
-      mines: mines.length,
-      investors: mines.filter(hasInvestorSignal).length,
+      mines: records.filter(isMine).length,
+      finance: records.filter(isFinance).length,
+      publicDirectory: records.filter(isPublicDirectory).length,
       emails: records.filter((record) => (record.emails || []).length > 0).length,
       phones: records.filter((record) => (record.phones || []).length > 0).length,
+      complete: records.filter((record) => (record.emails || []).length > 0 && (record.phones || []).length > 0).length,
     };
   }, [records]);
 
@@ -167,184 +213,198 @@ export default function AnnuairePage() {
     };
   }, [records]);
 
-  const filteredRecords = useMemo(() => {
-    const q = lower(query);
-    return records.filter((record) => {
-      if (!recordMatchesTab(record, activeTab)) return false;
-      if (sector && record.sector !== sector) return false;
-      if (source && (record.source || record.sourceDocument) !== source) return false;
-      if (location && record.province !== location && record.city !== location) return false;
-      if (onlyPhone && !(record.phones || []).length) return false;
+  const sectorChips = useMemo(() => {
+    const counts = new Map();
+    for (const record of records) {
+      const label = record.sector;
+      if (!label) continue;
+      const searchable = lower(label);
+      if (!PRIORITY_SECTOR_TERMS.some((term) => searchable.includes(term))) continue;
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([label, count]) => ({ label, count }));
+  }, [records]);
 
-      if (!q) return true;
-      const haystack = [
-        record.name,
-        record.sector,
-        record.province,
-        record.city,
-        record.operation,
-        record.address,
-        record.activity,
-        record.contactPerson,
-        record.notes,
-        record.raw,
-        ...(record.emails || []),
-        ...(record.phones || []),
-        ...(record.websites || []),
-      ]
-        .map(lower)
-        .join(" ");
-      return haystack.includes(q);
+  const filteredRecords = useMemo(() => {
+    const q = lower(query).trim();
+    const result = records
+      .filter((record) => {
+        if (!recordMatchesTab(record, activeTab)) return false;
+        if (sector && record.sector !== sector) return false;
+        if (source && (record.source || record.sourceDocument) !== source) return false;
+        if (location && record.province !== location && record.city !== location) return false;
+        if (!matchesContactFilter(record, contactFilter)) return false;
+        if (!q) return true;
+        return recordText(record).includes(q);
+      })
+      .map((record) => ({ record, score: matchScore(record, q) }));
+
+    result.sort((a, b) => {
+      if (sortMode === "name") return String(a.record.name || "").localeCompare(String(b.record.name || ""));
+      if (sortMode === "source") {
+        return String(a.record.source || a.record.sourceDocument || "").localeCompare(
+          String(b.record.source || b.record.sourceDocument || "")
+        );
+      }
+      if (sortMode === "quality") return recordQuality(b.record) - recordQuality(a.record);
+      return b.score - a.score || recordQuality(b.record) - recordQuality(a.record);
     });
-  }, [activeTab, location, onlyPhone, query, records, sector, source]);
+
+    return result.map((item) => item.record);
+  }, [activeTab, contactFilter, location, query, records, sector, sortMode, source]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [activeTab, location, onlyPhone, query, sector, source]);
+  }, [activeTab, contactFilter, location, query, sector, sortMode, source]);
 
   const visibleRecords = filteredRecords.slice(0, visibleCount);
+  const activeFilters = [activeTab !== "all", sector, location, source, contactFilter, query].filter(Boolean).length;
 
   return (
-    <div className="min-h-screen bg-[#f6f0e4] text-slate-950">
-      <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
-        <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
-          <div className="bg-[radial-gradient(circle_at_18%_12%,rgba(234,179,8,0.22),transparent_28%),linear-gradient(135deg,#06171f,#102a43_58%,#3f2412)] p-6 text-white sm:p-9 lg:p-10">
-            <p className="text-xs font-black uppercase tracking-[0.3em] text-amber-200">Annuaire stratégique</p>
-            <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight sm:text-5xl">
-              Contacts business, FEC, mines et investisseurs pour la RDC.
-            </h1>
-            <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-200">
-              Un espace de prospection pour retrouver rapidement les entreprises, décideurs, opérateurs miniers,
-              fonds et investisseurs utiles aux projets commerciaux en République démocratique du Congo.
-            </p>
+    <div className="min-h-screen bg-[#f4efe2] px-3 py-4 text-slate-950 sm:px-5 lg:px-8">
+      <section className="relative overflow-hidden rounded-[2.4rem] bg-[#071414] p-6 text-white shadow-xl sm:p-9 lg:p-12">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(45,212,191,0.28),transparent_28%),radial-gradient(circle_at_84%_10%,rgba(245,158,11,0.22),transparent_24%),linear-gradient(135deg,#071414,#0c2d2c_46%,#301f10)]" />
+        <div className="relative max-w-5xl">
+          <p className="text-xs font-black uppercase tracking-[0.34em] text-amber-200">Annuaire stratégique</p>
+          <h1 className="mt-4 max-w-4xl text-4xl font-black leading-tight sm:text-5xl lg:text-6xl">
+            Contacts business, FEC, mines et investisseurs pour la RDC.
+          </h1>
+          <p className="mt-5 max-w-3xl text-sm leading-7 text-slate-200 sm:text-base">
+            Un espace court et opérationnel pour identifier rapidement des entreprises, décideurs, prestataires,
+            opérateurs miniers, banques, fonds et partenaires utiles aux projets commerciaux en République démocratique du Congo.
+          </p>
+        </div>
 
-            <div className="mt-7 grid gap-3 sm:grid-cols-3">
-              <StatCard label="Contacts" value={stats.total} />
-              <StatCard label="Mines" value={stats.mines} />
-              <StatCard label="Emails" value={stats.emails} />
-            </div>
-          </div>
-
-          <div className="p-6 sm:p-9 lg:p-10">
-            <div className="rounded-[1.7rem] border border-slate-200 bg-slate-50 p-5">
-              <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-500">Recherche rapide</p>
-              <label className="mt-4 block">
-                <span className="sr-only">Rechercher dans l'annuaire</span>
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold outline-none transition focus:border-slate-900"
-                  placeholder="Rechercher une entreprise, un secteur, une ville, un email..."
-                />
-              </label>
-              <p className="mt-3 text-xs leading-5 text-slate-500">
-                Données extraites de l'annuaire fourni, enrichies avec une liste stratégique de contacts miniers publics.
-              </p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => exportCsv(filteredRecords)}
-                  disabled={!filteredRecords.length}
-                  className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  Exporter CSV
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setQuery("");
-                    setActiveTab("all");
-                    setSector("");
-                    setLocation("");
-                    setSource("");
-                    setOnlyPhone(false);
-                  }}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
-                >
-                  Réinitialiser
-                </button>
-              </div>
-            </div>
-          </div>
+        <div className="relative mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <HeroMetric label="Contacts indexés" value={stats.total} />
+          <HeroMetric label="Emails disponibles" value={stats.emails} />
+          <HeroMetric label="Téléphones" value={stats.phones} />
+          <HeroMetric label="Sources web" value={stats.publicDirectory} />
         </div>
       </section>
 
-      <section className="mt-5 rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex gap-2 overflow-x-auto pb-2">
+      <section className="relative z-10 mx-auto -mt-5 max-w-7xl rounded-[2rem] border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur sm:p-5 lg:p-6">
+        <div className="grid gap-4 lg:grid-cols-[1.35fr_0.65fr]">
+          <label className="block">
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-slate-500">Recherche rapide</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="w-full rounded-[1.4rem] border border-slate-200 bg-slate-50 px-5 py-4 text-base font-bold outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:bg-white focus:ring-4 focus:ring-emerald-900/10"
+              placeholder="Entreprise, secteur, ville, téléphone, email, banque, mine, BTP..."
+            />
+          </label>
+
+          <div className="rounded-[1.4rem] border border-emerald-100 bg-emerald-50 p-4">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-800">Résultats filtrés</p>
+            <div className="mt-1 text-3xl font-black text-emerald-950">{formatNumber(filteredRecords.length)}</div>
+            <p className="mt-1 text-xs font-bold text-emerald-800/75">
+              {activeFilters ? `${activeFilters} filtre(s) actif(s)` : "Base complète disponible"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
           {TAB_DEFINITIONS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
               className={[
-                "shrink-0 rounded-full px-4 py-2 text-xs font-black transition",
+                "shrink-0 rounded-2xl px-4 py-3 text-left transition",
                 activeTab === tab.id
-                  ? "bg-slate-950 text-white"
-                  : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100",
+                  ? "bg-slate-950 text-white shadow-lg shadow-slate-950/15"
+                  : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
               ].join(" ")}
             >
-              {tab.label}
+              <span className="block text-sm font-black">{tab.label}</span>
+              <span className={activeTab === tab.id ? "mt-0.5 block text-[11px] font-bold text-slate-300" : "mt-0.5 block text-[11px] font-bold text-slate-400"}>
+                {tab.hint}
+              </span>
             </button>
           ))}
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <SelectField label="Secteur" value={sector} onChange={setSector} options={filterOptions.sectors} />
           <SelectField label="Ville / province" value={location} onChange={setLocation} options={filterOptions.locations} />
           <SelectField label="Source" value={source} onChange={setSource} options={filterOptions.sources} />
-          <label className="flex min-h-[70px] items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-            <input
-              type="checkbox"
-              checked={onlyPhone}
-              onChange={(event) => setOnlyPhone(event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            Afficher uniquement les contacts avec téléphone
-          </label>
+          <SelectField label="Qualité contact" value={contactFilter} onChange={setContactFilter} options={CONTACT_FILTERS} asObjects />
+          <SelectField label="Tri" value={sortMode} onChange={setSortMode} options={SORT_OPTIONS} asObjects />
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {sectorChips.map((chip) => (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={() => setSector(chip.label)}
+              className={[
+                "rounded-full border px-3 py-2 text-xs font-black transition",
+                sector === chip.label
+                  ? "border-slate-950 bg-slate-950 text-white"
+                  : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white",
+              ].join(" ")}
+            >
+              {chip.label} <span className="opacity-70">{formatNumber(chip.count)}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() =>
+              resetFilters({ setQuery, setActiveTab, setSector, setLocation, setSource, setContactFilter, setSortMode })
+            }
+            className="ml-auto rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
+          >
+            Réinitialiser
+          </button>
         </div>
       </section>
 
-      <section className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Entreprises FEC" value={stats.fec} />
-        <Metric label="Investisseurs miniers" value={stats.investors} />
-        <Metric label="Téléphones" value={stats.phones} />
-        <Metric label="Résultats filtrés" value={filteredRecords.length} />
+      <section className="mx-auto mt-5 grid max-w-7xl gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Entreprises FEC" value={stats.fec} tone="slate" />
+        <Metric label="Mines et ressources" value={stats.mines} tone="amber" />
+        <Metric label="Finance / investisseurs" value={stats.finance} tone="emerald" />
+        <Metric label="Contacts complets" value={stats.complete} tone="sky" />
       </section>
 
       {loading && (
-        <div className="mt-5 rounded-[2rem] border border-slate-200 bg-white p-8 text-center text-sm font-bold text-slate-600 shadow-sm">
+        <div className="mx-auto mt-5 max-w-7xl rounded-[2rem] border border-slate-200 bg-white p-8 text-center text-sm font-bold text-slate-600 shadow-sm">
           Chargement de l'annuaire...
         </div>
       )}
 
       {!loading && error && (
-        <div className="mt-5 rounded-[2rem] border border-rose-200 bg-rose-50 p-6 text-sm font-bold text-rose-700 shadow-sm">
+        <div className="mx-auto mt-5 max-w-7xl rounded-[2rem] border border-rose-200 bg-rose-50 p-6 text-sm font-bold text-rose-700 shadow-sm">
           {error}
         </div>
       )}
 
       {!loading && !error && !filteredRecords.length && (
-        <div className="mt-5 rounded-[2rem] border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <div className="mx-auto mt-5 max-w-7xl rounded-[2rem] border border-slate-200 bg-white p-8 text-center shadow-sm">
           <h2 className="text-xl font-black">Aucun contact trouvé</h2>
           <p className="mt-2 text-sm text-slate-500">Modifiez la recherche ou retirez certains filtres.</p>
         </div>
       )}
 
       {!loading && !error && !!filteredRecords.length && (
-        <section className="mt-5 space-y-3">
+        <section className="mx-auto mt-6 max-w-7xl space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Résultats</p>
               <h2 className="text-2xl font-black">
-                {filteredRecords.length.toLocaleString("fr-FR")} contact(s) trouvé(s)
+                {formatNumber(filteredRecords.length)} contact(s) exploitable(s)
               </h2>
             </div>
             <p className="text-xs font-bold text-slate-500">
-              Affichage : {visibleRecords.length.toLocaleString("fr-FR")} sur {filteredRecords.length.toLocaleString("fr-FR")}
+              Affichage : {formatNumber(visibleRecords.length)} sur {formatNumber(filteredRecords.length)}
             </p>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
             {visibleRecords.map((record) => (
               <DirectoryCard key={record.id} record={record} />
             ))}
@@ -355,7 +415,7 @@ export default function AnnuairePage() {
               <button
                 type="button"
                 onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                className="rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800"
+                className="rounded-full bg-slate-950 px-6 py-3 text-sm font-black text-white shadow-lg shadow-slate-950/15 hover:bg-slate-800"
               >
                 Afficher plus de contacts
               </button>
@@ -367,90 +427,94 @@ export default function AnnuairePage() {
   );
 }
 
-function StatCard({ label, value }) {
+function HeroMetric({ label, value }) {
   return (
-    <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3">
-      <div className="text-2xl font-black">{Number(value || 0).toLocaleString("fr-FR")}</div>
-      <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-200">{label}</div>
+    <div className="rounded-[1.35rem] border border-white/15 bg-white/10 px-4 py-3 backdrop-blur">
+      <div className="text-3xl font-black">{formatNumber(value)}</div>
+      <div className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-200">{label}</div>
     </div>
   );
 }
 
-function Metric({ label, value }) {
+function Metric({ label, value, tone }) {
+  const tones = {
+    slate: "border-slate-200 bg-white text-slate-950",
+    amber: "border-amber-200 bg-amber-50 text-amber-950",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    sky: "border-sky-200 bg-sky-50 text-sky-950",
+  };
   return (
-    <div className="rounded-[1.4rem] border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-2xl font-black text-slate-950">{Number(value || 0).toLocaleString("fr-FR")}</div>
-      <div className="mt-1 text-xs font-black uppercase tracking-[0.18em] text-slate-500">{label}</div>
+    <div className={`rounded-[1.4rem] border p-4 shadow-sm ${tones[tone] || tones.slate}`}>
+      <div className="text-2xl font-black">{formatNumber(value)}</div>
+      <div className="mt-1 text-xs font-black uppercase tracking-[0.18em] opacity-65">{label}</div>
     </div>
   );
 }
 
-function SelectField({ label, value, onChange, options }) {
+function SelectField({ label, value, onChange, options, asObjects = false }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none transition focus:border-slate-900"
+        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none transition focus:border-emerald-700 focus:bg-white focus:ring-4 focus:ring-emerald-900/10"
       >
-        <option value="">Tous</option>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
+        {!asObjects && <option value="">Tous</option>}
+        {(options || []).map((option) => {
+          const optValue = asObjects ? option.value : option;
+          const optLabel = asObjects ? option.label : option;
+          return (
+            <option key={optValue || "all"} value={optValue}>
+              {optLabel}
+            </option>
+          );
+        })}
       </select>
     </label>
   );
 }
 
 function DirectoryCard({ record }) {
-  const isMine = record.category === "mines";
+  const quality = recordQuality(record);
   const sourceText = compactText([record.sourceDocument, record.page ? `page ${record.page}` : "", record.source]);
   const profile = compactText([record.operation, record.activity, record.address, record.notes]);
+  const categoryLabel = getCategoryLabel(record);
 
   return (
-    <article className="rounded-[1.7rem] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={isMine ? "rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800" : "rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700"}>
-          {isMine ? "Mines" : "FEC"}
-        </span>
-        {hasInvestorSignal(record) && (
-          <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">
-            Investisseur / financement
+    <article className="group overflow-hidden rounded-[1.7rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-slate-900/10">
+      <div className="h-1.5 bg-gradient-to-r from-emerald-700 via-amber-500 to-slate-900" />
+      <div className="p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={isMine(record) ? "amber" : isPublicDirectory(record) ? "emerald" : "slate"}>{categoryLabel}</Badge>
+          {hasInvestorSignal(record) && <Badge tone="sky">Financement</Badge>}
+          {record.sector && <Badge tone="soft">{record.sector}</Badge>}
+          <span className="ml-auto rounded-full bg-slate-950 px-3 py-1 text-xs font-black text-white">
+            {quality}/100
           </span>
-        )}
-        {record.sector && (
-          <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-black text-sky-800">
-            {record.sector}
-          </span>
-        )}
-      </div>
+        </div>
 
-      <h3 className="mt-3 text-xl font-black leading-tight text-slate-950">{record.name || "Contact sans nom"}</h3>
-      <p className="mt-2 text-sm font-bold text-slate-500">
-        {compactText([record.city, record.province]) || "Localisation à vérifier"}
-      </p>
-
-      {profile && <p className="mt-3 line-clamp-4 text-sm leading-6 text-slate-700">{profile}</p>}
-
-      {record.contactPerson && (
-        <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-          Contact : {record.contactPerson}
+        <h3 className="mt-3 text-xl font-black leading-tight text-slate-950">{record.name || "Contact sans nom"}</h3>
+        <p className="mt-2 text-sm font-bold text-slate-500">
+          {compactText([record.city, record.province]) || "Localisation à vérifier"}
         </p>
-      )}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <ContactList label="Emails" items={record.emails} type="email" />
-        <ContactList label="Téléphones" items={record.phones} type="phone" />
-      </div>
+        {profile && <p className="mt-3 line-clamp-4 text-sm leading-6 text-slate-700">{profile}</p>}
 
-      {!!(record.websites || []).length && (
-        <div className="mt-4">
-          <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Liens</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {record.websites.map((site) => (
+        {record.contactPerson && (
+          <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
+            Contact : {record.contactPerson}
+          </p>
+        )}
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <ContactList label="Emails" items={record.emails} type="email" />
+          <ContactList label="Téléphones" items={record.phones} type="phone" />
+        </div>
+
+        {!!(record.websites || []).length && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {record.websites.slice(0, 3).map((site) => (
               <a
                 key={site}
                 href={site.startsWith("http") ? site : `https://${site}`}
@@ -458,24 +522,47 @@ function DirectoryCard({ record }) {
                 rel="noreferrer"
                 className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-50"
               >
-                Site / source
+                Site web
               </a>
             ))}
           </div>
-        </div>
-      )}
-
-      <div className="mt-4 border-t border-slate-100 pt-3 text-xs font-semibold leading-5 text-slate-500">
-        Source : {record.sourceUrl ? (
-          <a href={record.sourceUrl} target="_blank" rel="noreferrer" className="underline hover:text-slate-900">
-            {record.sourceUrl}
-          </a>
-        ) : (
-          sourceText || "document fourni"
         )}
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs font-semibold leading-5 text-slate-500">
+          <span>Source : {sourceText || "document fourni"}</span>
+          {record.sourceUrl && (
+            <a
+              href={record.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full bg-slate-100 px-3 py-1.5 font-black text-slate-700 hover:bg-slate-200"
+            >
+              Voir source
+            </a>
+          )}
+        </div>
       </div>
     </article>
   );
+}
+
+function Badge({ children, tone }) {
+  const tones = {
+    amber: "bg-amber-100 text-amber-900",
+    emerald: "bg-emerald-100 text-emerald-900",
+    sky: "bg-sky-100 text-sky-900",
+    slate: "bg-slate-100 text-slate-700",
+    soft: "bg-slate-50 text-slate-600 ring-1 ring-slate-200",
+  };
+  return <span className={`rounded-full px-3 py-1 text-xs font-black ${tones[tone] || tones.slate}`}>{children}</span>;
+}
+
+function getCategoryLabel(record) {
+  if (isMine(record)) return "Mines";
+  if (record.category === "fec") return "FEC";
+  if (isPublicDirectory(record)) return "Annuaire public";
+  if (isFinance(record)) return "Finance";
+  return "Business";
 }
 
 function ContactList({ label, items = [], type }) {
@@ -487,7 +574,11 @@ function ContactList({ label, items = [], type }) {
           {items.slice(0, 4).map((item) => {
             const href = type === "email" ? `mailto:${item}` : `tel:${item}`;
             return (
-              <a key={item} href={href} className="block break-all text-sm font-bold text-slate-800 underline decoration-slate-300 underline-offset-4 hover:text-slate-950">
+              <a
+                key={item}
+                href={href}
+                className="block break-all text-sm font-bold text-slate-800 underline decoration-slate-300 underline-offset-4 hover:text-slate-950"
+              >
                 {item}
               </a>
             );
