@@ -7,6 +7,8 @@ const TAB_DEFINITIONS = [
   { id: "priority", label: "Prospection", hint: "Contacts exploitables" },
   { id: "mines", label: "Mines", hint: "Opérateurs et services" },
   { id: "finance", label: "Finance", hint: "Banques, fonds, assurances" },
+  { id: "arsp", label: "ARSP", hint: "Sociétés enregistrées" },
+  { id: "health", label: "Santé", hint: "Médecins et structures" },
   { id: "public", label: "Annuaires publics", hint: "Sources web" },
   { id: "fec", label: "FEC", hint: "Entreprises FEC" },
   { id: "emails", label: "Emails", hint: "Contact direct" },
@@ -91,7 +93,12 @@ function isFinance(record) {
 }
 
 function isPublicDirectory(record) {
-  return lower(record.source).includes("moncongo") || record.category === "annuaire_public";
+  return (
+    lower(record.source).includes("moncongo") ||
+    lower(record.source).includes("arsp") ||
+    record.category === "annuaire_public" ||
+    record.category === "arsp"
+  );
 }
 
 function hasInvestorSignal(record) {
@@ -114,6 +121,8 @@ function recordMatchesTab(record, tab) {
   if (tab === "priority") return recordQuality(record) >= 58 || hasInvestorSignal(record) || isMine(record);
   if (tab === "mines") return isMine(record);
   if (tab === "finance") return isFinance(record) || hasInvestorSignal(record);
+  if (tab === "arsp") return record.category === "arsp";
+  if (tab === "health") return record.category === "sante";
   if (tab === "public") return isPublicDirectory(record);
   if (tab === "fec") return record.category === "fec";
   if (tab === "emails") return (record.emails || []).length > 0;
@@ -198,6 +207,8 @@ export default function AnnuairePage() {
       fec: records.filter((record) => record.category === "fec").length,
       mines: records.filter(isMine).length,
       finance: records.filter(isFinance).length,
+      arsp: records.filter((record) => record.category === "arsp").length,
+      health: records.filter((record) => record.category === "sante").length,
       publicDirectory: records.filter(isPublicDirectory).length,
       emails: records.filter((record) => (record.emails || []).length > 0).length,
       phones: records.filter((record) => (record.phones || []).length > 0).length,
@@ -282,7 +293,7 @@ export default function AnnuairePage() {
           <HeroMetric label="Contacts indexés" value={stats.total} />
           <HeroMetric label="Emails disponibles" value={stats.emails} />
           <HeroMetric label="Téléphones" value={stats.phones} />
-          <HeroMetric label="Sources web" value={stats.publicDirectory} />
+          <HeroMetric label="ARSP + sources web" value={stats.publicDirectory} />
         </div>
       </section>
 
@@ -368,7 +379,7 @@ export default function AnnuairePage() {
         <Metric label="Entreprises FEC" value={stats.fec} tone="slate" />
         <Metric label="Mines et ressources" value={stats.mines} tone="amber" />
         <Metric label="Finance / investisseurs" value={stats.finance} tone="emerald" />
-        <Metric label="Contacts complets" value={stats.complete} tone="sky" />
+        <Metric label="ARSP enregistrées" value={stats.arsp} tone="sky" />
       </section>
 
       {loading && (
@@ -559,6 +570,8 @@ function Badge({ children, tone }) {
 
 function getCategoryLabel(record) {
   if (isMine(record)) return "Mines";
+  if (record.category === "arsp") return "ARSP";
+  if (record.category === "sante") return "Santé";
   if (record.category === "fec") return "FEC";
   if (isPublicDirectory(record)) return "Annuaire public";
   if (isFinance(record)) return "Finance";
