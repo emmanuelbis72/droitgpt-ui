@@ -44,8 +44,87 @@ const PRIORITY_SECTOR_TERMS = [
   "immobilier",
 ];
 
+const SECTOR_GROUPS = [
+  {
+    id: "mines",
+    label: "Mines et ressources",
+    terms: ["mine", "minier", "mines", "carriere", "cobalt", "cuivre", "lithium", "mineral", "ressource"],
+  },
+  {
+    id: "agriculture",
+    label: "Agriculture et elevage",
+    terms: ["agric", "agro", "elevage", "peche", "foret", "palmier", "manioc", "semence", "veterinaire"],
+  },
+  {
+    id: "btp",
+    label: "BTP et construction",
+    terms: ["btp", "construction", "batiment", "genie civil", "travaux publics", "immobilier"],
+  },
+  {
+    id: "commerce",
+    label: "Commerce et distribution",
+    terms: ["commerce", "trading", "distribution", "vente", "import", "export", "negoce", "magasin"],
+  },
+  {
+    id: "finance",
+    label: "Finance, banques et assurances",
+    terms: ["banque", "finance", "assurance", "microfinance", "credit", "leasing", "fonds", "invest"],
+  },
+  {
+    id: "sante",
+    label: "Sante et medecine",
+    terms: ["sante", "medecine", "pharma", "clinique", "hospital", "hopital", "laboratoire medical"],
+  },
+  {
+    id: "transport",
+    label: "Transport et logistique",
+    terms: ["transport", "logistique", "messagerie", "aviation", "douane", "commissionnaire", "transit"],
+  },
+  {
+    id: "industrie",
+    label: "Industrie et production",
+    terms: ["industrie", "production", "manufact", "usine", "transformation", "plastique", "emballage"],
+  },
+  {
+    id: "it",
+    label: "Informatique et telecoms",
+    terms: ["informatique", "telecom", "internet", "digital", "logiciel", "bureautique", "technologie"],
+  },
+  {
+    id: "services",
+    label: "Services aux entreprises",
+    terms: ["service", "consult", "conseil", "audit", "maintenance", "nettoyage", "securite", "gardiennage"],
+  },
+  {
+    id: "energie",
+    label: "Energie et hydrocarbures",
+    terms: ["energie", "hydrocarbure", "petrole", "oil", "gaz", "electric", "solaire", "carburant"],
+  },
+  {
+    id: "horeca",
+    label: "Hotellerie, restauration et tourisme",
+    terms: ["hotel", "restaurant", "tourisme", "voyage", "cafe", "traiteur"],
+  },
+  {
+    id: "education",
+    label: "Education et formation",
+    terms: ["enseignement", "education", "formation", "ecole", "universite", "institut"],
+  },
+  {
+    id: "juridique",
+    label: "Droit, justice et conseil juridique",
+    terms: ["droit", "justice", "juridique", "avocat", "notaire"],
+  },
+];
+
 function lower(value) {
   return String(value || "").toLowerCase();
+}
+
+function normalizeText(value) {
+  return lower(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function unique(values) {
@@ -80,8 +159,37 @@ function recordText(record) {
     ...(record.phones || []),
     ...(record.websites || []),
   ]
-    .map(lower)
+    .map(normalizeText)
     .join(" ");
+}
+
+function sectorHaystack(record) {
+  return normalizeText([
+    record.sector,
+    record.activity,
+    record.operation,
+    record.subCategory,
+    record.category,
+    record.name,
+    record.notes,
+    record.raw,
+  ].join(" "));
+}
+
+function sectorGroupForRecord(record) {
+  const haystack = sectorHaystack(record);
+  const match = SECTOR_GROUPS.find((group) =>
+    group.terms.some((term) => haystack.includes(normalizeText(term)))
+  );
+  if (match) return match.label;
+  if (record.sector) return "Autres secteurs";
+  return "Non classe";
+}
+
+function recordMatchesSector(record, selectedSector) {
+  if (!selectedSector) return true;
+  const groupLabel = sectorGroupForRecord(record);
+  return groupLabel === selectedSector || normalizeText(record.sector) === normalizeText(selectedSector);
 }
 
 function isMine(record) {
@@ -138,17 +246,17 @@ function matchesContactFilter(record, filter) {
 }
 
 function matchScore(record, query) {
-  const q = lower(query).trim();
+  const q = normalizeText(query).trim();
   const quality = recordQuality(record);
   if (!q) return quality;
 
   let score = quality;
-  if (lower(record.name).includes(q)) score += 80;
-  if (lower(record.sector).includes(q)) score += 45;
-  if (lower(record.subCategory).includes(q)) score += 35;
-  if (lower(record.city).includes(q) || lower(record.province).includes(q)) score += 25;
-  if ((record.emails || []).some((email) => lower(email).includes(q))) score += 20;
-  if ((record.phones || []).some((phone) => lower(phone).includes(q))) score += 20;
+  if (normalizeText(record.name).includes(q)) score += 80;
+  if (normalizeText(record.sector).includes(q)) score += 45;
+  if (normalizeText(record.subCategory).includes(q)) score += 35;
+  if (normalizeText(record.city).includes(q) || normalizeText(record.province).includes(q)) score += 25;
+  if ((record.emails || []).some((email) => normalizeText(email).includes(q))) score += 20;
+  if ((record.phones || []).some((phone) => normalizeText(phone).includes(q))) score += 20;
   if (recordText(record).includes(q)) score += 10;
   return score;
 }
@@ -218,7 +326,7 @@ export default function AnnuairePage() {
 
   const filterOptions = useMemo(() => {
     return {
-      sectors: unique(records.map((record) => record.sector)),
+      sectors: unique(records.map(sectorGroupForRecord)),
       locations: unique(records.flatMap((record) => [record.province, record.city]).filter(Boolean)),
       sources: unique(records.map((record) => record.source || record.sourceDocument)),
     };
@@ -227,9 +335,9 @@ export default function AnnuairePage() {
   const sectorChips = useMemo(() => {
     const counts = new Map();
     for (const record of records) {
-      const label = record.sector;
+      const label = sectorGroupForRecord(record);
       if (!label) continue;
-      const searchable = lower(label);
+      const searchable = normalizeText(label);
       if (!PRIORITY_SECTOR_TERMS.some((term) => searchable.includes(term))) continue;
       counts.set(label, (counts.get(label) || 0) + 1);
     }
@@ -240,11 +348,11 @@ export default function AnnuairePage() {
   }, [records]);
 
   const filteredRecords = useMemo(() => {
-    const q = lower(query).trim();
+    const q = normalizeText(query).trim();
     const result = records
       .filter((record) => {
         if (!recordMatchesTab(record, activeTab)) return false;
-        if (sector && record.sector !== sector) return false;
+        if (!recordMatchesSector(record, sector)) return false;
         if (source && (record.source || record.sourceDocument) !== source) return false;
         if (location && record.province !== location && record.city !== location) return false;
         if (!matchesContactFilter(record, contactFilter)) return false;
