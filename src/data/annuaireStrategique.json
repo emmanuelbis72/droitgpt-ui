@@ -17,8 +17,6 @@
     },
     "notice": "Données extraites automatiquement des documents fournis et enrichies avec des sources publiques. Les emails et téléphones ne sont affichés que lorsqu’ils sont présents dans les sources.",
     "onlineSources": [
-      "https://www.congovirtuel.com/",
-      "https://www.goafricaonline.com/",
       "https://www.moncongo.com/directory"
     ]
   },
