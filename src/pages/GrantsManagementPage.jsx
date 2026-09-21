@@ -58,39 +58,34 @@ export default function GrantsManagementPage() {
   return (
     <div className="space-y-6 text-slate-950">
       <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
-        <div className="grid gap-0 lg:grid-cols-[0.85fr_1.15fr]">
-          <div className="bg-[radial-gradient(circle_at_20%_10%,rgba(16,185,129,0.26),transparent_30%),linear-gradient(135deg,#020617,#0f172a_55%,#064e3b)] p-6 text-white sm:p-8">
-            <p className="text-xs font-black uppercase tracking-[0.28em] text-emerald-300">DroitGPT</p>
-            <h1 className="mt-4 text-4xl font-black leading-tight sm:text-5xl">Opportunités</h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
-              Annuaire simple pour trouver des opportunités utiles aux entrepreneurs et entreprises en RDC :
-              financements, concours, accélérateurs, fonds d'investissement, incubateurs, appels d'offres et offres d'emploi. Les annonces expirées sont masquées automatiquement.
-            </p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <Metric value={openCount} label="ouvertes" />
-              <Metric value={continuousCount} label="sources continues" />
-              <Metric value={next?.deadline ? formatDate(next.deadline) : "-"} label="prochaine deadline" small />
-            </div>
-            <p className="mt-5 text-xs leading-5 text-slate-400">
-              Dernière revue manuelle : {formatDate(STATIC_OPPORTUNITIES_LAST_UPDATED)}. Les opportunités indexées par le backend s'ajoutent automatiquement quand elles sont disponibles.
-            </p>
+        <div className="bg-[radial-gradient(circle_at_20%_10%,rgba(16,185,129,0.26),transparent_30%),linear-gradient(135deg,#020617,#0f172a_55%,#064e3b)] p-6 text-white sm:p-8 lg:p-10">
+          <p className="text-xs font-black uppercase tracking-[0.28em] text-emerald-300">DroitGPT</p>
+          <h1 className="mt-4 text-4xl font-black leading-tight sm:text-5xl">Opportunités</h1>
+          <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-300">
+            Opportunités entrepreneuriales, appels d'offres, fonds, incubateurs, accélérateurs, bourses et offres d'emploi utiles pour la RDC.
+          </p>
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            <Metric value={openCount} label="ouvertes" />
+            <Metric value={continuousCount} label="sources continues" />
+            <Metric value={next?.deadline ? formatDate(next.deadline) : "-"} label="prochaine deadline" small />
           </div>
-
-          <BusinessPlanPackOffer />
+          <p className="mt-5 text-xs leading-5 text-slate-400">
+            Dernière revue : {formatDate(STATIC_OPPORTUNITIES_LAST_UPDATED)}. Les annonces expirées sont masquées automatiquement.
+          </p>
         </div>
       </section>
 
       <section className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-800">Nouveau service prioritaire</p>
-            <h2 className="mt-1 text-2xl font-black">Assistant de candidature aux financements</h2>
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-800">Prospection RDC</p>
+            <h2 className="mt-1 text-2xl font-black">Annuaire stratégique business</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-950/80">
-              Collez l'appel a projets et les questions du bailleur. DroitGPT prepare un brouillon professionnel et signale les informations manquantes a verifier avant depot.
+              Retrouvez rapidement les entreprises, contacts FEC, opérateurs miniers, investisseurs et partenaires utiles pour préparer vos démarches.
             </p>
           </div>
-          <Link to="/candidature-financement" className="rounded-full bg-slate-950 px-5 py-3 text-center text-sm font-black text-white hover:bg-slate-800">
-            Preparer une candidature
+          <Link to="/annuaire" className="rounded-full bg-slate-950 px-5 py-3 text-center text-sm font-black text-white hover:bg-slate-800">
+            Ouvrir l'annuaire
           </Link>
         </div>
       </section>
@@ -154,6 +149,8 @@ export default function GrantsManagementPage() {
           ))}
         </div>
       </section>
+
+      <BusinessPlanPackOffer compact eyebrow="Ressources business" className="mt-6" />
 
       {selected ? <DetailsModal opportunity={selected} onClose={() => setSelected(null)} /> : null}
     </div>

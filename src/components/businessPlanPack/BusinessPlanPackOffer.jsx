@@ -11,7 +11,7 @@ const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
 const API_BASE = String(import.meta.env.VITE_BP_API_BASE || import.meta.env.VITE_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
 const PACK_CATEGORIES = ["Tous", ...Array.from(new Set(BUSINESS_PLAN_PACK_ITEMS.map((item) => item.category))).sort()];
 
-export default function BusinessPlanPackOffer({ compact = false, variant = "light", className = "" }) {
+export default function BusinessPlanPackOffer({ compact = false, variant = "light", className = "", eyebrow = "Offre entrepreneur" }) {
   const [packOrder, setPackOrder] = useState("");
   const [packOpenSignal, setPackOpenSignal] = useState(0);
   const [downloading, setDownloading] = useState(false);
@@ -77,7 +77,7 @@ export default function BusinessPlanPackOffer({ compact = false, variant = "ligh
         <div className="absolute right-5 top-5 rounded-full bg-rose-500 px-4 py-2 text-sm font-black text-white shadow-lg">
           Promo 20 USD
         </div>
-        <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">Offre entrepreneur</p>
+        {eyebrow ? <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">{eyebrow}</p> : null}
         <h2 className="mt-4 max-w-3xl text-3xl font-black leading-tight sm:text-4xl">
           Pack de {businessPlans} plans d'affaires + {pitchDecks} pitch decks
         </h2>

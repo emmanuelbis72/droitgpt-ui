@@ -80,6 +80,7 @@ const [mode, setMode] = useState("standard"); // standard | droit_congolais
   const [lang, setLang] = useState("fr");
   const [output, setOutput] = useState("pdf");
   const [draftFile, setDraftFile] = useState(null);
+  const [draftTextInput, setDraftTextInput] = useState("");
   const citationStyle = "footnotes"; // ✅ fixed: footnotes by default
 
   const [form, setForm] = useState({
@@ -207,6 +208,7 @@ if (elapsed >= totalSec) {
         ...form,
         // ✅ fixed: always 70 pages
         lengthPagesTarget: 70,
+        draftText: draftTextInput,
         // ✅ standard mode: no methodology field sent
         methodology: mode === "standard" ? undefined : form.methodology,
         // ✅ droit congolais: faculty implicit
@@ -466,7 +468,7 @@ try {
                 <div className="text-sm font-semibold text-cyan-100">Brouillon de mémoire (optionnel)</div>
                 <p className="mt-1 text-xs leading-5 text-cyan-100/80">
                   Si l'étudiant a déjà un brouillon, un plan avancé ou un ancien fichier, importez-le ici.
-                  Le système l'utilisera comme base factuelle, puis améliorera la structure et la rédaction.
+                  Le système peut exploiter DOCX/TXT/PDF texte et images manuscrites lisibles via OCR, puis restructurer le fond.
                 </p>
               </div>
               {draftFile ? (
@@ -482,7 +484,7 @@ try {
             </div>
             <input
               type="file"
-              accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/jpeg,image/png,image/webp"
               disabled={isGenerating}
               onChange={(event) => {
                 const file = event.target.files?.[0] || null;
@@ -501,8 +503,39 @@ try {
                 Fichier sélectionné : <span className="font-mono">{draftFile.name}</span>
               </p>
             ) : (
-              <p className="mt-2 text-xs text-cyan-100/70">Formats acceptés : PDF, Word DOCX ou TXT.</p>
+              <p className="mt-2 text-xs text-cyan-100/70">
+                Formats acceptés : PDF texte, Word DOCX, TXT, JPG, PNG ou WEBP. Pour PDF scanné, utilisez une image nette ou le service OCR configuré côté serveur.
+              </p>
             )}
+          </div>
+
+          <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
+            <div className="text-sm font-semibold text-amber-100">Notes en vrac / brouillon non structuré</div>
+            <p className="mt-1 text-xs leading-5 text-amber-100/80">
+              Collez ici des idées, paragraphes désordonnés, notes manuscrites déjà transcrites, résultats d'entretien,
+              plan incomplet ou éléments à garder. Le système les réorganise et signale les informations à compléter.
+            </p>
+            <textarea
+              value={draftTextInput}
+              onChange={(event) => setDraftTextInput(event.target.value)}
+              disabled={isGenerating}
+              rows={6}
+              className="mt-3 min-h-[140px] w-full rounded-xl border border-amber-100/20 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-amber-200/60 focus:ring-2 focus:ring-amber-300/10"
+              placeholder="Ex : idées en vrac, contexte, citations approximatives, observations, plan incomplet, paragraphes à reformuler..."
+            />
+            <div className="mt-2 flex flex-col gap-2 text-xs text-amber-100/75 sm:flex-row sm:items-center sm:justify-between">
+              <span>{String(draftTextInput || "").length} caractère(s) ajoutés.</span>
+              {draftTextInput ? (
+                <button
+                  type="button"
+                  onClick={() => setDraftTextInput("")}
+                  disabled={isGenerating}
+                  className="w-fit rounded-lg border border-amber-100/20 px-3 py-1.5 font-semibold text-amber-100 hover:bg-amber-200/10 disabled:opacity-60"
+                >
+                  Vider le texte
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {/* Mode toggle */}
