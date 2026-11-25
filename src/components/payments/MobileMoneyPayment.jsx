@@ -52,7 +52,7 @@ export default function MobileMoneyPayment({
   const [modalOpen, setModalOpen] = useState(false);
 
   const docConfig = config?.documents?.[documentType] || null;
-  const requiresPayment = Boolean(config?.requiresPayment);
+  const requiresPayment = config?.requiresPayment !== false;
   const isDark = variant === "dark";
 
   const shell = isDark
@@ -60,24 +60,28 @@ export default function MobileMoneyPayment({
     : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50";
   const muted = isDark ? "text-slate-300" : "text-slate-600";
   const readyOrderNumber = useMemo(() => {
-    return payment?.status === "paid" && !payment?.consumedAt ? payment.orderNumber : "";
-  }, [payment]);
+    return config?.configured && payment?.status === "paid" && !payment?.consumedAt ? payment.orderNumber : "";
+  }, [payment, config?.configured]);
 
   useEffect(() => {
     let alive = true;
     setLoadingConfig(true);
+    onRequirementChange?.(true);
+    onPaymentReady?.("");
     fetchPaymentConfig(apiBase)
       .then((data) => {
         if (!alive) return;
         setConfig(data);
-        const required = Boolean(data?.requiresPayment);
+        const required = data?.requiresPayment !== false;
         onRequirementChange?.(required);
         if (!required) onPaymentReady?.("");
       })
       .catch((err) => {
         if (!alive) return;
         setError(String(err?.message || err));
-        onRequirementChange?.(false);
+        onRequirementChange?.(true);
+        setConfig(null);
+        onPaymentReady?.("");
       })
       .finally(() => {
         if (alive) setLoadingConfig(false);
@@ -85,11 +89,12 @@ export default function MobileMoneyPayment({
     return () => {
       alive = false;
     };
-  }, [apiBase]);
+  }, [apiBase, onRequirementChange, onPaymentReady]);
 
   useEffect(() => {
     const stored = getStoredPayment(documentType);
-    if (stored?.orderNumber) setPayment(stored);
+    if (stored?.orderNumber) setPayment({ ...stored, status: "unknown" });
+    else setPayment(null);
   }, [documentType]);
 
   useEffect(() => {
@@ -182,7 +187,7 @@ export default function MobileMoneyPayment({
 
   if (!requiresPayment) return null;
 
-  const statusBadge = payment?.status ? STATUS_LABELS[payment.status] || payment.status : "Paiement à effectuer";
+  const statusBadge = payment?.consumedAt ? "Paiement deja utilise" : payment?.status ? STATUS_LABELS[payment.status] || payment.status : "Paiement à effectuer";
   const amount = formatMoney(docConfig?.amount, docConfig?.currency || config?.currency);
 
   return (
@@ -244,7 +249,9 @@ export default function MobileMoneyPayment({
               <div className={`mt-5 rounded-2xl border px-4 py-4 text-sm ${isDark ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
                 <div className="font-medium">Paiement Mobile Money enregistré</div>
                 <div className={`mt-1 ${muted}`}>
-                  {payment.status === "paid"
+                  {payment.consumedAt
+                    ? "Ce paiement est deja affecte a un document. Consultez vos documents ou contactez le support si le fichier est indisponible."
+                    : payment.status === "paid"
                     ? paidMessage
                     : payment.status === "failed"
                       ? "Transaction échouée. Lancez un nouveau paiement."
@@ -303,7 +310,7 @@ export default function MobileMoneyPayment({
               </div>
             )}
 
-            {error ? <div className="mt-4 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</div> : null}
+            {error ? <div role="alert" className="mt-4 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</div> : null}
           </div>
         </div>
       ) : null}

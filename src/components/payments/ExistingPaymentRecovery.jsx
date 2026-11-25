@@ -117,6 +117,10 @@ export default function ExistingPaymentRecovery({
           `Si le paiement a été débité mais que le ${documentLabel} n'a pas été généré ou téléchargé, saisissez uniquement le numéro Mobile Money utilisé pour payer.`}
       </p>
 
+      <p className={`text-xs leading-5 ${mutedClass}`}>
+        Seuls les paiements confirmes et non utilises de votre compte sont recuperables ici. Si une generation a deja ete lancee,
+        contactez le support pour recuperer le document sans repayer.
+      </p>
       {currentOrderNumber ? (
         <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300">
           Paiement retrouvé et prêt à utiliser. Relancez la génération sans repayer.

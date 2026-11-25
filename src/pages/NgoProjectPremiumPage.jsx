@@ -109,7 +109,7 @@ export default function NgoProjectPremiumPage() {
   const [error, setError] = useState("");
   const [successHint, setSuccessHint] = useState("");
   const [progress, setProgress] = useState(0);
-  const [paymentRequired, setPaymentRequired] = useState(false);
+  const [paymentRequired, setPaymentRequired] = useState(true);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentRecoveryReason, setPaymentRecoveryReason] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);

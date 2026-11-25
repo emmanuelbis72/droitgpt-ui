@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   clearGeneratedDocuments,
   downloadGeneratedDocument,
   fetchGeneratedDocuments,
   isRecoverableLostJobError,
   listGeneratedDocuments,
-  regenerateGeneratedDocument,
   refreshGeneratedDocument,
   removeGeneratedDocument,
   syncGeneratedDocuments,
@@ -43,22 +42,10 @@ function formatDate(value) {
   }
 }
 
-function canRegenerateWithoutPayment(doc) {
-  const regeneration = doc?.regeneration || {};
-  return Boolean(
-    doc?.status !== "done" &&
-      doc?.paymentOrderNumber &&
-      regeneration?.url &&
-      regeneration?.body
-  );
-}
-
 export default function GeneratedDocumentsPage() {
   const { user } = useAuth();
   const [documents, setDocuments] = useState(() => listGeneratedDocuments());
   const [busy, setBusy] = useState({});
-  const [recoveryProgress, setRecoveryProgress] = useState({});
-  const recoveryProgressRef = useRef({});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -85,37 +72,7 @@ export default function GeneratedDocumentsPage() {
     }
   }
 
-  function setRecoveryState(doc, patch) {
-    const key = doc.id || doc.jobId;
-    if (!key) return;
-    setRecoveryProgress((prev) => {
-      const next = {
-        ...prev,
-        [key]: {
-          progress: Math.max(0, Math.min(100, Number(patch.progress || prev[key]?.progress || 0))),
-          label: patch.label || prev[key]?.label || "Regeneration en cours...",
-          tone: patch.tone || prev[key]?.tone || "amber",
-        },
-      };
-      recoveryProgressRef.current = next;
-      return next;
-    });
-  }
-
-  function clearRecoveryState(doc) {
-    const key = doc.id || doc.jobId;
-    if (!key) return;
-    setRecoveryProgress((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      recoveryProgressRef.current = next;
-      return next;
-    });
-  }
-
   function getProgressState(doc) {
-    const key = doc.id || doc.jobId;
-    if (key && recoveryProgress[key]) return recoveryProgress[key];
     if (!["queued", "running"].includes(doc.status)) return null;
 
     const createdAt = new Date(doc.createdAt || doc.updatedAt || Date.now()).getTime();
@@ -160,46 +117,10 @@ export default function GeneratedDocumentsPage() {
     );
   }
 
-  async function waitForRecoveredDocument(doc) {
-    let current = doc;
-    for (let attempt = 0; attempt < 180; attempt += 1) {
-      const progress = Math.min(96, 20 + attempt);
-      setRecoveryState(current, { progress, label: "Generation relancee cote serveur..." });
-      await new Promise((resolve) => setTimeout(resolve, 4000));
-      current = await refreshGeneratedDocument(current);
-      await reload();
-      if (current.status === "done") {
-        setRecoveryState(current, { progress: 100, label: "Document pret." });
-        setTimeout(() => clearRecoveryState(current), 2500);
-        return current;
-      }
-      if (["error", "rejected", "cancelled"].includes(current.status)) return current;
-    }
-    return current;
-  }
-
-  async function regenerateLostJob(doc, { waitUntilDone = false } = {}) {
-    setRecoveryState(doc, { progress: 5, label: "Ancien job perdu, relance en preparation..." });
-    const regenerated = await regenerateGeneratedDocument(doc, {
-      onProgress: ({ progress, label }) => setRecoveryState(doc, { progress, label }),
-    });
-    await reload();
-    if (!waitUntilDone) return regenerated;
-    return waitForRecoveredDocument(regenerated);
-  }
-
-  async function regenerateOne(doc) {
-    setBusy((prev) => ({ ...prev, [doc.id]: "regenerate" }));
-    setMessage("");
-    try {
-      await regenerateLostJob(doc, { waitUntilDone: false });
-      setMessage("Une nouvelle génération vient d'être lancée sans nouveau paiement.");
-    } catch (error) {
-      clearRecoveryState(doc);
-      setMessage(String(error?.message || error));
-    } finally {
-      setBusy((prev) => ({ ...prev, [doc.id]: null }));
-    }
+  function documentError(error) {
+    return isRecoverableLostJobError(error)
+      ? "Ce document n'est plus disponible. Contactez le support pour recuperer votre document deja paye."
+      : String(error?.message || error);
   }
 
   async function refreshOne(doc) {
@@ -208,81 +129,30 @@ export default function GeneratedDocumentsPage() {
     try {
       await refreshGeneratedDocument(doc);
       await reload();
-    } catch (error) {
-      if (isRecoverableLostJobError(error)) {
-        try {
-          await regenerateLostJob(doc, { waitUntilDone: false });
-          setMessage("La generation precedente etait introuvable. Une nouvelle generation vient d'etre lancee sans repaiement.");
-        } catch (recoveryError) {
-          clearRecoveryState(doc);
-          setMessage(String(recoveryError?.message || recoveryError));
-        }
-      } else {
-        setMessage(String(error?.message || error));
-      }
-    } finally {
-      setBusy((prev) => ({ ...prev, [doc.id]: null }));
-    }
+    } catch (error) { setMessage(documentError(error)); }
+    finally { setBusy((prev) => ({ ...prev, [doc.id]: null })); }
   }
 
   async function downloadOne(doc) {
     setBusy((prev) => ({ ...prev, [doc.id]: "download" }));
     setMessage("");
     try {
-      let latest = doc;
-      if (doc.status !== "done") {
-        try {
-          latest = await refreshGeneratedDocument(doc);
-        } catch (error) {
-          if (!isRecoverableLostJobError(error)) throw error;
-          latest = await regenerateLostJob(doc, { waitUntilDone: true });
-        }
-      }
+      const latest = doc.status === "done" ? doc : await refreshGeneratedDocument(doc);
       if (latest.status !== "done") {
-        setMessage("Le document n'est pas encore prêt. Réessaie dans quelques minutes.");
-        await reload();
+        setMessage("Le document n'est pas encore pret. Reessayez dans quelques minutes.");
         return;
       }
       await downloadGeneratedDocument(latest);
       await reload();
-    } catch (error) {
-      if (isRecoverableLostJobError(error)) {
-        try {
-          const recovered = await regenerateLostJob(doc, { waitUntilDone: true });
-          if (recovered.status === "done") {
-            await downloadGeneratedDocument(recovered);
-            await reload();
-            return;
-          }
-          setMessage("Le fichier précédent n'est plus disponible. Une régénération sans repaiement a été lancée.");
-          await reload();
-          return;
-        } catch (recoveryError) {
-          clearRecoveryState(doc);
-          setMessage(String(recoveryError?.message || recoveryError));
-          return;
-        }
-      }
-      setMessage(String(error?.message || error));
-    } finally {
-      setBusy((prev) => ({ ...prev, [doc.id]: null }));
-    }
+    } catch (error) { setMessage(documentError(error)); }
+    finally { setBusy((prev) => ({ ...prev, [doc.id]: null })); }
   }
 
   async function refreshAll() {
-    setMessage("");
     for (const doc of listGeneratedDocuments()) {
       if (["queued", "running"].includes(doc.status)) {
-        try {
-          await refreshGeneratedDocument(doc);
-        } catch (error) {
-          if (isRecoverableLostJobError(error) && !recoveryProgressRef.current[doc.id || doc.jobId]) {
-            void regenerateLostJob(doc, { waitUntilDone: false }).catch((recoveryError) => {
-              clearRecoveryState(doc);
-              setMessage(String(recoveryError?.message || recoveryError));
-            });
-          }
-        }
+        try { await refreshGeneratedDocument(doc); }
+        catch (error) { setMessage(documentError(error)); }
       }
     }
     await reload();
@@ -401,16 +271,7 @@ export default function GeneratedDocumentsPage() {
                   >
                     {busy[doc.id] === "refresh" ? "Vérification..." : "Vérifier"}
                   </button>
-                  {canRegenerateWithoutPayment(doc) ? (
-                    <button
-                      type="button"
-                      onClick={() => regenerateOne(doc)}
-                      disabled={Boolean(busy[doc.id])}
-                      className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
-                    >
-                      {busy[doc.id] === "regenerate" ? "Relance..." : "Régénérer sans payer"}
-                    </button>
-                  ) : null}
+
                   <button
                     type="button"
                     onClick={() => downloadOne(doc)}

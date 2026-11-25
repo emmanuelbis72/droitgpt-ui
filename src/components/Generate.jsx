@@ -2,12 +2,19 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
+import MobileMoneyPayment from "./payments/MobileMoneyPayment.jsx";
+import { clearStoredPayment } from "../services/paymentsApi.js";
 
 const PDF_API_URL =
   import.meta.env.VITE_PDF_API_URL ||
   "https://droitgpt-pdf-api.onrender.com/generate-pdf";
 
+const PAYMENT_API_BASE = import.meta.env.VITE_BP_API_BASE || "https://businessplan-v9yy.onrender.com";
+
 export default function Generate() {
+  const [paymentOrder, setPaymentOrder] = useState("");
+  const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
+  const [paymentResetSignal, setPaymentResetSignal] = useState(0);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [pdfUrl, setPdfUrl] = useState("");
@@ -77,13 +84,19 @@ export default function Generate() {
       return;
     }
 
+    if (!paymentOrder) {
+      setPaymentOpenSignal((value) => value + 1);
+      return;
+    }
+    const usedPaymentOrder = paymentOrder;
     setLoading(true);
     try {
       const res = await fetch(PDF_API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...authHeaders, // ✅ Bearer token
+          ...authHeaders,
+          "X-Payment-Order": usedPaymentOrder,
         },
         body: JSON.stringify({
           title: title.trim(),
@@ -105,6 +118,9 @@ export default function Generate() {
       }
 
       const blob = await res.blob();
+      clearStoredPayment("legal_document");
+      setPaymentOrder("");
+      setPaymentResetSignal((value) => value + 1);
       const url = URL.createObjectURL(blob);
       setProgress(100);
       setPdfUrl(url);
@@ -230,6 +246,11 @@ export default function Generate() {
               </div>
             </div>
 
+            <div className="mt-4">
+              <MobileMoneyPayment apiBase={PAYMENT_API_BASE} documentType="legal_document" variant="dark"
+                disabled={loading} openSignal={paymentOpenSignal} resetSignal={paymentResetSignal}
+                onPaymentReady={setPaymentOrder} paidMessage="Paiement confirme. Vous pouvez generer votre document juridique." />
+            </div>
             {/* Bouton générer + progression */}
             <div className="mt-5 space-y-2">
               <button
@@ -241,7 +262,7 @@ export default function Generate() {
                     : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
                 }`}
               >
-                {loading ? "Génération en cours…" : "⚖️ Générer le PDF juridique"}
+                {loading ? "Génération en cours…" : !paymentOrder ? "Payer puis generer le PDF juridique" : "⚖️ Générer le PDF juridique"}
               </button>
 
               {loading && (

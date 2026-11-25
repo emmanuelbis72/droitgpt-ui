@@ -205,7 +205,7 @@ export default function BusinessPlanPremiumPage() {
   const [statusText, setStatusText] = useState("");
   const [error, setError] = useState("");
   const [successHint, setSuccessHint] = useState("");
-  const [paymentRequired, setPaymentRequired] = useState(false);
+  const [paymentRequired, setPaymentRequired] = useState(true);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentRecoveryReason, setPaymentRecoveryReason] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);

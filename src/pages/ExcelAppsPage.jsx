@@ -29,7 +29,7 @@ export default function ExcelAppsPage() {
   const [progress, setProgress] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState(null);
   const [error, setError] = useState(null);
-  const [paymentRequired, setPaymentRequired] = useState(false);
+  const [paymentRequired, setPaymentRequired] = useState(true);
   const [paymentOrderNumber, setPaymentOrderNumber] = useState("");
   const [paymentRecoveryReason, setPaymentRecoveryReason] = useState("");
   const [paymentResetSignal, setPaymentResetSignal] = useState(0);

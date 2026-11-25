@@ -1,3 +1,4 @@
+import { generationHeaders } from "../../utils/generationClient.js";
 import React, { useMemo, useState } from "react";
 import ExistingPaymentRecovery from "../payments/ExistingPaymentRecovery.jsx";
 import MobileMoneyPayment from "../payments/MobileMoneyPayment.jsx";
@@ -39,7 +40,7 @@ export default function BusinessPlanPackOffer({ compact = false, variant = "ligh
     setError("");
     try {
       const response = await fetch(`${API_BASE}/business-plan-pack/download`, {
-        headers: { "X-Payment-Order": packOrder },
+        headers: generationHeaders({ "X-Payment-Order": packOrder }),
       });
       if (!response.ok) throw new Error(await readDownloadError(response));
       await downloadBlob(response, "DroitGPT-Pack-Plans-Affaires-et-Pitch-Decks.zip");

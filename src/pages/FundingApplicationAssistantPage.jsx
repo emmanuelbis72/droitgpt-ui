@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import MobileMoneyPayment from "../components/payments/MobileMoneyPayment.jsx";
+import { clearStoredPayment } from "../services/paymentsApi.js";
 import { generationHeaders } from "../utils/generationClient.js";
 
 const DEFAULT_API_BASE = "https://businessplan-v9yy.onrender.com";
@@ -39,6 +41,9 @@ const INITIAL_FORM = {
 };
 
 export default function FundingApplicationAssistantPage() {
+  const [paymentOrder, setPaymentOrder] = useState("");
+  const [paymentOpenSignal, setPaymentOpenSignal] = useState(0);
+  const [paymentResetSignal, setPaymentResetSignal] = useState(0);
   const [form, setForm] = useState(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -63,11 +68,16 @@ export default function FundingApplicationAssistantPage() {
       return;
     }
 
+    if (!paymentOrder) {
+      setPaymentOpenSignal((value) => value + 1);
+      return;
+    }
+    const usedPaymentOrder = paymentOrder;
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE}/generate-grants-management/application-assistant`, {
         method: "POST",
-        headers: generationHeaders({ "Content-Type": "application/json" }),
+        headers: generationHeaders({ "Content-Type": "application/json", "X-Payment-Order": usedPaymentOrder }),
         body: JSON.stringify({
           lang: form.lang,
           companyProfile: textToObject(form.companyProfile),
@@ -80,6 +90,9 @@ export default function FundingApplicationAssistantPage() {
         throw new Error(json?.details || json?.error || "Impossible de generer le brouillon.");
       }
       setResult(json?.result || null);
+      clearStoredPayment("funding_application");
+      setPaymentOrder("");
+      setPaymentResetSignal((value) => value + 1);
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -181,6 +194,9 @@ export default function FundingApplicationAssistantPage() {
             <Textarea label="Opportunite / appel a projets" value={form.opportunity} onChange={(v) => updateField("opportunity", v)} rows={6} />
             <Textarea label="Questions du formulaire bailleur" value={form.questions} onChange={(v) => updateField("questions", v)} rows={5} />
 
+            <MobileMoneyPayment apiBase={API_BASE} documentType="funding_application"
+              disabled={loading} openSignal={paymentOpenSignal} resetSignal={paymentResetSignal}
+              onPaymentReady={setPaymentOrder} paidMessage="Paiement confirme. Vous pouvez generer votre candidature." />
             {error ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</div> : null}
 
             <button
@@ -188,7 +204,7 @@ export default function FundingApplicationAssistantPage() {
               disabled={loading}
               className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Generation du brouillon..." : "Generer le brouillon de candidature"}
+              {loading ? "Generation du brouillon..." : !paymentOrder ? "Payer puis generer le brouillon" : "Generer le brouillon de candidature"}
             </button>
           </form>
         </div>

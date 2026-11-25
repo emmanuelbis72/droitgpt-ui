@@ -234,10 +234,10 @@ export async function readResponseError(response) {
 function humanizeDocumentError(message) {
   const text = String(message || "").trim();
   if (/JOB_NOT_FOUND/i.test(text)) {
-    return "Cette generation n'est plus disponible cote serveur. Si le paiement avait ete valide, relancez la generation depuis la page du document : le paiement deja consomme sera accepte si l'ancien job a ete perdu.";
+    return "Cette generation n'est plus disponible cote serveur. Si le paiement avait ete valide, contactez le support pour recuperer le document deja paye.";
   }
   if (/RESULT_EXPIRED/i.test(text)) {
-    return "Le fichier temporaire a expire cote serveur. Relancez la generation depuis votre compte pour recuperer un nouveau fichier sans repayer si le job precedent a ete perdu.";
+    return "Le fichier temporaire a expire cote serveur. Contactez le support pour recuperer votre document deja paye.";
   }
   return text;
 }
